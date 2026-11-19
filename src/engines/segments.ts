@@ -63,7 +63,19 @@ export class SegmentSession implements AsrSession {
     private readonly options: AsrSessionOptions,
     schedulerOptions: SchedulerOptions,
   ) {
-    this.scheduler = new DecodeScheduler({ sampleRate: options.sampleRate, ...schedulerOptions });
+    this.scheduler = new DecodeScheduler({
+      sampleRate: options.sampleRate,
+      ...schedulerOptions,
+      // Audio that isn't live: no partials, and nothing dropped to catch up.
+      ...(options.batch
+        ? {
+            partialIntervalMs: Number.POSITIVE_INFINITY,
+            firstPartialMs: Number.POSITIVE_INFINITY,
+            behindMs: Number.POSITIVE_INFINITY,
+            maxBacklogMs: Number.POSITIVE_INFINITY,
+          }
+        : {}),
+    });
   }
 
   startSegment(segmentId: string, startSample: number): void {

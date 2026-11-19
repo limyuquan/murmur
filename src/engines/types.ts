@@ -235,6 +235,11 @@ export interface AsrSessionOptions {
   onError(error: Error): void;
   /** Whether the engine keeps up with the audio. Sent when it changes. */
   onHealth?(health: AsrHealth): void;
+  /**
+   * Audio that isn't live (lookahead: decoded from the player's buffer, pushed as fast as it is
+   * processed): finals only, no partial results, and no segment is ever given up on to catch up.
+   */
+  batch?: boolean;
 }
 
 /** How an ASR session is coping with the audio it is given. */

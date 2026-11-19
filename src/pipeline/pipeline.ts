@@ -93,6 +93,12 @@ export interface PipelineOptions {
    * that hangs doesn't hold up every later line. Default `TRANSLATION_TIMEOUT_MS`.
    */
   translationTimeoutMs?: number;
+  /**
+   * Lookahead: the frames are a video's own audio, decoded ahead of the playhead, with sample
+   * indices on its timeline (sample = media seconds × 16 000). Cues are timed in media time
+   * (`Cue.media`), their ids start with `idPrefix`, and the ASR session runs in batch mode.
+   */
+  media?: { timeline: string; idPrefix: string };
 }
 
 export const TRANSLATION_TIMEOUT_MS = 10_000;
@@ -145,6 +151,8 @@ export class Pipeline {
   private lastLine: LastLine | null = null;
   private readonly now: () => number;
   private seq = 0;
+  /** End of the audio the segmenter has seen (after the speech detector, if any). */
+  private scanned = 0;
 
   constructor(private readonly options: PipelineOptions) {
     this.now = options.now ?? Date.now;
@@ -159,6 +167,7 @@ export class Pipeline {
         model,
         (samples, startSample, prob) => {
           if (this.closing.signal.aborted) return;
+          this.scanned = startSample + samples.length;
           this.dispatch(this.segmenter.pushScored(samples, startSample, prob));
         },
         (error) => options.onVadFailure?.(error),
@@ -176,6 +185,7 @@ export class Pipeline {
       onlySpoken: options.onlySpoken ?? false,
       track: options.track ?? null,
       currentSample: () => this.position,
+      ...(options.media ? { batch: true } : {}),
       onResult: (result) => this.onAsrResult(result),
       onError: (error) => options.onError(error),
       ...(options.onHealth ? { onHealth: options.onHealth } : {}),
@@ -188,7 +198,15 @@ export class Pipeline {
     this.clock.anchor(frame.startSample, frame.startEpochMs);
     this.position = frame.startSample + frame.samples.length;
     if (this.vadStage) this.vadStage.push(frame.samples, frame.startSample);
-    else this.dispatch(this.segmenter.push(frame.samples, frame.startSample));
+    else {
+      this.dispatch(this.segmenter.push(frame.samples, frame.startSample));
+      this.scanned = this.position;
+    }
+  }
+
+  /** End of the audio the segmenter has seen (frames still being scored aren't counted). */
+  get scannedSample(): number {
+    return this.scanned;
   }
 
   /**
@@ -202,6 +220,19 @@ export class Pipeline {
     }
     this.vadStage.after(() => this.dispatch(this.segmenter.flush()));
     this.vadStage.reset();
+  }
+
+  /**
+   * Stops at once: nothing more is emitted, open segments and queued translations are dropped.
+   * Resolves once the speech detector has let go of the frames it was scoring (so another
+   * pipeline may use it) and the ASR session is closed.
+   */
+  async abort(): Promise<void> {
+    this.closing.abort();
+    for (const s of this.segments.values()) s.preview?.abort();
+    this.vadStage?.reset();
+    await this.vadStage?.drain();
+    await this.session.close();
   }
 
   /** Ends the open segment, waits for queued final translations, then closes the ASR session. */
@@ -245,8 +276,9 @@ export class Pipeline {
         cue: {
           id,
           seq: this.seqFor(id),
-          startEpochMs: this.clock.toEpochMs(startSample),
-          endEpochMs: this.clock.toEpochMs(endSample),
+          startEpochMs: 0,
+          endEpochMs: 0,
+          origin: this.options.media ? 'lookahead' : 'live',
           source: { text: '', language: UNKNOWN_LANGUAGE, final: false },
           translation: null,
           untranslated: 'pending',
@@ -255,10 +287,23 @@ export class Pipeline {
         mixed: null,
         translatedAt: null,
       };
+      this.place(state.cue, startSample, endSample);
       this.segments.set(id, state);
       this.prune();
     }
     return state;
+  }
+
+  /** Times a cue: in epoch ms as heard, or (lookahead) on the video's timeline. */
+  private place(cue: Cue, startSample: number, endSample: number): void {
+    const media = this.options.media;
+    if (media) {
+      const rate = PIPELINE_SAMPLE_RATE;
+      cue.media = { timeline: media.timeline, start: startSample / rate, end: endSample / rate };
+      return;
+    }
+    cue.startEpochMs = this.clock.toEpochMs(startSample);
+    cue.endEpochMs = this.clock.toEpochMs(endSample);
   }
 
   /**
@@ -289,8 +334,7 @@ export class Pipeline {
     const state = this.segmentState(result.segmentId, result.startSample, result.endSample);
     const { cue } = state;
     const language = result.language?.tag ?? this.options.sourceLanguage ?? UNKNOWN_LANGUAGE;
-    cue.startEpochMs = this.clock.toEpochMs(result.startSample);
-    cue.endEpochMs = this.clock.toEpochMs(result.endSample);
+    this.place(cue, result.startSample, result.endSample);
     cue.source = { text: result.text, language, final: result.final };
     const target = this.options.targetLanguage;
 
@@ -524,7 +568,10 @@ export class Pipeline {
   }
 
   private emit(cue: Cue): void {
-    this.options.onCue(structuredClone(cue));
+    const out = structuredClone(cue);
+    const prefix = this.options.media?.idPrefix;
+    if (prefix) out.id = `${prefix}${out.id}`;
+    this.options.onCue(out);
   }
 
   /** Keep only recent segments; old ones can't change any more. */
