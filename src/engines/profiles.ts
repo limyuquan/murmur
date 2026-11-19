@@ -7,7 +7,7 @@
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
 import { checkEngine, gpuKind, type HardwareInfo } from './hardware';
 import { GEMMA_E2B_ID, GEMMA_E4B_ID } from './llm/info';
-import { QWEN3_ASR_ID } from './qwen3asr/info';
+import { QWEN3_ASR_17B_ID, QWEN3_ASR_ID } from './qwen3asr/info';
 import type { EngineRegistry } from './registry';
 import type { EngineInfo } from './types';
 
@@ -28,7 +28,7 @@ export const DEMO_ASR_ID = 'demo-echo';
 export const DEMO_TRANSLATION_ID = 'demo-passthrough';
 export const WHISPER_BASE_ID = 'whisper-base';
 export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
-export { GEMMA_E2B_ID, GEMMA_E4B_ID, QWEN3_ASR_ID };
+export { GEMMA_E2B_ID, GEMMA_E4B_ID, QWEN3_ASR_17B_ID, QWEN3_ASR_ID };
 
 /**
  * What runs when an engine turns out not to work here once it loads (EngineUnavailableError):
@@ -36,7 +36,9 @@ export { GEMMA_E2B_ID, GEMMA_E4B_ID, QWEN3_ASR_ID };
  */
 export const RUNTIME_FALLBACKS: Readonly<Record<string, string>> = {
   [CHROME_WEBSPEECH_ID]: WHISPER_BASE_ID,
-  // Its worker found no 16-bit float shaders after all, or its files aren't published.
+  // Its worker found no 16-bit float shaders after all, or its files aren't published. The 1.7B
+  // goes to the 0.6B, which then goes to turbo for the same reasons.
+  [QWEN3_ASR_17B_ID]: QWEN3_ASR_ID,
   [QWEN3_ASR_ID]: WHISPER_TURBO_ID,
   // Out of graphics memory, no WebGPU after all, or a Chrome too old for the runtime. Not E4B
   // to E2B: E2B may not be downloaded.
@@ -89,14 +91,15 @@ export const PROFILES: Record<ProfileId, ModelProfile> = {
     asr: [QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
     translation: [GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
-  // Until the companion app exists, the best the browser runs: the larger translation model,
-  // E2B where E4B doesn't fit.
+  // Until the companion app exists, the best the browser runs: the larger speech and translation
+  // models, each giving way to the smaller one where it doesn't fit. The 1.7B asks for more
+  // graphics memory than E4B (both run together), so a device that fits only one keeps E4B.
   best: {
     id: 'best',
     label: 'Best',
     description:
       'The largest models in the browser: needs a graphics card with its own memory, or the companion app.',
-    asr: [QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
+    asr: [QWEN3_ASR_17B_ID, QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
     translation: [GEMMA_E4B_ID, GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
 };

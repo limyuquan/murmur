@@ -4,6 +4,7 @@ import { createBuiltinRegistry } from '@/engines/builtin';
 import { type HardwareInfo, NO_HARDWARE } from '@/engines/hardware';
 import { GEMMA_E2B_INFO, GEMMA_E4B_INFO } from '@/engines/llm/info';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
+import { EngineRegistry } from '@/engines/registry';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from '@/engines/whisper/info';
 import { allModels, knownModels, modelsFor, splitMissing, totalMB } from '@/models/catalog';
 import {
@@ -79,6 +80,33 @@ describe('catalog', () => {
     // A translator with nothing to stand in for it is required.
     const own = balanced.filter((m) => m.role === 'translation');
     expect(splitMissing(own, 'some-translator')).toEqual({ required: own, optional: [] });
+  });
+
+  it('Best needs Qwen3-ASR 1.7B and E4B where its files are published, the 0.6B with less memory', () => {
+    const published = new EngineRegistry();
+    for (const info of registry.asrEngines()) {
+      const { unavailable: _, ...rest } = info;
+      published.registerAsr({ info: rest, create: async () => ({}) as never });
+    }
+    for (const info of registry.translationEngines()) {
+      published.registerTranslation({ info, create: async () => ({}) as never });
+    }
+    const sized = (choice: 'balanced' | 'best', hw: HardwareInfo) =>
+      modelsFor(choice, custom, published, hw).map((m) => [m.id, formatSize(m.sizeMB)]);
+    expect(sized('best', NVIDIA)).toEqual([
+      ['qwen3-asr-1.7b-webgpu', '2.3 GB'],
+      ['gemma4-e4b-webgpu', '3.0 GB'],
+    ]);
+    expect(sized('balanced', NVIDIA)).toEqual([
+      ['qwen3-asr-0.6b-webgpu', '1.1 GB'],
+      ['gemma4-e2b-webgpu', '2.0 GB'],
+    ]);
+    const apple = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'apple' } };
+    expect(sized('best', apple)).toEqual([
+      ['qwen3-asr-0.6b-webgpu', '1.1 GB'],
+      ['gemma4-e2b-webgpu', '2.0 GB'],
+    ]);
+    expect(knownModels(published).map((m) => m.id)).toContain('qwen3-asr-1.7b-webgpu');
   });
 
   it('declares exact files whose sizes add up to the download', () => {

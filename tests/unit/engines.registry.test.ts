@@ -16,6 +16,7 @@ import {
   LINE_FALLBACKS,
   PROFILE_ORDER,
   PROFILES,
+  QWEN3_ASR_17B_ID,
   QWEN3_ASR_ID,
   RUNTIME_FALLBACKS,
   recommendProfile,
@@ -23,6 +24,7 @@ import {
   WHISPER_BASE_ID,
   WHISPER_TURBO_ID,
 } from '@/engines/profiles';
+import { QWEN3_ASR_17B_INFO, QWEN3_ASR_INFO } from '@/engines/qwen3asr/info';
 import { EngineRegistry } from '@/engines/registry';
 import type { AsrEngine, AsrEngineInfo } from '@/engines/types';
 
@@ -79,7 +81,7 @@ describe('EngineRegistry', () => {
       WHISPER_BASE_ID,
       WHISPER_TURBO_ID,
       QWEN3_ASR_ID,
-      'qwen3-asr-1.7b',
+      QWEN3_ASR_17B_ID,
     ]);
     expect(r.translationEngines().map((e) => e.id)).toEqual([
       'chrome-translator',
@@ -172,7 +174,6 @@ describe('profiles', () => {
     expect(PROFILES.light.asr).toEqual(['chrome-webspeech', WHISPER_BASE_ID]);
     expect(PROFILES.light.translation).toEqual(['chrome-translator']);
     expect(PROFILES.balanced.asr).toEqual([QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID]);
-    expect(PROFILES.best.asr).toEqual(PROFILES.balanced.asr);
     // Qwen3-ASR's files aren't published, so builds that download from Hugging Face skip it.
     const r = createBuiltinRegistry();
     const none = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
@@ -187,6 +188,60 @@ describe('profiles', () => {
       asr: WHISPER_BASE_ID,
       translation: 'chrome-translator',
     });
+  });
+
+  it('Best: Qwen3-ASR 1.7B with Gemma 4 E4B, the 0.6B where the device has less memory', () => {
+    expect(PROFILES.best.asr).toEqual([
+      QWEN3_ASR_17B_ID,
+      QWEN3_ASR_ID,
+      WHISPER_TURBO_ID,
+      WHISPER_BASE_ID,
+    ]);
+    // As where the files are published (or come from the fixture server).
+    const r = new EngineRegistry();
+    for (const info of createBuiltinRegistry().asrEngines()) {
+      const { unavailable: _, ...published } = info;
+      r.registerAsr({ info: published, create: async () => fakeEngine(published) });
+    }
+    for (const info of createBuiltinRegistry().translationEngines()) {
+      r.registerTranslation({ info, create: async () => fakeEngine(info as never) as never });
+    }
+    const none = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
+    const best = (hw: HardwareInfo) => resolveEngines('best', none, r, hw);
+    // A card with its own memory: both large models.
+    expect(best(NVIDIA)).toEqual({ asr: QWEN3_ASR_17B_ID, translation: GEMMA_E4B_ID, notes: [] });
+    // Apple silicon sharing 8 GB: the smaller of each.
+    const apple = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'apple' } };
+    expect(best(apple)).toMatchObject({ asr: QWEN3_ASR_ID, translation: GEMMA_E2B_ID });
+    expect(best(apple).notes).toContain(
+      'Qwen3-ASR 1.7B: Needs about 6 GB of graphics memory, more than this device seems to have.',
+    );
+    // A card whose memory isn't known (AMD): the 0.6B.
+    expect(best({ ...GPU, webgpu: { ...GPU.webgpu, vendor: 'amd' } }).asr).toBe(QWEN3_ASR_ID);
+    // No 16-bit float shaders: neither size (nor turbo).
+    const noF16 = { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, shaderF16: false } };
+    expect(best(noF16).asr).toBe(WHISPER_BASE_ID);
+    // Balanced keeps the 0.6B even on a large card.
+    expect(resolveEngines('balanced', none, r, NVIDIA).asr).toBe(QWEN3_ASR_ID);
+    // Where neither size's files are published, Best runs turbo.
+    expect(resolveEngines('best', none, createBuiltinRegistry(), NVIDIA)).toMatchObject({
+      asr: WHISPER_TURBO_ID,
+      notes: expect.arrayContaining([
+        'Qwen3-ASR 1.7B: model files not published yet',
+        'Qwen3-ASR 0.6B: model files not published yet',
+      ]),
+    });
+  });
+
+  it('a Qwen3-ASR that can’t run here falls back to the smaller one, then to turbo', () => {
+    expect(RUNTIME_FALLBACKS[QWEN3_ASR_17B_ID]).toBe(QWEN3_ASR_ID);
+    expect(RUNTIME_FALLBACKS[QWEN3_ASR_ID]).toBe(WHISPER_TURBO_ID);
+    // The 1.7B asks for more graphics memory than E4B, so a device that fits only one keeps E4B.
+    const need = (info: { requirements: { minGpuMemoryMB?: number } }) =>
+      info.requirements.minGpuMemoryMB ?? 0;
+    const e4b = createBuiltinRegistry().translationInfo(GEMMA_E4B_ID) ?? { requirements: {} };
+    expect(need(QWEN3_ASR_17B_INFO)).toBeGreaterThan(need(e4b));
+    expect(need(QWEN3_ASR_INFO)).toBe(0);
   });
 
   it('takes the first candidate that fits, with notes on the ones skipped', () => {
