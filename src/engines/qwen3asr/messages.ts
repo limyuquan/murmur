@@ -1,4 +1,5 @@
 /** Messages between the Qwen3-ASR engine (offscreen document) and its worker. */
+import type { SimulatedFailure } from '../types';
 import type { Qwen3Model } from './info';
 
 export type ToWorker =
@@ -6,6 +7,8 @@ export type ToWorker =
       type: 'load';
       /** Its files are already in the model cache: the worker never downloads. */
       model: Qwen3Model;
+      /** Fail as if out of graphics memory at this point (e2e checks). */
+      simulateOutOfMemory?: SimulatedFailure;
     }
   | {
       type: 'decode';
@@ -45,4 +48,14 @@ export type FromWorker =
     }
   | { type: 'ready'; loadMs: number; warmupMs: number }
   | { type: 'result'; output: DecodeOutput }
-  | { type: 'error'; id: number | null; message: string; unavailable?: boolean };
+  | {
+      type: 'error';
+      id: number | null;
+      message: string;
+      unavailable?: boolean;
+      /**
+       * Graphics (or WebAssembly) memory ran out, or the device was lost: while loading, or
+       * (`id` null after `ready`) later.
+       */
+      memory?: boolean;
+    };

@@ -14,6 +14,8 @@
  */
 import { Backend, Engine, loadLiteRtLm, SamplerType } from '@litert-lm/core';
 import { MODEL_CACHE, readBlob } from '@/models/hub';
+import { looksLikeOutOfMemory } from '../errors';
+import { watchGpuDevices } from '../gpuwatch';
 import type { FromWorker, GenerationStats, ToWorker } from './messages';
 
 /** The one LiteRT-LM build Murmur ships (relaxed SIMD + JSPI). */
@@ -22,6 +24,7 @@ export const LITERT_WASM_JS = 'litertlm_wasm_internal.js';
 type Conversation = Awaited<ReturnType<Engine['createConversation']>>;
 
 class Unavailable extends Error {}
+class MemoryFailure extends Error {}
 
 /** The part of a worker's global scope the worker uses. */
 interface WorkerScope {
@@ -30,6 +33,8 @@ interface WorkerScope {
 }
 
 export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerScope): void {
+  /** Every graphics device LiteRT-LM makes here, watched for running out of memory. */
+  const gpu = watchGpuDevices();
   let engine: Engine | null = null;
   /** The generation running now, to cancel. */
   let current: { id: number; conversation: Conversation | null; cancelled: boolean } | null = null;
@@ -44,7 +49,22 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
       id,
       message: err instanceof Error ? err.message : String(err),
       ...(err instanceof Unavailable ? { unavailable: true } : {}),
+      ...(err instanceof MemoryFailure ? { memory: true } : {}),
     });
+
+  /**
+   * Out of memory when a device reported running out, the error says so, or an e2e check asked
+   * for it at `stage`; else null.
+   */
+  const memoryFailure = (err: unknown, stage: string, simulate: string | undefined) => {
+    if (simulate === stage) {
+      gpu.record(`The graphics card ran out of memory (simulated, at ${stage}).`);
+    }
+    const seen = gpu.failure();
+    if (seen) return new MemoryFailure(seen);
+    if (err !== null && looksLikeOutOfMemory(message(err))) return new MemoryFailure(message(err));
+    return null;
+  };
 
   scope.onmessage = (event: MessageEvent<ToWorker>) => {
     const m = event.data;
@@ -75,6 +95,7 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
     const file = m.source.files.find((f) => f.path === m.file);
     const model = file && (await readBlob(cache, m.source, file));
     if (!model) throw new Error(`${m.file} isn’t downloaded.`);
+    const simulate = m.simulateOutOfMemory;
     try {
       engine = await Engine.create({
         model,
@@ -83,9 +104,15 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
         benchmarkEnabled: true,
       });
     } catch (err) {
-      // Most often the graphics card ran out of memory: the session uses another translator.
-      throw new Unavailable(`The translation model couldn’t start here: ${message(err)}`);
+      // Out of graphics memory: the session steps down to smaller models. Anything else: it
+      // uses another translator.
+      throw (
+        memoryFailure(err, 'load', simulate) ??
+        new Unavailable(`The translation model couldn’t start here: ${message(err)}`)
+      );
     }
+    const loaded = memoryFailure(null, 'load', simulate);
+    if (loaded) throw loaded;
     const loadMs = Math.round(performance.now() - started);
     // The first generation compiles the shaders (2–7 s): do it now.
     post({ type: 'progress', stage: 'warmup', fraction: null });
@@ -93,9 +120,16 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
     try {
       await generate(0, m.warmup.system, m.warmup.user, 16, () => {});
     } catch (err) {
-      throw new Unavailable(`The translation model couldn’t run here: ${message(err)}`);
+      throw (
+        memoryFailure(err, 'warmup', simulate) ??
+        new Unavailable(`The translation model couldn’t run here: ${message(err)}`)
+      );
     }
+    const warmed = memoryFailure(null, 'warmup', simulate);
+    if (warmed) throw warmed;
     post({ type: 'ready', loadMs, warmupMs: Math.round(performance.now() - warm) });
+    // Later: the engine gives its lines to Chrome's translator.
+    gpu.onFailure((text) => post({ type: 'error', id: null, message: text, memory: true }));
   }
 
   async function run(m: Extract<ToWorker, { type: 'generate' }>): Promise<void> {

@@ -10,6 +10,8 @@
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
 import { MODEL_CACHE, readFile } from '@/models/hub';
+import { looksLikeOutOfMemory } from '../errors';
+import { watchGpuDevices } from '../gpuwatch';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
 import { ort, Qwen3Asr } from './model';
 import { languageIds } from './prompt';
@@ -20,6 +22,9 @@ ort.env.wasm.wasmPaths = {
 };
 ort.env.wasm.numThreads = 1;
 ort.env.webgpu.powerPreference = 'high-performance';
+
+/** Every graphics device ONNX Runtime makes here, watched for running out of memory. */
+const gpu = watchGpuDevices();
 
 let model: Qwen3Asr | null = null;
 /** Decodes run one at a time, in arrival order. */
@@ -45,10 +50,38 @@ function fail(id: number | null) {
       id,
       message: err instanceof Error ? err.message : String(err),
       ...(err instanceof Unavailable ? { unavailable: true } : {}),
+      ...(err instanceof MemoryFailure ? { memory: true } : {}),
     });
 }
 
 class Unavailable extends Error {}
+class MemoryFailure extends Error {}
+
+/**
+ * Runs a stage of the load, failing it as out of memory when a device reported running out
+ * (or the error says so), or when an e2e check asked for that here.
+ */
+async function stage<T>(
+  name: 'load' | 'warmup',
+  simulate: string | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  let out: T;
+  try {
+    out = await work();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const seen = gpu.failure();
+    if (seen || looksLikeOutOfMemory(message)) throw new MemoryFailure(seen ?? message);
+    throw err;
+  }
+  if (simulate === name) {
+    gpu.record(`The graphics card ran out of memory (simulated, at ${name}).`);
+  }
+  const seen = gpu.failure();
+  if (seen) throw new MemoryFailure(seen);
+  return out;
+}
 
 async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void> {
   const started = performance.now();
@@ -63,24 +96,32 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
   }
   const cache = await caches.open(MODEL_CACHE);
   const { source } = message.model;
-  model = await Qwen3Asr.load(
-    message.model,
-    async (path) => {
-      const file = source.files.find((f) => f.path === path);
-      const res = file && (await readFile(cache, source, file));
-      if (!res) throw new Error(`${path} isn’t downloaded.`);
-      return new Uint8Array(await res.arrayBuffer());
-    },
-    (fraction, file) => post({ type: 'progress', stage: 'compile', fraction, file }),
+  const simulate = message.simulateOutOfMemory;
+  model = await stage('load', simulate, () =>
+    Qwen3Asr.load(
+      message.model,
+      async (path) => {
+        const file = source.files.find((f) => f.path === path);
+        const res = file && (await readFile(cache, source, file));
+        if (!res) throw new Error(`${path} isn’t downloaded.`);
+        return new Uint8Array(await res.arrayBuffer());
+      },
+      (fraction, file) => post({ type: 'progress', stage: 'compile', fraction, file }),
+    ),
   );
+  const loaded = model;
   const loadMs = Math.round(performance.now() - started);
   // The first decodes compile the GPU shaders for each new shape: do it now, on ~10 s of quiet
   // noise with a forced language and some decoding steps, so the first real line isn't late.
   post({ type: 'progress', stage: 'warmup', fraction: null });
   const warm = performance.now();
   const noise = new Float32Array(16_000 * 10).map(() => (Math.random() - 0.5) * 0.01);
-  await model.transcribe(noise, { forced: languageIds('en'), minTokens: 16 });
+  await stage('warmup', simulate, () =>
+    loaded.transcribe(noise, { forced: languageIds('en'), minTokens: 16 }),
+  );
   post({ type: 'ready', loadMs, warmupMs: Math.round(performance.now() - warm) });
+  // Later: the session hears of it (another model loading may take the memory this one needs).
+  gpu.onFailure((m) => post({ type: 'error', id: null, message: m, memory: true }));
 }
 
 interface GpuAdapterLike {

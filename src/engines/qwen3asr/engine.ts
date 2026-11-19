@@ -14,7 +14,12 @@
 
 import { isComplete } from '@/models/hub';
 import { DecodeQueue } from '../decodequeue';
-import { EngineUnavailableError, ModelError } from '../errors';
+import {
+  EngineUnavailableError,
+  looksLikeOutOfMemory,
+  ModelError,
+  OutOfMemoryError,
+} from '../errors';
 import { type SegmentDecode, SegmentSession } from '../segments';
 import type {
   AsrEngine,
@@ -62,6 +67,8 @@ export interface DecodeRecord {
 export class Qwen3AsrEngine implements AsrEngine {
   private status: EngineState = 'unloaded';
   private worker: Worker | null = null;
+  /** The graphics device ran out of memory or was lost after loading. */
+  private lostMemory: OutOfMemoryError | null = null;
   private loading: Promise<void> | null = null;
   private nextId = 1;
   /** Live decodes before lookahead's on the one worker (decodequeue.ts). */
@@ -117,12 +124,20 @@ export class Qwen3AsrEngine implements AsrEngine {
     }
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     this.worker = worker;
+    this.lostMemory = null;
     try {
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => reject(options.signal?.reason ?? new Error('Loading was cancelled.'));
         options.signal?.addEventListener('abort', onAbort, { once: true });
-        worker.onerror = (e) =>
-          reject(new ModelError(e.message || `${this.info.label} stopped while loading.`));
+        worker.onerror = (e) => {
+          const message = e.message || `${this.info.label} stopped while loading.`;
+          // A worker that dies allocating (WebAssembly memory) ran out of memory too.
+          reject(
+            looksLikeOutOfMemory(message)
+              ? new OutOfMemoryError(`${this.info.label}: ${message}`)
+              : new ModelError(message),
+          );
+        };
         worker.onmessage = (event: MessageEvent<FromWorker>) => {
           const m = event.data;
           if (m.type === 'progress') {
@@ -136,15 +151,23 @@ export class Qwen3AsrEngine implements AsrEngine {
             resolve();
           } else if (m.type === 'error' && m.id === null) {
             reject(
-              m.unavailable
-                ? new EngineUnavailableError(m.message)
-                : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
-                    this.model.modelId,
-                  ]),
+              m.memory
+                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`)
+                : m.unavailable
+                  ? new EngineUnavailableError(m.message)
+                  : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
+                      this.model.modelId,
+                    ]),
             );
           }
         };
-        worker.postMessage({ type: 'load', model: this.model } satisfies ToWorker);
+        worker.postMessage({
+          type: 'load',
+          model: this.model,
+          ...(options.simulateOutOfMemory
+            ? { simulateOutOfMemory: options.simulateOutOfMemory }
+            : {}),
+        } satisfies ToWorker);
       });
       worker.onmessage = (event: MessageEvent<FromWorker>) => this.onMessage(event.data);
       worker.onerror = (e) =>
@@ -156,6 +179,10 @@ export class Qwen3AsrEngine implements AsrEngine {
       this.status = 'error';
       throw err;
     }
+  }
+
+  memoryFailure(): Error | null {
+    return this.lostMemory;
   }
 
   async unload(): Promise<void> {
@@ -243,6 +270,9 @@ export class Qwen3AsrEngine implements AsrEngine {
     } else if (m.type === 'error' && m.id !== null) {
       this.pending.get(m.id)?.reject(new Error(m.message));
       this.pending.delete(m.id);
+    } else if (m.type === 'error' && m.memory) {
+      this.lostMemory ??= new OutOfMemoryError(`${this.info.label}: ${m.message}`);
+      console.warn('[murmur]', this.info.id, 'graphics memory failure after loading', m.message);
     }
   }
 

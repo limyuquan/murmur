@@ -20,7 +20,12 @@
  *   so the session can have another translator do that line (translators.ts).
  */
 import { isComplete } from '@/models/hub';
-import { EngineUnavailableError, ModelError } from '../errors';
+import {
+  EngineUnavailableError,
+  looksLikeOutOfMemory,
+  ModelError,
+  OutOfMemoryError,
+} from '../errors';
 import { LINE_BUDGET_MS } from '../translators';
 import type {
   EngineState,
@@ -223,10 +228,14 @@ export class LlmTranslationEngine implements TranslationEngine {
           );
         };
         armStall();
-        worker.onerror = (e) =>
+        worker.onerror = (e) => {
+          const message = e.message || `${this.info.label} stopped while loading.`;
           reject(
-            new EngineUnavailableError(e.message || `${this.info.label} stopped while loading.`),
+            looksLikeOutOfMemory(message)
+              ? new OutOfMemoryError(`${this.info.label}: ${message}`)
+              : new EngineUnavailableError(message),
           );
+        };
         worker.onmessage = (event) => {
           const m = event.data;
           if (m.type === 'progress') {
@@ -241,11 +250,13 @@ export class LlmTranslationEngine implements TranslationEngine {
             resolve();
           } else if (m.type === 'error' && m.id === null) {
             reject(
-              m.unavailable
-                ? new EngineUnavailableError(m.message)
-                : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
-                    llmModelId(this.id),
-                  ]),
+              m.memory
+                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`)
+                : m.unavailable
+                  ? new EngineUnavailableError(m.message)
+                  : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
+                      llmModelId(this.id),
+                    ]),
             );
           }
         };
@@ -256,6 +267,9 @@ export class LlmTranslationEngine implements TranslationEngine {
           wasmBase: this.options.wasmBase ?? defaultWasmBase(),
           maxNumTokens: MAX_NUM_TOKENS,
           warmup,
+          ...(options.simulateOutOfMemory
+            ? { simulateOutOfMemory: options.simulateOutOfMemory }
+            : {}),
         });
       }).finally(() => clearTimeout(stall));
       worker.onmessage = (event) => this.onMessage(event.data);

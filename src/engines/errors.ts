@@ -10,6 +10,9 @@
  * - `CompanionError`: the engine needs the companion app, and it isn't answering. Code `companion`.
  * - `UnsupportedLanguageError`: the engine can't handle a line's language at all (not a pack to
  *   download). The session lists the language as one it can't translate.
+ * - `OutOfMemoryError`: the engine ran out of graphics (or WebAssembly) memory while loading or
+ *   warming up, or its graphics device was lost. The session steps down to smaller models
+ *   (profiles.ts `LADDERS`, loading.ts `loadLadder`).
  *
  * Errors cross from the worker or offscreen document by message, so `name` is what's checked.
  */
@@ -75,3 +78,22 @@ export function isCompanionError(err: unknown): err is CompanionError {
 export function isUnsupportedLanguage(err: unknown): err is UnsupportedLanguageError {
   return err instanceof Error && err.name === 'UnsupportedLanguageError' && 'language' in err;
 }
+
+export class OutOfMemoryError extends Error {
+  override readonly name = 'OutOfMemoryError';
+}
+
+export function isOutOfMemory(err: unknown): err is OutOfMemoryError {
+  return err instanceof Error && err.name === 'OutOfMemoryError';
+}
+
+/**
+ * Whether an error message from a runtime (WebGPU, ONNX Runtime, LiteRT-LM, Emscripten, the
+ * browser) says memory ran out or the graphics device was lost.
+ */
+export function looksLikeOutOfMemory(message: string): boolean {
+  return OUT_OF_MEMORY.test(message);
+}
+
+const OUT_OF_MEMORY =
+  /out[ -]?of[ -]?memory|\boom\b|allocation failed|(failed to|could not|cannot) allocate|bad_alloc|cannot enlarge memory|device (was |is |has been )?lost|devicelost|not enough memory|insufficient memory/i;

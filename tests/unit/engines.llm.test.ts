@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EngineUnavailableError } from '@/engines/errors';
+import { EngineUnavailableError, isOutOfMemory } from '@/engines/errors';
 import {
   type GenerationRecord,
   LlmOutputError,
@@ -280,6 +280,48 @@ describe('LLM translation engine', () => {
     });
     await expect(e.load()).rejects.toBeInstanceOf(EngineUnavailableError);
     expect(w.terminated).toBe(true);
+  });
+
+  it('out of graphics memory while loading or warming up: the session steps down', async () => {
+    const w = new FakeWorker();
+    w.postMessage = (m) => {
+      w.sent.push(m);
+      if (m.type === 'load') {
+        queueMicrotask(() =>
+          w.emit({
+            type: 'error',
+            id: null,
+            message: 'The graphics card ran out of memory (simulated, at warmup).',
+            memory: true,
+          }),
+        );
+      }
+    };
+    const e = new LlmTranslationEngine(GEMMA_E2B_INFO, GEMMA_E2B_ID, {
+      createWorker: () => w,
+      isDownloaded: async () => true,
+      wasmBase: 'chrome-extension://x/litert/',
+    });
+    const err = await e.load({ simulateOutOfMemory: 'warmup' }).catch((x: unknown) => x);
+    expect(isOutOfMemory(err)).toBe(true);
+    expect((err as Error).message).toMatch(/^Gemma 4 E2B: .*ran out of memory/);
+    expect(w.sent[0]).toMatchObject({ type: 'load', simulateOutOfMemory: 'warmup' });
+    expect(w.terminated).toBe(true);
+    // A worker that dies allocating counts too.
+    const w2 = new FakeWorker();
+    w2.postMessage = (m) => {
+      if (m.type === 'load') {
+        queueMicrotask(() =>
+          w2.onerror?.({ message: 'Uncaught RangeError: Array buffer allocation failed' } as never),
+        );
+      }
+    };
+    const e2 = new LlmTranslationEngine(GEMMA_E2B_INFO, GEMMA_E2B_ID, {
+      createWorker: () => w2,
+      isDownloaded: async () => true,
+      wasmBase: 'chrome-extension://x/litert/',
+    });
+    expect(isOutOfMemory(await e2.load().catch((x: unknown) => x))).toBe(true);
   });
 
   it('gives up on a load or warm-up that stalls, so loading falls back', async () => {

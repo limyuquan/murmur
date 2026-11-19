@@ -1,5 +1,6 @@
 /** Messages between the LLM translation engine (offscreen document) and its worker. */
 import type { ModelSource } from '@/models/hub';
+import type { SimulatedFailure } from '../types';
 
 export type ToWorker =
   | {
@@ -14,6 +15,8 @@ export type ToWorker =
       maxNumTokens: number;
       /** A short generation run while loading, so the first real line isn't slow. */
       warmup: { system: string; user: string };
+      /** Fail as if out of graphics memory at this point (e2e checks). */
+      simulateOutOfMemory?: SimulatedFailure;
     }
   | { type: 'generate'; id: number; system: string; user: string; maxTokens: number }
   /** Stops a generation; it then ends with `done` (`cancelled: true`). */
@@ -38,4 +41,11 @@ export type FromWorker =
   /** More of the answer: `text` is what was added. */
   | { type: 'token'; id: number; text: string }
   | { type: 'done'; id: number; text: string; cancelled: boolean; stats: GenerationStats }
-  | { type: 'error'; id: number | null; message: string; unavailable?: boolean };
+  | {
+      type: 'error';
+      id: number | null;
+      message: string;
+      unavailable?: boolean;
+      /** Graphics (or WebAssembly) memory ran out, or the device was lost. */
+      memory?: boolean;
+    };

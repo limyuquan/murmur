@@ -48,8 +48,9 @@ export interface HardwareRequirements {
   /** Needs WebGPU `shader-f16`. */
   shaderF16?: boolean;
   /**
-   * Graphics memory it needs, MB, next to the speech model it runs with. Checked against a guess
-   * (`estimateGpuMemoryMB` in hardware.ts): WebGPU doesn't tell how much a card has.
+   * Graphics memory the engine uses by itself at its peak, MB (measured; warm-up included).
+   * Checked against a guess (`estimateGpuMemoryMB` in hardware.ts): WebGPU doesn't tell how much
+   * a card has. Profiles add up their two engines' (profiles.ts, `LADDERS`).
    */
   minGpuMemoryMB?: number;
   /** One-off model download, MB. Shown before the user agrees to download. */
@@ -171,7 +172,15 @@ export interface LoadOptions {
   hardware?: HardwareInfo;
   /** What the session will ask for, so the engine can check packs or warm up for it. */
   session?: SessionLanguages;
+  /**
+   * Fail as if the graphics card ran out of memory, at this point of the load (e2e builds only:
+   * checks of the step down to smaller models with real models).
+   */
+  simulateOutOfMemory?: SimulatedFailure;
 }
+
+/** Where a simulated out-of-memory failure happens: loading the model, or its warm-up run. */
+export type SimulatedFailure = 'load' | 'warmup';
 
 export interface SessionLanguages {
   targetLanguage: LanguageTag;
@@ -191,6 +200,11 @@ export interface Engine<I extends EngineInfo> {
    * downloaded (`ModelError`); Chrome language packs need a click (`EngineActionRequiredError`).
    */
   load(options?: LoadOptions): Promise<void>;
+  /**
+   * The engine's graphics memory ran out or its device was lost since it loaded (its later output
+   * can't be trusted), or null. Engines without a GPU device leave it out.
+   */
+  memoryFailure?(): Error | null;
   /** Frees the model. The engine can be loaded again later. */
   unload(): Promise<void>;
 }
