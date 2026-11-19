@@ -21,6 +21,8 @@ export const ENGINE_FACTORIES: EngineFactories = {
   'chrome-translator': async () =>
     new (await import('./chrome/translator')).ChromeTranslatorEngine(),
   'demo-echo': async () => new (await import('./demo/echoAsr')).EchoAsrEngine(),
+  'demo-needs-pack': async () => new (await import('./demo/testEngines')).NeedsPackAsrEngine(),
+  'demo-stalled': async () => new (await import('./demo/testEngines')).StalledAsrEngine(),
   'demo-passthrough': async () =>
     new (await import('./demo/passthroughTranslator')).PassthroughTranslationEngine(),
 };

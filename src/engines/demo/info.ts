@@ -32,3 +32,19 @@ export const PASSTHROUGH_INFO: TranslationEngineInfo = {
   usesContext: false,
   license: 'MIT',
 };
+
+/** e2e builds: an ASR engine whose load needs a Chrome language pack first (a click). */
+export const NEEDS_PACK_ASR_INFO: AsrEngineInfo = {
+  ...ECHO_ASR_INFO,
+  id: 'demo-needs-pack',
+  label: 'Demo (needs a language pack)',
+  description: 'Fails to load until a language pack is downloaded. For tests.',
+};
+
+/** e2e builds: an ASR engine whose load never finishes, until it is cancelled. */
+export const STALLED_ASR_INFO: AsrEngineInfo = {
+  ...ECHO_ASR_INFO,
+  id: 'demo-stalled',
+  label: 'Demo (never loads)',
+  description: 'Loads until the session stops. For tests.',
+};

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { PROFILES } from '@/engines/profiles';
 import { call } from '@/messaging/client';
@@ -32,6 +32,9 @@ export function Popup({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [moved, setMoved] = useState(false);
+  /** The newest request: answers to older ones are dropped. */
+  const latest = useRef(0);
+  const starting = useRef(false);
 
   // The session's status lives in storage.session; follow it while the popup is open.
   useEffect(() => {
@@ -60,29 +63,42 @@ export function Popup({
     return watchPositions((all) => setMoved(!!all[site]));
   }, [view.site]);
 
-  const on = isOn(view);
-  const run = async (work: () => Promise<SessionStatus>) => {
+  // A start under way shows as on, so the switch can stop it at once.
+  const on = isOn(view) || starting.current;
+  const run = async (work: () => Promise<SessionStatus>, isStart = false) => {
+    const id = ++latest.current;
     setBusy(true);
     setFailure(null);
+    if (isStart) starting.current = true;
     try {
       const status = await work();
+      // A later click wins over an earlier answer (a stop while the start was under way).
+      if (id !== latest.current) return;
       setView((v) => ({
         ...v,
         status,
         thisTab: status.state !== 'idle' && status.tabId === v.tabId,
       }));
     } catch (err) {
-      setFailure(err instanceof Error ? err.message : String(err));
+      if (id === latest.current) setFailure(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (isStart) starting.current = false;
+      if (id === latest.current) setBusy(false);
     }
   };
-  const toggle = () => run(() => (on ? call('stop', {}) : call('start', { tabId: view.tabId })));
+  const start = () => run(() => call('start', { tabId: view.tabId }), true);
+  const toggle = () => {
+    if (on) {
+      starting.current = false;
+      return run(() => call('stop', {}));
+    }
+    return start();
+  };
 
   const fix = (action: FixAction) => {
     switch (action.kind) {
       case 'retry':
-        void run(() => call('start', { tabId: view.tabId }));
+        void start();
         break;
       case 'settings':
         openOptions(action.section);
@@ -94,7 +110,7 @@ export function Popup({
         void run(async () => {
           await call('stop', {});
           return call('start', { tabId: view.tabId });
-        });
+        }, true);
         break;
     }
   };
@@ -142,7 +158,8 @@ export function Popup({
             checked={on}
             onChange={() => void toggle()}
             labelledBy="toggle-label"
-            disabled={busy || view.tabId < 0}
+            // Never disabled while busy: switching off must cut a start short.
+            disabled={view.tabId < 0}
             testId="toggle"
           />
         </div>
@@ -175,11 +192,7 @@ export function Popup({
               key={setup.map((a) => a.id).join('|')}
               actions={setup}
               // The session stopped for these: start it again once they're in.
-              onAllDone={
-                failedForSetup
-                  ? () => void run(() => call('start', { tabId: view.tabId }))
-                  : undefined
-              }
+              onAllDone={failedForSetup ? () => void start() : undefined}
             />
           </div>
         )}

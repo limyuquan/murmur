@@ -10,8 +10,10 @@ import {
   stopSession,
   toggleSession,
 } from '@/background/session';
+import { OFFSCREEN_PATH } from '@/capture/offscreen';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { isOffscreenEvent, isRequest, type Response } from '@/messaging/protocol';
+import { isExtensionPage, isOffscreenDocument } from '@/messaging/senders';
 import { loadSettings, saveSettings, spokenLanguages } from '@/settings/settings';
 import { COMMANDS } from '@/shared/commands';
 import { IS_E2E } from '@/shared/e2e';
@@ -51,13 +53,14 @@ export default defineBackground(() => {
     }
   });
 
+  const ext = { id: browser.runtime.id, base: browser.runtime.getURL('/') };
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-    if (sender.id !== browser.runtime.id) return;
     if (isOffscreenEvent(message)) {
-      void onOffscreenStatus(message.status);
+      if (isOffscreenDocument(sender, ext, OFFSCREEN_PATH)) void onOffscreenStatus(message.status);
       return;
     }
-    if (!isRequest(message)) return;
+    // Content scripts pass the id check too: requests come from extension pages only.
+    if (!isRequest(message) || !isExtensionPage(sender, ext)) return;
     dispatch(message.op, message.args).then(
       (result): void => sendResponse({ ok: true, result } satisfies Response),
       (err: unknown): void =>
@@ -76,7 +79,9 @@ export default defineBackground(() => {
           source,
           ...(engines === 'demo'
             ? { engines: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID } }
-            : {}),
+            : engines === 'settings'
+              ? {}
+              : { engines }),
         });
         if (status.state === 'error') throw new Error(status.message);
       },

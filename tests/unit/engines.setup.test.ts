@@ -1,12 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { packsFor } from '@/engines/chrome/setup';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { packsFor, translationAction, waitForDownloads } from '@/engines/chrome/setup';
 import {
   CompanionError,
   EngineActionRequiredError,
   EngineUnavailableError,
   ModelError,
 } from '@/engines/errors';
-import type { SetupAction } from '@/engines/types';
+import { loadWithFallback } from '@/engines/loading';
+import type { AsrEngine, SetupAction } from '@/engines/types';
 import { describeError } from '@/offscreen/host';
 
 describe('packsFor', () => {
@@ -58,7 +59,10 @@ describe('describeError (session failures → popup codes)', () => {
       label: 'x',
       languages: [],
     };
-    expect(describeError(new EngineActionRequiredError([action]))).toMatchObject({ code: 'setup' });
+    expect(describeError(new EngineActionRequiredError([action]))).toMatchObject({
+      code: 'setup',
+      setup: [action],
+    });
     expect(
       describeError(new ModelError('Whisper base isn’t downloaded yet.', ['w'], true)),
     ).toEqual({
@@ -87,5 +91,67 @@ describe('describeError (session failures → popup codes)', () => {
       missing: false,
     });
     expect(describeError(err).code).toBe('model');
+  });
+});
+
+describe('waitForDownloads', () => {
+  const g = globalThis as { Translator?: unknown };
+  afterEach(() => {
+    delete g.Translator;
+    vi.useRealTimers();
+  });
+  const pack = translationAction('fr', 'en');
+
+  it('gives up on a pack stuck downloading, offering it again', async () => {
+    vi.useFakeTimers();
+    g.Translator = { availability: async () => 'downloading' };
+    const wait = waitForDownloads([pack], undefined, 1000, 5000);
+    const result = expect(wait).rejects.toMatchObject({
+      name: 'EngineActionRequiredError',
+      actions: [pack],
+    });
+    await vi.advanceTimersByTimeAsync(6000);
+    await result;
+  });
+
+  it('stops waiting at once when the session stops', async () => {
+    g.Translator = { availability: async () => 'downloading' };
+    const controller = new AbortController();
+    const wait = waitForDownloads([pack], controller.signal, 60_000);
+    setTimeout(() => controller.abort(new Error('stopped')), 10);
+    await expect(wait).rejects.toThrow('stopped');
+  });
+
+  it('returns once the packs are in', async () => {
+    let state = 'downloading';
+    g.Translator = { availability: async () => state };
+    const wait = waitForDownloads([pack], undefined, 5);
+    setTimeout(() => {
+      state = 'available';
+    }, 20);
+    await expect(wait).resolves.toBeUndefined();
+  });
+});
+
+describe('loadWithFallback', () => {
+  it('gives up on a load that never finishes when the signal aborts, and unloads it', async () => {
+    let unloaded = false;
+    const engine = {
+      info: { label: 'Stuck' },
+      load: () => new Promise<void>(() => {}),
+      unload: async () => {
+        unloaded = true;
+      },
+    } as unknown as AsrEngine;
+    const controller = new AbortController();
+    const loading = loadWithFallback(
+      'stuck',
+      async () => engine,
+      (e) => e.load(),
+      controller.signal,
+    );
+    controller.abort(new Error('stopped'));
+    await expect(loading).rejects.toThrow('stopped');
+    expect(unloaded).toBe(true);
   });
 });

@@ -8,7 +8,12 @@
  */
 import { IS_E2E } from '@/shared/e2e';
 import { CHROME_TRANSLATOR_INFO, CHROME_WEBSPEECH_INFO } from './chrome/info';
-import { ECHO_ASR_INFO, PASSTHROUGH_INFO } from './demo/info';
+import {
+  ECHO_ASR_INFO,
+  NEEDS_PACK_ASR_INFO,
+  PASSTHROUGH_INFO,
+  STALLED_ASR_INFO,
+} from './demo/info';
 import { EngineRegistry } from './registry';
 import type { AnyEngine, AsrEngine, TranslationEngine } from './types';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from './whisper/info';
@@ -34,6 +39,8 @@ export function createBuiltinRegistry(factories: EngineFactories = {}): EngineRe
   if (IS_E2E) {
     registry
       .registerAsr({ info: ECHO_ASR_INFO, create: make<AsrEngine>(ECHO_ASR_INFO.id) })
+      .registerAsr({ info: NEEDS_PACK_ASR_INFO, create: make<AsrEngine>(NEEDS_PACK_ASR_INFO.id) })
+      .registerAsr({ info: STALLED_ASR_INFO, create: make<AsrEngine>(STALLED_ASR_INFO.id) })
       .registerTranslation({
         info: PASSTHROUGH_INFO,
         create: make<TranslationEngine>(PASSTHROUGH_INFO.id),

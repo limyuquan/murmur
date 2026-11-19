@@ -13,6 +13,7 @@
  *
  * Works in any window-like context (extension pages, offscreen document); not the service worker.
  */
+import { EngineActionRequiredError } from '../errors';
 import type { LanguageTag, SetupAction } from '../types';
 import {
   type Availability,
@@ -167,26 +168,48 @@ export async function missingSetup(needs: SetupNeeds): Promise<SetupReport> {
   return report;
 }
 
-/** Polls until none of `actions` is downloading (or `signal` aborts). */
+/**
+ * Longest wait for Chrome's own pack downloads while a session loads. A download stuck at
+ * `downloading` (offline, Chrome stalled) then fails the start with the packs as setup actions,
+ * instead of loading forever.
+ */
+export const PACK_WAIT_MS = 10 * 60_000;
+
+/**
+ * Polls until none of `actions` is downloading. Rejects with the signal's reason when it aborts,
+ * and with `EngineActionRequiredError` (the packs still downloading) after `timeoutMs`.
+ */
 export async function waitForDownloads(
   actions: readonly SetupAction[],
   signal?: AbortSignal,
   intervalMs = 2000,
+  timeoutMs = PACK_WAIT_MS,
 ): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   for (;;) {
     signal?.throwIfAborted();
     const states = await Promise.all(actions.map(setupState));
-    if (!states.includes('downloading')) return;
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, intervalMs);
-      signal?.addEventListener(
-        'abort',
-        () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        },
-        { once: true },
+    const waiting = actions.filter((_, i) => states[i] === 'downloading');
+    if (waiting.length === 0) return;
+    if (Date.now() >= deadline) {
+      throw new EngineActionRequiredError(
+        waiting,
+        `${waiting.map((a) => a.label).join('; ')} (Chrome is still downloading it)`,
       );
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(
+        () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+        Math.max(0, Math.min(intervalMs, deadline - Date.now())),
+      );
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 }

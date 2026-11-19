@@ -7,7 +7,7 @@
  */
 import { browser } from 'wxt/browser';
 
-const OFFSCREEN_PATH = '/offscreen.html';
+export const OFFSCREEN_PATH = '/offscreen.html';
 
 let creating: Promise<void> | null = null;
 

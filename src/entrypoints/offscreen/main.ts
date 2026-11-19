@@ -8,9 +8,11 @@ import {
   isOffscreenCommand,
   type OffscreenReply,
   OVERLAY_PORT,
-  type OverlayHello,
+  type OverlayToHost,
 } from '@/messaging/protocol';
+import { isExtensionContext } from '@/messaging/senders';
 import {
+  describeError,
   OffscreenHost,
   type HostDeps as OffscreenHostDeps,
   type OverlayPort,
@@ -43,29 +45,40 @@ function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines'> {
   };
 }
 
+const ext = { id: browser.runtime.id, base: browser.runtime.getURL('/') };
+
 browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-  if (sender.id !== browser.runtime.id || !isOffscreenCommand(message)) return;
-  const work = message.type === 'start' ? host.start(message.config) : host.stop();
+  // Commands come from the service worker, never from a tab (content scripts have one).
+  if (!isOffscreenCommand(message) || !isExtensionContext(sender, ext)) return;
+  const work =
+    message.type !== 'start'
+      ? host.stop()
+      : message.config.source.kind === 'tone' && !IS_E2E
+        ? Promise.reject(new Error('The test tone is for e2e builds only.'))
+        : host.start(message.config);
   work.then(
     (): void => sendResponse({ ok: true } satisfies OffscreenReply),
     (err: unknown): void =>
-      sendResponse({
-        ok: false,
-        error: { message: err instanceof Error ? err.message : String(err) },
-      } satisfies OffscreenReply),
+      sendResponse({ ok: false, error: describeError(err) } satisfies OffscreenReply),
   );
   return true;
 });
 
 browser.runtime.onConnect.addListener((port) => {
   if (port.name !== OVERLAY_PORT || port.sender?.id !== browser.runtime.id) return;
-  // Wait for the hello so a port is only counted once its frame is listening.
-  const onHello = (message: OverlayHello): void => {
-    if (message?.type !== 'hello') return;
-    port.onMessage.removeListener(onHello);
-    host.addOverlay(port as unknown as OverlayPort);
-  };
-  port.onMessage.addListener(onHello);
+  // Overlays run in pages: a port only ever gets its own tab's cues and status.
+  if (port.sender.tab?.id === undefined) return;
+  const overlay = port as unknown as OverlayPort;
+  let counted = false;
+  port.onMessage.addListener((message: OverlayToHost) => {
+    // Wait for the hello so a port is only counted once its frame is listening.
+    if (message?.type === 'hello' && !counted) {
+      counted = true;
+      host.addOverlay(overlay);
+    } else if (message?.type === 'video' && counted) {
+      host.setOverlayVideo(overlay, message.present === true);
+    }
+  });
 });
 
 console.debug(LOG_PREFIX, 'offscreen document ready');

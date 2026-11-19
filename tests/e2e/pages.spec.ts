@@ -56,39 +56,90 @@ test('popup: a model that isn’t downloaded stops the start, with the fix', asy
   expect(await murmur.status()).toMatchObject({ state: 'error', code: 'model' });
 });
 
-test('popup: one button per language pack the session asked for', async ({
+/** Makes the popup's switch start these engines (the custom profile). */
+async function useEngines(sw: Worker, asr: string): Promise<void> {
+  await sw.evaluate(async (id) => {
+    const { storage } = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+      .chrome;
+    // After the first-install defaults are in, or they would write over this.
+    let current: Record<string, unknown> | undefined;
+    for (let i = 0; i < 50 && !current; i++) {
+      current = (await storage.local.get('settings')).settings as typeof current;
+      if (!current) await new Promise((r) => setTimeout(r, 50));
+    }
+    await storage.local.set({
+      settings: {
+        ...current,
+        profile: 'custom',
+        custom: { asr: id, translation: 'demo-passthrough' },
+      },
+    });
+  }, asr);
+}
+
+test('popup: a start that needs a language pack offers its download', async ({
   murmur,
   serviceWorker,
 }) => {
+  // The engine fails to load in the offscreen document, asking for a pack: the reason has to
+  // reach the popup whole (code, buttons), not as "Something went wrong".
+  await useEngines(serviceWorker, 'demo-needs-pack');
   const page = await murmur.open('video.html');
   const tabId = await murmur.tabId(page);
-  await serviceWorker.evaluate(async (id) => {
-    await (
-      globalThis as unknown as { chrome: typeof import('wxt/browser').browser }
-    ).chrome.storage.session.set({
-      session: {
-        state: 'error',
-        tabId: id,
-        sessionId: 's',
-        code: 'setup',
-        message: 'Chrome needs to download first.',
-        setup: [
-          {
-            id: 'translation:fr>en',
-            kind: 'translation-pack',
-            label: 'Download French to English translation',
-            languages: ['fr', 'en'],
-          },
-        ],
-      },
-    });
-  }, tabId);
   const popup = await page.context().newPage();
   await popup.goto(url(`popup.html?tab=${tabId}`));
+  await popup.getByTestId('toggle').click();
   await expect(popup.getByTestId('status')).toContainText(
     'Chrome needs to download a language pack',
   );
-  await expect(popup.getByTestId('setup-actions')).toContainText('French to English translation');
+  await expect(popup.getByTestId('setup-actions')).toContainText('French speech recognition');
+  expect(await murmur.status()).toMatchObject({
+    state: 'error',
+    code: 'setup',
+    setup: [{ id: 'speech:fr-FR' }],
+  });
+  await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'false');
+  await expect(page.locator('murmur-overlay')).toHaveCount(0);
+});
+
+test('popup: switching off stops a session that is still loading', async ({
+  murmur,
+  serviceWorker,
+}) => {
+  await useEngines(serviceWorker, 'demo-stalled');
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
+  const popup = await page.context().newPage();
+  await popup.goto(url(`popup.html?tab=${tabId}`));
+  await popup.getByTestId('toggle').click();
+  await expect.poll(async () => (await murmur.status()).state).toBe('loading');
+  await expect(popup.getByTestId('toggle')).toBeEnabled();
+  await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'true');
+  await popup.getByTestId('toggle').click();
+  await expect(popup.getByTestId('status')).toHaveText(/^Off/);
+  expect((await murmur.status()).state).toBe('idle');
+  await expect(page.locator('murmur-overlay')).toHaveCount(0);
+});
+
+test('another tab takes over from a session that is still loading', async ({
+  murmur,
+  serviceWorker,
+}) => {
+  const first = await murmur.open('video.html');
+  const firstId = await murmur.tabId(first);
+  await serviceWorker.evaluate(
+    (id) =>
+      (
+        globalThis as unknown as { __murmur: import('@/shared/e2e').BackgroundTestHook }
+      ).__murmur.start(id, 'tone', { asr: 'demo-stalled', translation: 'demo-passthrough' }),
+    firstId,
+  );
+  await expect.poll(async () => (await murmur.status()).state).toBe('loading');
+  const second = await murmur.open('video.html?second');
+  const secondId = await murmur.start(second);
+  await expect.poll(async () => (await murmur.status()).state).toBe('running');
+  expect(await murmur.status()).toMatchObject({ tabId: secondId });
+  await expect(first.locator('murmur-overlay')).toHaveCount(0);
 });
 
 test('options: download a model, stop and resume it, delete it', async ({ context }) => {

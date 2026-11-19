@@ -13,10 +13,15 @@ export interface BackgroundTestHook {
    * What the popup's switch does for `tabId`, minus the click: inject the overlay and start a
    * session. `tone` (default) captures the synthetic test tone; `tab` captures the tab's audio,
    * which without the toolbar click needs Chrome started with `--allowlisted-extension-id`.
-   * `engines`: `demo` (default; no models, no network) or `settings` (the real engines the
-   * settings choose, for checks on a machine that has them).
+   * `engines`: `demo` (default; no models, no network), `settings` (the real engines the
+   * settings choose, for checks on a machine that has them), or these engine ids. Resolves once
+   * the capture is open; the engines load after (poll the status).
    */
-  start(tabId: number, source?: 'tab' | 'tone', engines?: 'demo' | 'settings'): Promise<void>;
+  start(
+    tabId: number,
+    source?: 'tab' | 'tone',
+    engines?: 'demo' | 'settings' | { asr: string; translation: string },
+  ): Promise<void>;
   stop(): Promise<void>;
 }
 

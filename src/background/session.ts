@@ -3,9 +3,11 @@
  * `storage.session`, so it survives the worker being stopped and restarted while the offscreen
  * document keeps running; the popup reads it from there too.
  *
- * Start: offscreen document → overlay injected (all frames) → stream ID minted → offscreen starts
- * capture and engines and reports progress. Stop: close the offscreen document, which ends
- * capture, frees the models and disconnects the overlays (they remove themselves).
+ * Start: offscreen document → overlay injected (all frames) → stream ID minted → offscreen opens
+ * the capture and answers, then loads the engines, reporting progress (and any failure) by event.
+ * Stop: close the offscreen document, which ends capture, frees the models and disconnects the
+ * overlays (they remove themselves). A stop cuts short a start under way; status writes are
+ * serialised and checked against the session id, so a late report never brings a session back.
  */
 import { browser } from 'wxt/browser';
 import {
@@ -14,6 +16,7 @@ import {
   hasOffscreenDocument,
   mintTabStreamId,
 } from '@/capture/offscreen';
+import { untilAborted } from '@/engines/loading';
 import { type ResolvedEngines, resolveEngines } from '@/engines/profiles';
 import type {
   ActiveSessionStatus,
@@ -22,6 +25,7 @@ import type {
   OffscreenReply,
   SessionConfig,
   SessionErrorCode,
+  SessionFailure,
   SessionStatus,
 } from '@/messaging/protocol';
 import { modelsFor } from '@/models/catalog';
@@ -44,15 +48,49 @@ function exclusive<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * The start under way, if any. A stop (switch, shortcut, tab closed, another tab) aborts it
+ * rather than queueing behind it.
+ */
+let starting: { sessionId: string; tabId: number; controller: AbortController } | null = null;
+
 export async function getStatus(): Promise<SessionStatus> {
   const stored = await browser.storage.session.get(SESSION_KEY);
   return (stored[SESSION_KEY] as SessionStatus | undefined) ?? { state: 'idle' };
 }
 
-async function setStatus(status: SessionStatus): Promise<void> {
-  const previous = await getStatus();
-  await browser.storage.session.set({ [SESSION_KEY]: status });
-  await showBadge(status, previous.state === 'idle' ? null : previous.tabId);
+/** Status writes, one at a time, so a read-decide-write never interleaves with another. */
+let writes: Promise<unknown> = Promise.resolve();
+
+/**
+ * Replaces the status with `change(current)`, unless that returns null. Resolves with the status
+ * stored afterwards.
+ */
+function updateStatus(
+  change: (current: SessionStatus) => SessionStatus | null,
+): Promise<SessionStatus> {
+  const run = writes.then(async () => {
+    const previous = await getStatus();
+    const next = change(previous);
+    if (!next) return previous;
+    await browser.storage.session.set({ [SESSION_KEY]: next });
+    await showBadge(next, previous.state === 'idle' ? null : previous.tabId);
+    return next;
+  });
+  writes = run.catch(() => {});
+  return run;
+}
+
+function setStatus(status: SessionStatus): Promise<SessionStatus> {
+  return updateStatus(() => status);
+}
+
+/** `status` when the stored one is still session `sessionId` and hasn't failed already. */
+function ifStillStarting(sessionId: string, status: SessionStatus) {
+  return (current: SessionStatus): SessionStatus | null =>
+    current.state !== 'idle' && current.state !== 'error' && current.sessionId === sessionId
+      ? status
+      : null;
 }
 
 /** Engines a session would use now, from settings and this device. */
@@ -76,6 +114,10 @@ export interface StartOptions {
 }
 
 export function startSession(tabId: number, options: StartOptions = {}): Promise<SessionStatus> {
+  // Another tab takes over at once, even from a start still under way.
+  if (starting && starting.tabId !== tabId) {
+    starting.controller.abort(new DOMException('Another tab took over.', 'AbortError'));
+  }
   return exclusive(async () => {
     const current = await getStatus();
     if (current.state !== 'idle') {
@@ -83,10 +125,15 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
       await stopNow();
     }
     const sessionId = crypto.randomUUID();
+    const controller = new AbortController();
+    const { signal } = controller;
+    starting = { sessionId, tabId, controller };
+    // Every step gives way at once to a stop.
+    const step = <T>(work: Promise<T>) => untilAborted(work, signal);
     await setStatus({ state: 'starting', tabId, sessionId });
     try {
-      const settings = await loadSettings();
-      const engines = options.engines ?? (await plannedEngines(settings));
+      const settings = await step(loadSettings());
+      const engines = options.engines ?? (await step(plannedEngines(settings)));
       const spoken = spokenLanguages(settings, navigator.languages, LANGUAGES);
       if (!options.engines) {
         // Models download only when the person asks: say so before capturing anything.
@@ -94,30 +141,31 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
           settings.profile,
           settings.custom,
           registry,
-          await deviceHardware(),
+          await step(deviceHardware()),
         );
-        const downloaded = await modelStore.downloaded(needed);
+        const downloaded = await step(modelStore.downloaded(needed));
         const missing = needed.filter((m) => !downloaded.has(m.id));
         if (missing.length > 0) {
           const names = missing.map((m) => m.label).join(' and ');
-          await setStatus({
-            state: 'error',
-            tabId,
-            sessionId,
-            code: 'model',
-            message: `${names} ${missing.length > 1 ? 'aren’t' : 'isn’t'} downloaded yet. Download in Settings, under Models.`,
-            missingModels: missing.map((m) => m.id),
-          });
-          return getStatus();
+          return await updateStatus(
+            ifStillStarting(sessionId, {
+              state: 'error',
+              tabId,
+              sessionId,
+              code: 'model',
+              message: `${names} ${missing.length > 1 ? 'aren’t' : 'isn’t'} downloaded yet. Download in Settings, under Models.`,
+              missingModels: missing.map((m) => m.id),
+            }),
+          );
         }
       }
-      await ensureOffscreenDocument();
-      await injectOverlay(tabId);
+      await step(ensureOffscreenDocument());
+      await step(injectOverlay(tabId));
       // Mint last: the ID is single-use and expires within seconds.
       const source: CaptureSourceSpec =
         options.source === 'tone'
           ? { kind: 'tone' }
-          : { kind: 'tab', streamId: await mintTabStreamId(tabId) };
+          : { kind: 'tab', streamId: await step(mintTabStreamId(tabId)) };
       const config: SessionConfig = {
         sessionId,
         tabId,
@@ -131,18 +179,31 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
         spokenLanguages: spoken,
         onlySpoken: settings.onlySpoken,
       };
-      const reply = await sendToOffscreen({ target: 'offscreen', type: 'start', config });
-      if (!reply.ok) throw new Error(reply.error.message);
+      // Answered once the capture is open; the models load after, reporting by event.
+      const reply = await step(
+        sendToOffscreen({ target: 'offscreen', type: 'start', config }, signal),
+      );
+      if (!reply.ok) throw new OffscreenFailure(reply.error);
     } catch (err) {
+      // Stopped: the stop cleans up and sets the status.
+      if (signal.aborted) return getStatus();
       console.error(LOG_PREFIX, 'start failed', err);
-      await setStatus({ state: 'error', tabId, sessionId, ...startError(err) });
+      // The offscreen document's own report (with its code, packs or models) may be in already.
+      const failure = err instanceof OffscreenFailure ? err.failure : startError(err);
+      await updateStatus(
+        ifStillStarting(sessionId, { state: 'error', tabId, sessionId, ...failure }),
+      );
       await closeOffscreenDocument().catch(() => {});
+    } finally {
+      if (starting?.sessionId === sessionId) starting = null;
     }
     return getStatus();
   });
 }
 
+/** Stops the session, cutting short a start under way. */
 export function stopSession(): Promise<SessionStatus> {
+  starting?.controller.abort(new DOMException('Stopped.', 'AbortError'));
   return exclusive(stopNow);
 }
 
@@ -154,11 +215,29 @@ async function stopNow(): Promise<SessionStatus> {
   return { state: 'idle' };
 }
 
-/** A status report from the offscreen document. Stale sessions are ignored. */
+/**
+ * A status report from the offscreen document. Reports for another session, or after this one
+ * stopped or failed, are ignored. A failure while loading ends the session.
+ */
 export async function onOffscreenStatus(status: ActiveSessionStatus): Promise<void> {
-  const current = await getStatus();
-  if (current.state === 'idle' || current.sessionId !== status.sessionId) return;
-  await setStatus(status);
+  const stored = await updateStatus((current) =>
+    current.state === 'idle' || current.state === 'error' || current.sessionId !== status.sessionId
+      ? null
+      : status,
+  );
+  if (stored !== status || status.state !== 'error') return;
+  await exclusive(async () => {
+    const current = await getStatus();
+    if (current.state === 'error' && current.sessionId === status.sessionId) {
+      await closeOffscreenDocument().catch(() => {});
+    }
+  });
+}
+
+class OffscreenFailure extends Error {
+  constructor(readonly failure: SessionFailure) {
+    super(failure.message);
+  }
 }
 
 /** Session cleanup on tab and capture events. Call once, synchronously, at worker start. */
@@ -207,21 +286,25 @@ async function injectOverlay(tabId: number): Promise<void> {
   });
 }
 
-async function sendToOffscreen(command: OffscreenCommand): Promise<OffscreenReply> {
+async function sendToOffscreen(
+  command: OffscreenCommand,
+  signal?: AbortSignal,
+): Promise<OffscreenReply> {
   for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted();
     try {
       const reply = (await browser.runtime.sendMessage(command)) as OffscreenReply | undefined;
       if (reply) return reply;
       throw new Error('The offscreen document did not answer.');
     } catch (err) {
       // The document can be a moment late registering its listener.
-      if (attempt >= 3) throw err;
+      if (attempt >= 3 || signal?.aborted) throw err;
       await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
     }
   }
 }
 
-function startError(err: unknown): { message: string; code: SessionErrorCode } {
+function startError(err: unknown): SessionFailure & { code: SessionErrorCode } {
   const message = err instanceof Error ? err.message : String(err);
   if (/Cannot access|cannot be scripted|chrome:\/\/|Missing host permission/i.test(message)) {
     return { message: "Murmur can't run on this page.", code: 'page' };

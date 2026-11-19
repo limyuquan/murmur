@@ -98,18 +98,23 @@ export type SessionStatus =
        * there yet). Each needs a click: `runSetupAction` (engines/chrome/setup.ts).
        */
       setup?: SetupAction[];
+      /**
+       * Problems the session carries on despite (a speech recognizer that stopped for good), in
+       * plain words.
+       */
+      problems?: string[];
     }
-  | {
-      state: 'error';
-      tabId: number;
-      sessionId: string;
-      message: string;
-      code?: SessionErrorCode;
-      /** With code `setup`: the downloads to start, one click each. */
-      setup?: SetupAction[];
-      /** With code `model`: models that aren't downloaded (`EngineModel.id`). */
-      missingModels?: string[];
-    };
+  | ({ state: 'error'; tabId: number; sessionId: string } & SessionFailure);
+
+/** Why a session failed, with what the popup needs to offer the fix. */
+export interface SessionFailure {
+  message: string;
+  code?: SessionErrorCode;
+  /** With code `setup`: the downloads to start, one click each. */
+  setup?: SetupAction[];
+  /** With code `model`: models that aren't downloaded (`EngineModel.id`). */
+  missingModels?: string[];
+}
 
 export type ActiveSessionStatus = Exclude<SessionStatus, { state: 'idle' }>;
 
@@ -191,7 +196,12 @@ export type OffscreenCommand =
   | { target: 'offscreen'; type: 'start'; config: SessionConfig }
   | { target: 'offscreen'; type: 'stop' };
 
-export type OffscreenReply = { ok: true } | { ok: false; error: { message: string } };
+/**
+ * The offscreen document answers `start` once the capture is open (models load after, with their
+ * progress and any failure reported as `session-status` events), so a stop never waits for a load.
+ * A failure carries the whole reason, so the service worker stores what the popup needs.
+ */
+export type OffscreenReply = { ok: true } | { ok: false; error: SessionFailure };
 
 // ---------------------------------------------------------------------------------------------
 // Offscreen document → service worker
@@ -220,6 +230,8 @@ export type OverlayMessage =
   | { type: 'cue'; cue: Cue }
   /** Drop every cue (new session on the same page). */
   | { type: 'reset' }
+  /** To the top frame: whether a frame inside it has a video with its own overlay. */
+  | { type: 'frames'; videoInFrame: boolean }
   | { type: 'status'; status: OverlayStatus };
 
 /** The overlay's chip for a session status. */
@@ -238,8 +250,12 @@ export function overlayStatus(status: ActiveSessionStatus): OverlayStatus {
   }
 }
 
-/** Overlay → offscreen. */
+/**
+ * Overlay → offscreen. `hello` first; `video` whenever the frame starts or stops having a video
+ * to draw on, so the top frame knows when a player in another frame shows the subtitles.
+ */
 export type OverlayHello = { type: 'hello'; frameUrl: string };
+export type OverlayToHost = OverlayHello | { type: 'video'; present: boolean };
 
 /** What the overlay renders with; the overlay reads it from storage itself. */
 export type { OverlaySettings };

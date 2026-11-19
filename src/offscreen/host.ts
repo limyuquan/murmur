@@ -36,6 +36,7 @@ import {
   type SessionActivity,
   type SessionConfig,
   type SessionErrorCode,
+  type SessionFailure,
 } from '@/messaging/protocol';
 import { Pipeline } from '@/pipeline/pipeline';
 import type { Cue } from '@/pipeline/types';
@@ -47,7 +48,7 @@ const ACTIVITY_MS = 1000;
 
 /** The part of `browser.runtime.Port` the host uses. */
 export interface OverlayPort {
-  readonly sender?: { tab?: { id?: number } };
+  readonly sender?: { tab?: { id?: number }; frameId?: number };
   postMessage(message: OverlayMessage): void;
   onDisconnect: { addListener(cb: () => void): void };
 }
@@ -63,6 +64,10 @@ export interface HostDeps {
 
 interface Running {
   config: SessionConfig;
+  /** Aborted on stop: cancels model loading and pack waits. */
+  controller: AbortController;
+  /** Engines and pipeline loading after the capture opened. */
+  loading: Promise<void> | null;
   capture: CaptureHandle | null;
   pipeline: Pipeline | null;
   asr: AsrEngine | null;
@@ -73,11 +78,24 @@ interface Running {
   ticker: ReturnType<typeof setInterval> | null;
   /** Downloads a line needed while running (each reported once). */
   setup: SetupAction[];
+  /** Engine failures the session carries on despite (each reported once). */
+  problems: string[];
+}
+
+/** A failure to report as it is (the start command's reply carries it). */
+export class SessionFailureError extends Error {
+  override readonly name = 'SessionFailureError';
+  constructor(readonly failure: SessionFailure) {
+    super(failure.message);
+  }
 }
 
 export class OffscreenHost {
   private readonly registry = createBuiltinRegistry(ENGINE_FACTORIES);
-  private readonly ports = new Set<OverlayPort>();
+  /** Overlay ports, with whether their frame has a video to draw on. */
+  private readonly ports = new Map<OverlayPort, { video: boolean }>();
+  /** Last `videoInFrame` sent to each tab's top frame. */
+  private readonly framesSent = new Map<number, boolean>();
   private session: Running | null = null;
   /** Last chip status per tab, for overlays that connect late. */
   private overlayStatus: { tabId: number; status: OverlayStatus } | null = null;
@@ -86,22 +104,40 @@ export class OffscreenHost {
 
   /** An overlay frame connected. Cues for its tab go to it until it disconnects. */
   addOverlay(port: OverlayPort): void {
-    this.ports.add(port);
-    port.onDisconnect.addListener(() => this.ports.delete(port));
+    this.ports.set(port, { video: false });
+    port.onDisconnect.addListener(() => {
+      this.ports.delete(port);
+      this.updateFrames(port.sender?.tab?.id);
+    });
     const last = this.overlayStatus;
     if (last && port.sender?.tab?.id === last.tabId) {
-      try {
-        port.postMessage({ type: 'status', status: last.status });
-      } catch {
-        this.ports.delete(port);
-      }
+      this.post(port, { type: 'status', status: last.status });
+    }
+    if (isTopFrame(port)) {
+      const tabId = port.sender?.tab?.id;
+      this.post(port, { type: 'frames', videoInFrame: this.videoInFrame(tabId) });
     }
   }
 
+  /** An overlay's frame started or stopped having a video. */
+  setOverlayVideo(port: OverlayPort, present: boolean): void {
+    const entry = this.ports.get(port);
+    if (!entry || entry.video === present) return;
+    entry.video = present;
+    this.updateFrames(port.sender?.tab?.id);
+  }
+
+  /**
+   * Opens the capture, then loads the engines without waiting for them: resolves once the
+   * capture is open (or rejects with a `SessionFailureError`). Loading reports its progress and
+   * any failure as status events; `stop()` cancels it.
+   */
   async start(config: SessionConfig): Promise<void> {
     await this.stop();
     const running: Running = {
       config,
+      controller: new AbortController(),
+      loading: null,
       capture: null,
       pipeline: null,
       asr: null,
@@ -111,21 +147,39 @@ export class OffscreenHost {
       reported: undefined,
       ticker: null,
       setup: [],
+      problems: [],
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
+    // Capture first: the tab's stream ID expires seconds after it is minted, and models can
+    // take minutes to load. Frames heard before the pipeline exists are only measured.
     try {
-      // Capture first: the tab's stream ID expires seconds after it is minted, and models can
-      // take minutes to load. Frames heard before the pipeline exists are only measured.
-      let pipeline: Pipeline | null = null;
       running.capture = await startCapture(sourceFor(config.source), (frame) => {
         running.activity.onFrame(frame.samples, Date.now());
-        pipeline?.push(frame);
+        running.pipeline?.push(frame);
       });
-      if (!this.isCurrent(running)) {
-        await running.capture.stop();
-        return;
-      }
+    } catch (err) {
+      if (!this.isCurrent(running)) return;
+      this.session = null;
+      throw new SessionFailureError(this.fail(running, err));
+    }
+    if (!this.isCurrent(running)) {
+      await running.capture.stop().catch(() => {});
+      return;
+    }
+    running.loading = this.load(running);
+  }
+
+  /** Resolves when the current session's engines have loaded or failed (tests). */
+  async loaded(): Promise<void> {
+    await this.session?.loading;
+  }
+
+  /** Loads the engines and starts the pipeline. Reports a failure; never throws. */
+  private async load(running: Running): Promise<void> {
+    const { config } = running;
+    const { signal } = running.controller;
+    try {
       const session: SessionLanguages = {
         targetLanguage: config.targetLanguage,
         sourceLanguage: config.sourceLanguage,
@@ -144,17 +198,23 @@ export class OffscreenHost {
         });
       loading(this.registry.asrInfo(config.asrEngine)?.label ?? config.asrEngine, null);
       // Engines that can't run here at all hand over to their fallback (profiles.ts).
+      const options = (label: string) => ({
+        hardware,
+        session,
+        signal,
+        onProgress: (p: LoadProgress) => loading(label, p),
+      });
       running.asr = await loadWithFallback(
         config.asrEngine,
         (id) => this.registry.createAsr(id),
-        (engine) =>
-          engine.load({ hardware, session, onProgress: (p) => loading(engine.info.label, p) }),
+        (engine) => engine.load(options(engine.info.label)),
+        signal,
       );
       running.translator = await loadWithFallback(
         config.translationEngine,
         (id) => this.registry.createTranslation(id),
-        (engine) =>
-          engine.load({ hardware, session, onProgress: (p) => loading(engine.info.label, p) }),
+        (engine) => engine.load(options(engine.info.label)),
+        signal,
       );
       if (!this.isCurrent(running)) {
         // Stopped while loading: the teardown ran before these existed.
@@ -168,7 +228,7 @@ export class OffscreenHost {
         supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
       });
 
-      pipeline = new Pipeline({
+      const pipeline = new Pipeline({
         asr: running.asr,
         translator: running.translator,
         targetLanguage: config.targetLanguage,
@@ -176,7 +236,7 @@ export class OffscreenHost {
         spokenLanguages: config.spokenLanguages ?? [],
         onlySpoken: config.onlySpoken ?? false,
         translatePartials: config.translatePartials,
-        track: running.capture.track,
+        track: running.capture?.track ?? null,
         onCue: (cue) => {
           running.activity.onCue(cue, Date.now());
           this.deps.onCue?.(cue);
@@ -201,6 +261,11 @@ export class OffscreenHost {
             return;
           }
           console.error(LOG_PREFIX, 'pipeline', err);
+          // An engine part that stopped for good (a recognizer that keeps failing): say so.
+          if (isUnavailable(err) && !running.problems.includes(err.message)) {
+            running.problems.push(err.message);
+            this.reportRunning(running);
+          }
         },
       });
       running.pipeline = pipeline;
@@ -210,28 +275,36 @@ export class OffscreenHost {
         if (activityChanged(running.reported, next)) this.reportRunning(running);
       }, ACTIVITY_MS);
     } catch (err) {
-      if (!this.isCurrent(running)) return;
-      const { message, code, missingModels } = describeError(err);
-      console.error(LOG_PREFIX, 'session failed', err);
-      this.report({
-        state: 'error',
-        tabId: config.tabId,
-        sessionId: config.sessionId,
-        message,
-        code,
-        ...(missingModels ? { missingModels } : {}),
-        ...(isActionRequired(err) ? { setup: err.actions } : {}),
-      });
+      if (!this.isCurrent(running)) {
+        // Stopped while loading: the stop's teardown ran before some of these existed.
+        await this.teardown(running);
+        return;
+      }
+      this.session = null;
+      this.fail(running, err);
       await this.teardown(running);
-      if (this.session === running) this.session = null;
-      throw new Error(message);
     }
+  }
+
+  /** Reports `err` as the session's failure. */
+  private fail(running: Running, err: unknown): SessionFailure {
+    const failure = describeError(err);
+    console.error(LOG_PREFIX, 'session failed', err);
+    this.report({
+      state: 'error',
+      tabId: running.config.tabId,
+      sessionId: running.config.sessionId,
+      ...failure,
+    });
+    return failure;
   }
 
   async stop(): Promise<void> {
     const running = this.session;
     this.session = null;
-    if (running) await this.teardown(running);
+    if (!running) return;
+    running.controller.abort(new DOMException('The session stopped.', 'AbortError'));
+    await this.teardown(running);
   }
 
   private async teardown(running: Running): Promise<void> {
@@ -258,6 +331,7 @@ export class OffscreenHost {
       heard: running.heard,
       activity: running.reported,
       ...(running.setup.length > 0 ? { setup: [...running.setup] } : {}),
+      ...(running.problems.length > 0 ? { problems: [...running.problems] } : {}),
     });
   }
 
@@ -271,15 +345,42 @@ export class OffscreenHost {
   }
 
   private broadcast(tabId: number, message: OverlayMessage): void {
-    for (const port of this.ports) {
-      if (port.sender?.tab?.id !== tabId) continue;
-      try {
-        port.postMessage(message);
-      } catch {
-        this.ports.delete(port);
+    for (const port of [...this.ports.keys()]) {
+      if (port.sender?.tab?.id === tabId) this.post(port, message);
+    }
+  }
+
+  private post(port: OverlayPort, message: OverlayMessage): void {
+    try {
+      port.postMessage(message);
+    } catch {
+      this.ports.delete(port);
+    }
+  }
+
+  /** Whether a frame below the top one in `tabId` has a video (and so shows the subtitles). */
+  private videoInFrame(tabId: number | undefined): boolean {
+    for (const [port, { video }] of this.ports) {
+      if (video && port.sender?.tab?.id === tabId && !isTopFrame(port)) return true;
+    }
+    return false;
+  }
+
+  private updateFrames(tabId: number | undefined): void {
+    if (tabId === undefined) return;
+    const videoInFrame = this.videoInFrame(tabId);
+    if (this.framesSent.get(tabId) === videoInFrame) return;
+    this.framesSent.set(tabId, videoInFrame);
+    for (const port of [...this.ports.keys()]) {
+      if (port.sender?.tab?.id === tabId && isTopFrame(port)) {
+        this.post(port, { type: 'frames', videoInFrame });
       }
     }
   }
+}
+
+function isTopFrame(port: OverlayPort): boolean {
+  return (port.sender?.frameId ?? 0) === 0;
 }
 
 function sourceFor(spec: CaptureSourceSpec): AudioSource {
@@ -299,13 +400,14 @@ function loadingDetail(label: string, p: LoadProgress | null): string {
   }
 }
 
-export function describeError(err: unknown): {
-  message: string;
-  code: SessionErrorCode;
-  missingModels?: string[];
-} {
+export function describeError(err: unknown): SessionFailure & { code: SessionErrorCode } {
+  if (err instanceof SessionFailureError) return { code: 'unknown', ...err.failure };
   if (isActionRequired(err)) {
-    return { message: `Chrome needs to download first: ${err.message}.`, code: 'setup' };
+    return {
+      message: `Chrome needs to download first: ${err.message}.`,
+      code: 'setup',
+      setup: err.actions,
+    };
   }
   if (isModelError(err)) {
     return {
