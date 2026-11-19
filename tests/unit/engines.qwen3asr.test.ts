@@ -135,9 +135,10 @@ describe('Qwen3-ASR prompt', () => {
   });
 
   it('caps the answer length by the audio length', () => {
-    expect(maxAnswerTokens(1)).toBe(36);
-    expect(maxAnswerTokens(6)).toBe(96);
-    expect(maxAnswerTokens(10)).toBe(144);
+    // The 4 header tokens, then 8 text tokens a second plus 16.
+    expect(maxAnswerTokens(1)).toBe(28);
+    expect(maxAnswerTokens(5)).toBe(60);
+    expect(maxAnswerTokens(10)).toBe(100);
     expect(maxAnswerTokens(60)).toBe(256);
   });
 

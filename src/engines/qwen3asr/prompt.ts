@@ -11,6 +11,7 @@
  * the prompt (a language, or the start of an earlier answer) is generated as if the model wrote
  * it, so decoding carries on from there.
  */
+import { maxTextTokens } from '../loops';
 import type { TokenDecoder } from './tokenizer';
 
 export const PREFIX = [151644, 9125, 198, 151645, 198, 151644, 882, 198, 151669] as const;
@@ -165,9 +166,12 @@ export function rollbackPrefix(ids: readonly number[], rollback: number): number
   return ids.slice(0, keep).filter((id) => !EOS.has(id));
 }
 
-/** Most answer tokens for `seconds` of audio: plenty for any language, and a cap on loops. */
+/** The answer's tokens before its text: `language`, the name (1–2 tokens), `<asr_text>`. */
+const ANSWER_HEADER = 4;
+
+/** Most answer tokens for `seconds` of audio: the header, then the loop guard's text cap. */
 export function maxAnswerTokens(seconds: number): number {
-  return Math.min(256, Math.ceil(24 + seconds * 12));
+  return Math.min(256, ANSWER_HEADER + maxTextTokens(seconds));
 }
 
 /**

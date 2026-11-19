@@ -28,6 +28,7 @@ import {
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
 import { modelFileCache } from '@/models/hub';
+import { maxTextTokens } from '../loops';
 import type { DecodeOutput, FromWorker, ToWorker, WhisperDevice } from './messages';
 
 env.allowLocalModels = false;
@@ -184,9 +185,10 @@ async function decode(message: Extract<ToWorker, { type: 'decode' }>): Promise<D
   const control = new WhisperControl(config, allowed.length > 0 ? allowed : [...languages]);
   const processors = new LogitsProcessorList();
   processors.push(control);
-  // About 25 tokens a second of speech is plenty for any language; caps runaway loops.
+  // The language, task and no-timestamps tokens, then the text: 8 tokens a second plus 16 is
+  // plenty for any language and caps runaway loops (loops.ts).
   const seconds = message.samples.length / 16_000;
-  const max_new_tokens = Math.min(220, Math.ceil(12 + seconds * 25));
+  const max_new_tokens = Math.min(220, PREFIX - 1 + maxTextTokens(seconds));
   const sequences = (await model.generate({
     inputs: input_features,
     decoder_input_ids: [config.decoder_start_token_id],

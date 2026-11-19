@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { compressionRatio } from '@/engines/loops';
 import {
   collapseRepeats,
   type DecodeStats,
   filterDecode,
   isStockPhrase,
   peakDb,
+  trimLoop,
 } from '@/engines/whisper/filters';
 import { DecodeScheduler } from '@/engines/whisper/scheduler';
 import { burst } from './helpers';
@@ -82,6 +84,38 @@ describe('Whisper hallucination guards', () => {
     expect(
       filterDecode(speech('Yeah. Yeah. Yeah. Yeah. Yeah. Yeah.', { language: 'en' })).text,
     ).toBe('Yeah. Yeah.');
+  });
+
+  it('cuts a looped decode back to the words before the loop', () => {
+    // As Qwen3-ASR wrote it in the benchmark: a real line, then the last phrase until the cap.
+    const looped = `됐습니다. ${'좋아요. '.repeat(40)}`.trim();
+    expect(filterDecode(speech(looped))).toEqual({
+      text: '됐습니다. 좋아요. 좋아요.',
+      dropped: null,
+    });
+    // Copies that vary are no exact repeat to collapse, but still compress like a loop: the line
+    // is cut where it starts to.
+    const varied =
+      '그 사람 안 봤어요 아니 그 사람 안 봤어요 아니 그 사람 안 봤어요 그 사람 안 봤어요 그 사람 안 봤어요 그 사람 안 봤어요 그 사람 안 봤어요 그 사람 안 봤어요';
+    const out = filterDecode(speech(varied)).text;
+    expect(out.startsWith('그 사람 안 봤어요 아니')).toBe(true);
+    expect(out.length).toBeLessThan(varied.length / 2);
+    expect(compressionRatio(out)).toBeLessThanOrEqual(2.4);
+    // At a space, not inside a word.
+    expect(varied.startsWith(`${out} `)).toBe(true);
+    // A loop of one syllable comes down to two.
+    expect(filterDecode(speech('아, '.repeat(60).trim())).text).toBe('아, 아,');
+  });
+
+  it('leaves lines that do not compress like a loop alone', () => {
+    for (const line of [
+      '오늘 경기는 정말 재미있었고 다음 주에도 꼭 다시 오고 싶어요.',
+      '아 진짜 아 진짜 너무 웃기다',
+      '빨리 빨리 와 봐',
+    ]) {
+      expect(trimLoop(line)).toBe(line);
+    }
+    expect(trimLoop('')).toBe('');
   });
 
   it('measures peak loudness', () => {

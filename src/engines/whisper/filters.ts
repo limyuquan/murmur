@@ -8,9 +8,12 @@
  *   the no-speech probability alone is very high, or the audio is too quiet to hold words.
  * - Stock phrases: lines Whisper learned from subtitle credits ("Thanks for watching",
  *   "구독과 좋아요", "ご視聴ありがとうございました") are dropped when they are the whole line.
- * - Repetition loops: a phrase repeated over and over is cut back to two copies.
+ * - Repetition loops: a phrase repeated over and over is cut back to two copies. A line that still
+ *   compresses like a loop (`compressionRatio` over 2.4, Whisper's own test) is cut back to its
+ *   longest start that doesn't; the loop is at the end, where the decoder got stuck.
  */
 import { primaryLanguage } from '@/pipeline/language';
+import { compressionRatio, MAX_COMPRESSION_RATIO } from '../loops';
 
 export interface DecodeStats {
   text: string;
@@ -40,10 +43,12 @@ export const FILTER_DEFAULTS = {
   minLogprob: -1.6,
   /** Peak loudness below which there's nothing to transcribe, dBFS. */
   minPeakDb: -55,
+  /** Compression ratio above which a line is a repetition loop (trimmed). */
+  maxCompression: MAX_COMPRESSION_RATIO,
 };
 
 export function filterDecode(stats: DecodeStats, opts = FILTER_DEFAULTS): FilterResult {
-  const collapsed = collapseRepeats(stats.text.trim());
+  const collapsed = trimLoop(collapseRepeats(stats.text.trim()), opts.maxCompression);
   if (stats.peakDb < opts.minPeakDb) return { text: '', dropped: 'quiet' };
   if (
     (stats.noSpeechProb > opts.noSpeech && stats.avgLogprob < opts.logprob) ||
@@ -69,8 +74,9 @@ export function filterDecode(stats: DecodeStats, opts = FILTER_DEFAULTS): Filter
  * without spaces, on characters.
  */
 export function collapseRepeats(text: string, keep = 2): string {
-  // A unit of 1–60 characters followed by the same unit (optionally after a separator) 2+ times.
-  const re = /(.{1,60}?)(?:[\s,、。.!?！？]*\1){2,}/gsu;
+  // A unit of 1–60 characters, not starting with a separator, followed by the same unit
+  // (optionally after a separator) 2+ times.
+  const re = /([^\s,、。.!?！？].{0,59}?)(?:[\s,、。.!?！？]*\1){2,}/gsu;
   let out = text;
   for (let i = 0; i < 3; i++) {
     const next = out.replace(re, (match: string, unit: string) => {
@@ -85,6 +91,30 @@ export function collapseRepeats(text: string, keep = 2): string {
     out = next;
   }
   return out;
+}
+
+/**
+ * A line that compresses like a loop (over `max`) cut back to its longest start that doesn't, at a
+ * space when there is one; other lines unchanged. Loops that `collapseRepeats` can't cut (copies
+ * that vary, or alternate) end up here.
+ */
+export function trimLoop(text: string, max = MAX_COMPRESSION_RATIO): string {
+  if (compressionRatio(text) <= max) return text;
+  const chars = Array.from(text);
+  // The ratio grows as the loop goes on: the longest good start, by bisection.
+  let lo = 0;
+  let hi = chars.length;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (compressionRatio(chars.slice(0, mid).join('')) <= max) lo = mid;
+    else hi = mid;
+  }
+  let kept = chars.slice(0, lo).join('');
+  if (chars[lo] !== undefined && !/\s/u.test(chars[lo] as string)) {
+    const space = kept.search(/\s\S*$/u);
+    if (space > 0) kept = kept.slice(0, space);
+  }
+  return kept.replace(/[\s,、]+$/u, '');
 }
 
 /** Lowercase, without punctuation, symbols or spaces: for phrase matching. */
