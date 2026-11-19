@@ -136,8 +136,8 @@ export interface PromptInput {
   targetLanguage: LanguageTag;
   /** Earlier finished lines, oldest first. */
   context: readonly { source: string; translation: string; language?: LanguageTag }[];
-  /** Glossary entries the line or its context uses. */
-  glossary?: readonly { source: string; target: string }[];
+  /** Glossary entries the line or its context uses, each as the alias that matched. */
+  glossary?: readonly { source: string; target: string; note?: string }[];
   /** Languages the person said they hear, in their order. */
   spokenLanguages?: readonly LanguageTag[];
   /** The languages the line mixes, when it mixes the target language with others. */
@@ -182,7 +182,9 @@ export function buildPrompt(input: PromptInput): Prompt {
   const context = input.context
     .map((c) => `[${known(c.language) ? c.language : '?'}] ${c.source} => ${c.translation}`)
     .join('\n');
-  const glossary = (input.glossary ?? []).map((g) => `${g.source} = ${g.target}`).join('; ');
+  const glossary = (input.glossary ?? [])
+    .map((g) => `${g.source} = ${g.target}${g.note ? ` (${g.note})` : ''}`)
+    .join('; ');
   const vars: Vars = {
     text: input.text,
     target_lang: languageName(input.targetLanguage),

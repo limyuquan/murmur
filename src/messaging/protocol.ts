@@ -226,7 +226,7 @@ export interface SessionConfig {
   /** Only `spokenLanguages` are spoken: engines that detect languages pick among them. */
   onlySpoken?: boolean;
   /** The person's glossary (settings.ts); translators that use one get the entries a line needs. */
-  glossary?: { source: string; target: string }[];
+  glossary?: { source: string; target: string; aliases?: string[]; note?: string }[];
   /**
    * The profile's memory ladder from `asrEngine` + `translationEngine` down (profiles.ts): where
    * to step down to when an engine runs out of graphics memory. Absent: no ladder (Light, a

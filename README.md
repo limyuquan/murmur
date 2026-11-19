@@ -37,8 +37,9 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   until you download it, Chrome's translator translates (the popup offers the download).
   Murmur suggests a size that suits your device.
 - **Your names and terms.** List names and terms with how they should be written (Settings →
-  Glossary). The translation model uses your spelling when a line mentions one, or something
-  that sounds close.
+  Glossary), each with the other ways it's said or misheard and an optional note. The
+  translation model uses your spelling when a line mentions one, or something that sounds
+  close. Glossaries import from and export to JSON or a simple table (TSV or CSV) to share.
 - **Say what you listen to.** Tick the languages in the videos you watch. Each line's language is
   still detected, so videos that switch language work.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
@@ -321,8 +322,11 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   ship in the extension.
 - **Glossary** (a setting). `SessionConfig.glossary` carries it to the offscreen document;
   `withGlossary` (`translators.ts`) gives each request the entries its line or context uses
-  (`glossary.ts`: whole words, or anywhere in unspaced scripts; short Korean names need a
-  boundary; light fuzzy matching for misheard names). Only engines with `usesGlossary` get it.
+  (`glossary.ts`: each entry's source and `aliases`, compiled once per session; whole words, or
+  anywhere in unspaced scripts; short Korean names need a boundary; light fuzzy matching for
+  misheard names, Korean by its jamo), each as the alias that matched with the entry's `note`.
+  Only engines with `usesGlossary` get it. Files: `settings/glossaryfile.ts` (JSON, or rows of
+  `said as|other<TAB>written as<TAB>note`, tabs or commas; import merges by rendering).
 - **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
   `pnpm test:e2e`. Build with `WXT_MODEL_HOST=https://huggingface.co pnpm build:e2e` so models
   download from Hugging Face, download them on the options page, then the e2e build's

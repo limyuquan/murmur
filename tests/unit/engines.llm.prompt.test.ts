@@ -111,6 +111,22 @@ describe('LLM prompt', () => {
     expect(render('{{text}}', { text: '{{#a}}$1 $&{{/a}}' })).toBe('{{#a}}$1 $&{{/a}}');
   });
 
+  it('gives each glossary entry as the alias that matched, with its note', () => {
+    const { user } = buildPrompt({
+      text: 'On a vu Loumen hier.',
+      sourceLanguage: 'fr',
+      targetLanguage: 'en',
+      context: [],
+      glossary: [
+        { source: 'Loumen', target: 'Lumen', note: 'a band' },
+        { source: 'Camille', target: 'Camille' },
+      ],
+    });
+    expect(user).toBe(
+      'GLOSSARY: Loumen = Lumen (a band); Camille = Camille\nCURRENT (French): On a vu Loumen hier.',
+    );
+  });
+
   it('drops the oldest context lines, then glossary entries, to fit the token budget', () => {
     const input = {
       text: 'Bonjour',

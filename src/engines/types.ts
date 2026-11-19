@@ -337,8 +337,11 @@ export interface TranslationRequest {
    * stream may switch languages between lines).
    */
   context: readonly { source: string; translation: string; language?: LanguageTag }[];
-  /** Fixed renderings to keep (names, terms), for engines with `usesGlossary`. */
-  glossary?: readonly { source: string; target: string }[];
+  /**
+   * Fixed renderings to keep (names, terms), for engines with `usesGlossary`: `source` as it
+   * occurs in the line (the alias that matched), with the entry's note if it has one.
+   */
+  glossary?: readonly { source: string; target: string; note?: string }[];
   /**
    * For engines with `revises`, on a finished line only: the line just before this one, whose
    * sentence this line finishes, while its translation is still on screen. The engine may send a

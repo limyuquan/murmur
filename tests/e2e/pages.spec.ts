@@ -1,4 +1,5 @@
 /** Popup quick settings, the options page (models, preview, shortcuts) and the welcome flow. */
+import { readFileSync } from 'node:fs';
 import type { Page, Worker } from '@playwright/test';
 import { EXTENSION_ID } from '@/shared/ids';
 import { expect, test } from './fixtures';
@@ -277,6 +278,35 @@ test('options: glossary entries are added, edited and removed', async ({
   await expect.poll(glossary).toEqual([{ source: 'Kamil', target: 'Camille D.' }]);
   await editor.getByRole('button', { name: 'Remove Kamil' }).click();
   await expect.poll(glossary).toEqual([]);
+
+  // Other ways it's said, with |, and a note.
+  await editor.getByLabel('Said as').fill('Lumen | Loumen');
+  await editor.getByLabel('Written as').fill('Lumen');
+  await editor.getByLabel('Note').fill('a band');
+  await page.getByTestId('glossary-add').click();
+  const lumen = { source: 'Lumen', aliases: ['Loumen'], target: 'Lumen', note: 'a band' };
+  await expect.poll(glossary).toEqual([lumen]);
+
+  // Exported as a table, imported from one (a bad row is reported, not taken).
+  const download = page.waitForEvent('download');
+  await editor.getByRole('button', { name: 'Export TSV' }).click();
+  const file = await (await download).path();
+  expect(readFileSync(file, 'utf8')).toBe(
+    'said as\twritten as\tnote\nLumen|Loumen\tLumen\ta band\n',
+  );
+  await editor.getByLabel('Glossary file').setInputFiles({
+    name: 'names.tsv',
+    mimeType: 'text/tab-separated-values',
+    buffer: Buffer.from('Kamil|Kamille\tCamille\nno rendering\nLoumen|Lümen\tLumen\n'),
+  });
+  await expect(editor.getByRole('status')).toHaveText(
+    'Added 1 entry. Added spellings or notes to 1 entry. Skipped line 2: no "written as".',
+  );
+  await expect.poll(glossary).toEqual([
+    { ...lumen, aliases: ['Loumen', 'Lümen'] },
+    { source: 'Kamil', aliases: ['Kamille'], target: 'Camille' },
+  ]);
+  await expect(entries.getByLabel('Said as').first()).toHaveValue('Lumen | Loumen | Lümen');
 });
 
 test('options: the preview follows the subtitle settings', async ({ context }) => {

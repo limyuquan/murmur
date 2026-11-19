@@ -64,8 +64,9 @@ export interface Settings {
   /** Translate partial lines as a preview (more work, earlier text). */
   translatePartials: boolean;
   /**
-   * Names and terms with the rendering to keep (`source` as said, `target` as written). Engines
-   * that take a glossary get the entries each line uses.
+   * Names and terms with the rendering to keep (`source` as said, other ways it is said or
+   * misheard in `aliases`, `target` as written, an optional `note`). Engines that take a
+   * glossary get the entries each line uses.
    */
   glossary: GlossaryEntry[];
   overlay: OverlaySettings;
@@ -115,9 +116,11 @@ const SITE = /^[a-z0-9.-]{1,253}$/;
 export const MAX_SPOKEN_FOR_CHROME = 4;
 /** Most spoken languages kept. */
 const MAX_SPOKEN = 12;
-/** Most glossary entries kept, and the longest text on either side. */
+/** Most glossary entries kept, and the longest text on either side (each alias, the note). */
 export const MAX_GLOSSARY = 500;
 export const MAX_GLOSSARY_TEXT = 100;
+/** Most ways one entry is said (its source and aliases). */
+export const MAX_GLOSSARY_ALIASES = 8;
 
 /**
  * The languages a session listens for: the chosen ones, or else the browser's own (its language
@@ -240,21 +243,40 @@ export function watchSettings(listener: (settings: Settings) => void): () => voi
 }
 
 /**
- * Valid entries of a stored glossary: both sides text, trimmed and not empty, at most
- * `MAX_GLOSSARY_TEXT` characters, at most `MAX_GLOSSARY` entries, no source twice.
+ * Valid entries of a stored glossary: target and every alias text, trimmed and not empty, at
+ * most `MAX_GLOSSARY_TEXT` characters (a longer alias is left out, a longer note cut), at most
+ * `MAX_GLOSSARY_ALIASES` ways said per entry and `MAX_GLOSSARY` entries; an alias already in an
+ * earlier entry is left out, and an entry left with none goes. `|` separates aliases, so an
+ * alias never holds one.
  */
 export function cleanGlossary(list: readonly unknown[]): GlossaryEntry[] {
   const out: GlossaryEntry[] = [];
   const seen = new Set<string>();
   for (const item of list) {
     if (!isObject(item)) continue;
-    const source = typeof item.source === 'string' ? item.source.trim() : '';
     const target = typeof item.target === 'string' ? item.target.trim() : '';
-    if (!source || !target) continue;
-    if (source.length > MAX_GLOSSARY_TEXT || target.length > MAX_GLOSSARY_TEXT) continue;
-    if (seen.has(source)) continue;
-    seen.add(source);
-    out.push({ source, target });
+    if (!target || target.length > MAX_GLOSSARY_TEXT) continue;
+    const said: string[] = [];
+    const raw = [item.source, ...(Array.isArray(item.aliases) ? item.aliases : [])];
+    for (const value of raw) {
+      if (typeof value !== 'string') continue;
+      for (const part of value.split('|')) {
+        const alias = part.trim();
+        if (!alias || alias.length > MAX_GLOSSARY_TEXT || seen.has(alias)) continue;
+        if (said.length >= MAX_GLOSSARY_ALIASES) break;
+        said.push(alias);
+        seen.add(alias);
+      }
+    }
+    const [source, ...aliases] = said;
+    if (!source) continue;
+    const note = typeof item.note === 'string' ? item.note.trim().slice(0, MAX_GLOSSARY_TEXT) : '';
+    out.push({
+      source,
+      target,
+      ...(aliases.length > 0 ? { aliases } : {}),
+      ...(note ? { note } : {}),
+    });
     if (out.length >= MAX_GLOSSARY) break;
   }
   return out;
