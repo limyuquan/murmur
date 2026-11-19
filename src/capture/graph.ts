@@ -20,6 +20,8 @@ import workletUrl from './worklet.ts?worker&url';
 export interface CaptureHandle {
   readonly context: AudioContext;
   readonly source: AudioSource;
+  /** The captured audio as a live track (same audio the frames come from). */
+  readonly track: MediaStreamTrack | null;
   stop(): Promise<void>;
 }
 
@@ -68,6 +70,7 @@ export async function startCapture(
     return {
       context,
       source,
+      track: connected.track,
       async stop() {
         worklet.port.onmessage = null;
         connected.stop();

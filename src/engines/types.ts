@@ -86,6 +86,13 @@ export interface AsrEngineInfo extends EngineInfoBase {
   detectsLanguage: boolean;
   /** Handles a language switch inside one segment. */
   codeSwitching: boolean;
+  /**
+   * How it hears audio. `segments` (default): the pipeline's speech segments, as samples.
+   * `track`: the live audio track (`AsrSessionOptions.track`); the pipeline still calls
+   * `startSegment`/`endSegment` at speech and pauses (with no audio), and the engine still sends
+   * one final per segment.
+   */
+  audioInput?: 'segments' | 'track';
 }
 
 export type TranslationInput = 'text' | 'speech';
@@ -100,11 +107,35 @@ export interface TranslationEngineInfo extends EngineInfoBase {
   streaming: boolean;
   /** Uses `TranslationRequest.context` (earlier lines) to translate better. */
   usesContext: boolean;
+  /** Uses `TranslationRequest.glossary`. */
+  usesGlossary?: boolean;
+  /**
+   * May send a better translation of an earlier line while translating a later one
+   * (`TranslationChunk.revises`).
+   */
+  revises?: boolean;
 }
 
 export type EngineInfo = AsrEngineInfo | TranslationEngineInfo;
 
 export type EngineState = 'unloaded' | 'loading' | 'ready' | 'error';
+
+/**
+ * A step only the person can start, because Chrome requires a click for it: downloading a
+ * built-in speech or translation language pack. Engines that need one reject `load()` (or a
+ * request) with `EngineActionRequiredError` (errors.ts) carrying these; a page (popup, options)
+ * runs them from a click handler with `runSetupAction` (chrome/setup.ts), and the next load
+ * waits for the download.
+ */
+export interface SetupAction {
+  /** Stable id: `speech:ko-KR`, `translation:ko>en`, `detector`. */
+  id: string;
+  kind: 'speech-pack' | 'translation-pack' | 'language-detector';
+  /** What the button does, in plain words ("Download Korean speech recognition"). */
+  label: string;
+  /** For `speech-pack`: the recognizer languages. For `translation-pack`: [source, target]. */
+  languages: LanguageTag[];
+}
 
 export interface LoadProgress {
   stage: 'download' | 'compile' | 'warmup';
@@ -118,6 +149,16 @@ export interface LoadOptions {
   signal?: AbortSignal;
   onProgress?: (progress: LoadProgress) => void;
   hardware?: HardwareInfo;
+  /** What the session will ask for, so the engine can check packs or warm up for it. */
+  session?: SessionLanguages;
+}
+
+export interface SessionLanguages {
+  targetLanguage: LanguageTag;
+  /** The person's source-language choice, or `null` for detect per segment. */
+  sourceLanguage: LanguageTag | null;
+  /** Languages the person expects to hear (empty: not said). */
+  spokenLanguages: readonly LanguageTag[];
 }
 
 export interface Engine<I extends EngineInfo> {
@@ -149,8 +190,31 @@ export interface AsrSessionOptions {
   sampleRate: number;
   /** A language to prefer, or `null` to detect per segment. Only a hint: results say what was heard. */
   languageHint: LanguageTag | null;
+  /**
+   * Languages the person expects to hear, when they said (empty or absent: any). Engines that
+   * can't detect languages listen for these; detecting engines may limit detection to them.
+   */
+  spokenLanguages?: readonly LanguageTag[];
+  /** The live audio, for engines with `audioInput: 'track'`. */
+  track?: MediaStreamTrack | null;
+  /** Index of the newest captured sample, so track engines can place their results in time. */
+  currentSample?: () => number;
   onResult(result: AsrResult): void;
   onError(error: Error): void;
+  /** Whether the engine keeps up with the audio. Sent when it changes. */
+  onHealth?(health: AsrHealth): void;
+}
+
+/** How an ASR session is coping with the audio it is given. */
+export interface AsrHealth {
+  /** It can't keep up: partial updates are being skipped and finished lines wait in a queue. */
+  behind: boolean;
+  /** Audio heard but not yet decoded, ms. */
+  backlogMs: number;
+  /** Partial updates skipped to keep up, this session. */
+  droppedPartials: number;
+  /** Segments given up on (sent as empty finals) because the backlog grew too long. */
+  droppedSegments: number;
 }
 
 /**
@@ -184,15 +248,28 @@ export interface TranslationRequest {
   target: LanguageTag;
   /** True when the source text is final; partial sources may be translated for a preview. */
   sourceFinal: boolean;
-  /** Earlier final lines of this session, oldest first. */
-  context: readonly { source: string; translation: string }[];
+  /**
+   * Earlier final lines of this session, oldest first, each with the language it was in (a
+   * stream may switch languages between lines).
+   */
+  context: readonly { source: string; translation: string; language?: LanguageTag }[];
+  /** Fixed renderings to keep (names, terms), for engines with `usesGlossary`. */
+  glossary?: readonly { source: string; target: string }[];
   signal: AbortSignal;
 }
 
 export interface TranslationChunk {
-  /** The whole translation so far, not a delta. */
+  /** The whole translation so far, not a delta (streaming engines grow it token by token). */
   text: string;
   final: boolean;
+  /**
+   * Engines with `revises` only: a better translation of an earlier line, found while translating
+   * this one (an LLM rereading the previous line with the next one in view). `text` replaces that
+   * line's final translation; `final` is ignored. Absent for this request's own translation.
+   */
+  revises?: { segmentId: string };
+  /** The language the engine found the source to be in, when it checked (may differ from the request's). */
+  sourceLanguage?: LanguageTag;
 }
 
 export interface TranslationEngine extends Engine<TranslationEngineInfo> {

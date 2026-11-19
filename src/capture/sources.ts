@@ -8,6 +8,8 @@ export interface ConnectedSource {
   node: AudioNode;
   /** Play this source to the speakers. True for tab audio: capturing it mutes the tab. */
   playback: boolean;
+  /** The source as a live track, for engines that listen to a track (on-device Web Speech). */
+  track: MediaStreamTrack | null;
   /** Releases the source (stops tracks, oscillators). */
   stop(): void;
 }
@@ -35,6 +37,7 @@ export function tabAudioSource(streamId: string): AudioSource {
       return {
         node: context.createMediaStreamSource(stream),
         playback: true,
+        track: stream.getAudioTracks()[0] ?? null,
         stop: () => {
           for (const track of stream.getTracks()) track.stop();
         },
@@ -59,7 +62,19 @@ export function toneSource(): AudioSource {
       for (let i = 0; i < rate; i++) data[i] = 0.3 * Math.sin((2 * Math.PI * 220 * i) / rate);
       const node = new AudioBufferSourceNode(context, { buffer, loop: true });
       node.start();
-      return { node, playback: false, stop: () => node.stop() };
+      // Also as a track, like tab audio.
+      const out = context.createMediaStreamDestination();
+      node.connect(out);
+      const track = out.stream.getAudioTracks()[0] ?? null;
+      return {
+        node,
+        playback: false,
+        track,
+        stop: () => {
+          node.stop();
+          track?.stop();
+        },
+      };
     },
   };
 }

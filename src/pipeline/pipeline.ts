@@ -7,11 +7,17 @@
  *   context. Partial lines are only translated when `translatePartials` is on (a preview that the
  *   final replaces); a newer partial aborts the previous preview.
  * - Each change to a segment re-emits its whole cue; the overlay replaces by id.
+ * - Engines that listen to the live track (`audioInput: 'track'`) get the track, and the
+ *   segment calls only as pause markers (no audio): their segments run longer before a forced
+ *   cut, since cutting a recognizer mid-sentence costs words.
+ * - A translation engine may correct a line's language (it checked the text) and may revise an
+ *   earlier line's translation (`TranslationChunk.revises`).
  */
 import { SampleClock } from '@/capture/clock';
 import { type AudioFrame, PIPELINE_SAMPLE_RATE } from '@/capture/types';
 import type {
   AsrEngine,
+  AsrHealth,
   AsrResult,
   AsrSession,
   LanguageTag,
@@ -34,8 +40,14 @@ export interface PipelineOptions {
   segmenter?: Segmenter;
   /** Earlier final lines passed as translation context. Default 3. */
   contextLines?: number;
+  /** Languages the person expects to hear (empty: not said). */
+  spokenLanguages?: readonly LanguageTag[];
+  /** The captured audio as a live track, for engines that listen to it. */
+  track?: MediaStreamTrack | null;
   onCue(cue: Cue): void;
   onError(error: Error): void;
+  /** How the speech engine is keeping up. */
+  onHealth?(health: AsrHealth): void;
 }
 
 interface SegmentState {
@@ -49,18 +61,29 @@ export class Pipeline {
   private readonly segmenter: Segmenter;
   private readonly session: AsrSession;
   private readonly segments = new Map<string, SegmentState>();
-  private readonly context: { source: string; translation: string }[] = [];
+  private readonly context: { source: string; translation: string; language: LanguageTag }[] = [];
+  /** The ASR engine listens to the track; segments are only pause markers for it. */
+  private readonly ownSegments: boolean;
+  /** End of the audio pushed so far. */
+  private position = 0;
   private readonly closing = new AbortController();
   private finals: Promise<void> = Promise.resolve();
   private seq = 0;
 
   constructor(private readonly options: PipelineOptions) {
-    this.segmenter = options.segmenter ?? new Segmenter(new EnergyVad());
+    this.ownSegments = options.asr.info.audioInput === 'track';
+    this.segmenter =
+      options.segmenter ??
+      new Segmenter(new EnergyVad(), this.ownSegments ? { maxSegmentMs: 20_000 } : {});
     this.session = options.asr.createSession({
       sampleRate: PIPELINE_SAMPLE_RATE,
       languageHint: options.sourceLanguage,
+      spokenLanguages: options.spokenLanguages ?? [],
+      track: options.track ?? null,
+      currentSample: () => this.position,
       onResult: (result) => this.onAsrResult(result),
       onError: (error) => options.onError(error),
+      ...(options.onHealth ? { onHealth: options.onHealth } : {}),
     });
   }
 
@@ -68,6 +91,7 @@ export class Pipeline {
   push(frame: AudioFrame): void {
     if (this.closing.signal.aborted) return;
     this.clock.anchor(frame.startSample, frame.startEpochMs);
+    this.position = frame.startSample + frame.samples.length;
     this.dispatch(this.segmenter.push(frame.samples, frame.startSample));
   }
 
@@ -93,7 +117,9 @@ export class Pipeline {
           this.session.startSegment(event.segmentId, event.startSample);
           break;
         case 'audio':
-          this.session.pushAudio(event.segmentId, event.samples, event.startSample);
+          if (!this.ownSegments) {
+            this.session.pushAudio(event.segmentId, event.samples, event.startSample);
+          }
           break;
         case 'end':
           this.session.endSegment(event.segmentId, event.endSample);
@@ -177,14 +203,32 @@ export class Pipeline {
       });
       for await (const chunk of stream) {
         if (signal.aborted) return;
+        if (chunk.revises) {
+          this.revise(chunk.revises.segmentId, chunk.text);
+          continue;
+        }
         // A preview never overwrites a finished translation.
         if (!final && cue.translation?.final) return;
+        if (chunk.sourceLanguage && cue.source.final === final) {
+          // The engine checked the text: its language wins.
+          cue.source = { ...cue.source, language: chunk.sourceLanguage };
+          if (sameLanguage(chunk.sourceLanguage, target)) {
+            cue.translation = null;
+            cue.untranslated = 'same-language';
+            this.emit(cue);
+            return;
+          }
+        }
         cue.translation = { text: chunk.text, language: target, final: final && chunk.final };
         if (cue.translation.final) cue.untranslated = null;
         this.emit(cue);
       }
       if (final && cue.translation?.final) {
-        this.context.push({ source: text, translation: cue.translation.text });
+        this.context.push({
+          source: text,
+          translation: cue.translation.text,
+          language: cue.source.language,
+        });
         if (this.context.length > lines) this.context.shift();
       }
     } catch (err) {
@@ -193,6 +237,17 @@ export class Pipeline {
       this.emit(cue);
       this.options.onError(err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  /** A better translation of an earlier line. */
+  private revise(segmentId: string, text: string): void {
+    const state = this.segments.get(segmentId);
+    if (!state?.cue.translation) return;
+    const before = state.cue.translation.text;
+    state.cue.translation = { ...state.cue.translation, text, final: true };
+    const ctx = this.context.find((c) => c.translation === before);
+    if (ctx) ctx.translation = text;
+    this.emit(state.cue);
   }
 
   private emit(cue: Cue): void {

@@ -12,7 +12,7 @@
  * disconnect is also how the overlay learns the session ended.
  */
 import type { ProfileChoice } from '@/engines/profiles';
-import type { LanguageTag } from '@/engines/types';
+import type { LanguageTag, SetupAction } from '@/engines/types';
 import type { ModelsView } from '@/models/types';
 import type { Cue } from '@/pipeline/types';
 import type { OverlaySettings } from '@/settings/settings';
@@ -49,9 +49,18 @@ export interface SessionActivity {
  * - `busy`: something else is capturing the tab.
  * - `companion`: the profile needs the companion app and it isn't running.
  * - `model`: a model failed to load or isn't downloaded.
+ * - `setup`: Chrome needs a click to download a language pack first (`setup` lists them; a page
+ *   runs each with `runSetupAction` from engines/chrome/setup.ts, then starts again).
  * - `unknown`: anything else.
  */
-export type SessionErrorCode = 'page' | 'access' | 'busy' | 'companion' | 'model' | 'unknown';
+export type SessionErrorCode =
+  | 'page'
+  | 'access'
+  | 'busy'
+  | 'companion'
+  | 'model'
+  | 'setup'
+  | 'unknown';
 
 export type SessionStatus =
   | { state: 'idle' }
@@ -74,6 +83,11 @@ export type SessionStatus =
       heard: boolean;
       /** Absent until the first report. */
       activity?: SessionActivity;
+      /**
+       * Downloads that would let more lines be translated (a language heard whose pack isn't
+       * there yet). Each needs a click: `runSetupAction` (engines/chrome/setup.ts).
+       */
+      setup?: SetupAction[];
     }
   | {
       state: 'error';
@@ -81,6 +95,8 @@ export type SessionStatus =
       sessionId: string;
       message: string;
       code?: SessionErrorCode;
+      /** With code `setup`: the downloads to start, one click each. */
+      setup?: SetupAction[];
     };
 
 export type ActiveSessionStatus = Exclude<SessionStatus, { state: 'idle' }>;
@@ -149,6 +165,12 @@ export interface SessionConfig {
   /** `null` = detect per segment. */
   sourceLanguage: string | null;
   translatePartials: boolean;
+  /**
+   * Languages the person expects to hear. Engines that can't detect languages (Chrome's speech
+   * recognition) listen for these; others may limit detection to them. Absent: engines choose
+   * (Chrome speech: the languages whose packs are downloaded).
+   */
+  spokenLanguages?: string[];
 }
 
 export type OffscreenCommand =
