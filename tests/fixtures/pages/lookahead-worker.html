@@ -10,7 +10,14 @@
     <script src="lookahead-common.js"></script>
     <script>
       // Open with ?murmur-worker-tee: e2e builds then put the tee in this page's workers.
-      const worker = new Worker('lookahead-worker.js');
+      // As players that load their worker script from a CDN do: a blob that imports it by its
+      // absolute URL, its URL revoked as soon as the worker is made.
+      const script = new URL('lookahead-worker.js', location.href).href;
+      const blobUrl = URL.createObjectURL(
+        new Blob([`importScripts(${JSON.stringify(script)});`], { type: 'application/javascript' }),
+      );
+      const worker = new Worker(blobUrl);
+      URL.revokeObjectURL(blobUrl);
       window.playerWorker = worker;
       worker.onmessage = (e) => {
         if (e.data.type === 'handle') {

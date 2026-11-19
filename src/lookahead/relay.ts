@@ -277,11 +277,20 @@ export function startRelay(win: Window): Relay | null {
   if (globalThis.__murmurTee) return null;
   const relay = new Relay();
   globalThis.__murmurTee = relay;
-  // A port per offer: the tee takes the first that reaches it (at most two are ever made).
+  // A port per offer: the tee takes the first that reaches it and says so (`ack`). A second
+  // offer, on its `hello`, only while none was taken (at most two are ever made).
+  let taken = false;
   const offer = () => {
-    if (relay.ports.length >= 2) return;
+    if (taken || relay.ports.length >= 2) return;
     const channel = new MessageChannel();
     channel.port1.onmessage = (e: MessageEvent) => {
+      if ((e.data as { t?: unknown } | null)?.t === 'ack') {
+        taken = true;
+        // The other offer, if there was one, is closed.
+        for (const p of relay.ports.splice(0)) if (p !== channel.port1) p.close();
+        relay.ports.push(channel.port1);
+        return;
+      }
       if (isTeeEvent(e.data)) relay.onEvent(e.data);
     };
     relay.ports.push(channel.port1);

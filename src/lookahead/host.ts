@@ -302,7 +302,7 @@ export class LookaheadHost {
       }
       case 'remove': {
         const b = this.buffers.get(wire.sb);
-        if (b) this.removed(b.ms, wire.start, wire.end);
+        if (b) this.removed(b.ms, wire.start, wire.end ?? Number.POSITIVE_INFINITY);
         return;
       }
       case 'abort':

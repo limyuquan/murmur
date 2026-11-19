@@ -29,7 +29,8 @@ export type TeeEvent =
       awe: number | null;
       sequence: boolean;
     }
-  | { t: 'remove'; sb: string; start: number; end: number }
+  /** `end`: null for `Infinity` (it doesn't survive JSON). */
+  | { t: 'remove'; sb: string; start: number; end: number | null }
   | { t: 'abort'; sb: string }
   | { t: 'ctype'; sb: string; mime: string; kind: TrackKind }
   | { t: 'sbrm'; sb: string }
@@ -44,6 +45,11 @@ export type TeeEvent =
 export type TeeControl =
   /** The kill switch: hooks pass straight through from now on. */
   { t: 'off' };
+
+/** From the tee to the relay, on the port it took: no other offer is needed. */
+export interface TeeAck {
+  t: 'ack';
+}
 
 /** A TeeEvent on the way to the offscreen document. */
 export type TeeWire =
@@ -141,7 +147,7 @@ export function isTeeEvent(m: unknown): m is TeeEvent {
         typeof e.sequence === 'boolean'
       );
     case 'remove':
-      return isId(e.sb) && isNum(e.start) && isNum(e.end);
+      return isId(e.sb) && isNum(e.start) && (e.end === null || isNum(e.end));
     case 'abort':
     case 'sbrm':
       return isId(e.sb);

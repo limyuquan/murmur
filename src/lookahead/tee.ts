@@ -37,6 +37,8 @@ export interface TeeOptions {
    * worker, where the element's MediaSource is found by matching them.
    */
   reportBuffered?: boolean;
+  /** Every object URL the page makes (the worker tee keeps script Blobs by their URL). */
+  onObjectUrl?(object: unknown, url: string): void;
 }
 
 export interface TeeHandle {
@@ -159,17 +161,23 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
     return sb;
   });
 
+  // The original runs first in each wrapper below: an exception it throws reaches the page
+  // unchanged, and then nothing is reported (the call didn't happen).
   wrapMethod(MS, 'removeSourceBuffer', (original) => (self, args) => {
+    const out = original.apply(self, args);
     if (!killed) {
       try {
         const info = buffers.get(args[0] as object);
         if (info) send({ t: 'sbrm', sb: info.id });
       } catch {}
     }
-    return original.apply(self, args);
+    return out;
   });
 
   wrapMethod(SB, 'appendBuffer', (original) => (self, args) => {
+    // `appendBuffer` copies the data before it returns, so the bytes are still as appended (a
+    // QuotaExceededError, which players answer by appending again, copies nothing).
+    const out = original.apply(self, args);
     if (!killed) {
       const t0 = clock();
       try {
@@ -206,32 +214,42 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
       } catch {}
       stats.hookMs += clock() - t0;
     }
-    return original.apply(self, args);
+    return out;
   });
 
   wrapMethod(SB, 'remove', (original) => (self, args) => {
+    const out = original.apply(self, args);
     if (!killed) {
       try {
         const info = buffers.get(self as object);
         if (info && info.kind !== 'video') {
-          send({ t: 'remove', sb: info.id, start: Number(args[0]), end: Number(args[1]) });
+          const end = Number(args[1]);
+          // `Infinity` doesn't survive JSON on the way to the offscreen document: null.
+          send({
+            t: 'remove',
+            sb: info.id,
+            start: Number(args[0]),
+            end: Number.isFinite(end) ? end : null,
+          });
         }
       } catch {}
     }
-    return original.apply(self, args);
+    return out;
   });
 
   wrapMethod(SB, 'abort', (original) => (self, args) => {
+    const out = original.apply(self, args);
     if (!killed) {
       try {
         const info = buffers.get(self as object);
         if (info && info.kind !== 'video') send({ t: 'abort', sb: info.id });
       } catch {}
     }
-    return original.apply(self, args);
+    return out;
   });
 
   wrapMethod(SB, 'changeType', (original) => (self, args) => {
+    const out = original.apply(self, args);
     if (!killed) {
       try {
         const info = buffers.get(self as object);
@@ -242,7 +260,7 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
         }
       } catch {}
     }
-    return original.apply(self, args);
+    return out;
   });
 
   const url = G.URL;
@@ -254,6 +272,8 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
           const MediaSourceClass = G.MediaSource as unknown as new () => object;
           if (args[0] instanceof MediaSourceClass && typeof out === 'string') {
             send({ t: 'url', url: out, ms: sourceId(args[0] as object) });
+          } else if (typeof out === 'string') {
+            options.onObjectUrl?.(args[0], out);
           }
         } catch {}
       }
@@ -268,10 +288,15 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
  * events to the relay over a MessagePort the relay hands over (queued until then).
  */
 export function startPageTee(win: Window & typeof globalThis): void {
-  const flag = Symbol.for('murmur.tee');
-  const w = win as unknown as Record<symbol, boolean>;
-  if (w[flag]) return;
-  Object.defineProperty(win, flag, { value: true });
+  // Once per document. The check goes through the wrapper itself (only ours has its own
+  // `toString`), so nothing new is left on the page's globals.
+  try {
+    const append = Object.getOwnPropertyDescriptor(
+      win.SourceBuffer?.prototype ?? {},
+      'appendBuffer',
+    )?.value as unknown;
+    if (typeof append === 'function' && Object.hasOwn(append, 'toString')) return;
+  } catch {}
 
   const queue: [TeeEvent, ArrayBuffer[]][] = [];
   let queued = 0;
@@ -290,9 +315,15 @@ export function startPageTee(win: Window & typeof globalThis): void {
     queued += size;
     queue.push([event, transfer]);
   };
-  const tee = installTee(win as unknown as TeeGlobal, { idPrefix: prefix, kindOf, send });
-  // MSE in workers, on the sites that need it (wrapping workers can break a page's CSP).
-  const workers = workerTeeHost(win.location.hostname, win.location.search)
+  let workers: ReturnType<typeof wrapWorkers> = null;
+  const tee = installTee(win as unknown as TeeGlobal, {
+    idPrefix: prefix,
+    kindOf,
+    send,
+    onObjectUrl: (object, url) => workers?.objectUrl(object, url),
+  });
+  // MSE in workers, on the sites that need it.
+  workers = workerTeeHost(win.location.hostname, win.location.search)
     ? wrapWorkers(win, { idPrefix: prefix, send, installTee, kindOf })
     : null;
   const off = (): void => {
@@ -304,14 +335,20 @@ export function startPageTee(win: Window & typeof globalThis): void {
     'message',
     (e: MessageEvent) => {
       const data = e.data as { [TEE_MESSAGE]?: string } | null;
-      if (e.source !== win || !data || data[TEE_MESSAGE] !== 'port' || port) return;
-      const given = e.ports[0];
-      if (!given) return;
+      if (e.source !== win || !data || data[TEE_MESSAGE] !== 'port') return;
+      // Every offer stops here, taken or not: the page's own handlers never see one.
       e.stopImmediatePropagation();
+      const given = e.ports[0];
+      if (port || !given) {
+        given?.close();
+        return;
+      }
       port = given;
       port.onmessage = (m: MessageEvent) => {
         if ((m.data as { t?: string } | null)?.t === 'off') off();
       };
+      // So the relay makes no second offer.
+      port.postMessage({ t: 'ack' });
       for (const [event, transfer] of queue.splice(0)) port.postMessage(event, transfer);
       queued = 0;
     },

@@ -191,11 +191,13 @@ test('the page’s workers are wrapped only where asked', async ({ murmur, servi
   await serviceWorker.evaluate(() =>
     (globalThis as unknown as SwGlobal).__murmur.lookahead('127.0.0.1', true),
   );
-  // A wrapped Worker is a Proxy: what it makes has the original as its constructor.
+  // A wrapped Worker is a Proxy, whose source text has no name. What it makes still has it as
+  // its constructor.
   const wrapped = () => {
     const w = new Worker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' })));
     w.terminate();
-    return w.constructor !== Worker;
+    if (w.constructor !== Worker) return 'constructor';
+    return Function.prototype.toString.call(Worker) !== 'function Worker() { [native code] }';
   };
   // hls.js makes a worker of its own: left as it is.
   const plain = await murmur.open('lookahead-hls.html');

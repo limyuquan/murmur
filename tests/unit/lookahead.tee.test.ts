@@ -7,9 +7,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fromBase64 } from '@/lookahead/bytes';
 import { kindOf } from '@/lookahead/kind';
-import type { TeeEvent, TeeWire } from '@/lookahead/protocol';
-import { initSegmentOf, Relay } from '@/lookahead/relay';
-import { installTee, type TeeGlobal } from '@/lookahead/tee';
+import { isTeeWire, type TeeEvent, type TeeWire } from '@/lookahead/protocol';
+import { initSegmentOf, Relay, startRelay } from '@/lookahead/relay';
+import { installTee, startPageTee, type TeeGlobal } from '@/lookahead/tee';
 
 function fakeGlobal() {
   const calls: string[] = [];
@@ -18,12 +18,21 @@ function fakeGlobal() {
     appendWindowStart = 0;
     appendWindowEnd = Number.POSITIVE_INFINITY;
     mode = 'segments';
+    /** Make the next call throw, as the built-in does (QuotaExceededError, InvalidStateError). */
+    refuse: string | null = null;
     appendBuffer(data: ArrayBuffer | ArrayBufferView): void {
+      this.check();
       calls.push(`append ${(data as ArrayBuffer).byteLength ?? 0}`);
     }
     remove(start: number, end: number): string {
+      this.check();
       calls.push(`remove ${start}-${end}`);
       return 'removed';
+    }
+    private check(): void {
+      const refuse = this.refuse;
+      this.refuse = null;
+      if (refuse) throw new DOMException('refused', refuse);
     }
     abort(): void {
       calls.push('abort');
@@ -123,6 +132,40 @@ describe('installTee', () => {
     expect(() => ms.addSourceBuffer('bad')).toThrow('NotSupportedError');
   });
 
+  it('reports nothing for a call the built-in refused, and lets its exception through as it is', () => {
+    const { G, MediaSource, calls } = fakeGlobal();
+    const events: TeeEvent[] = [];
+    installTee(G, { send: (e) => events.push(e), idPrefix: 'p-', kindOf });
+    const sb = new MediaSource().addSourceBuffer('audio/mp4');
+    sb.refuse = 'QuotaExceededError';
+    let thrown: unknown = null;
+    try {
+      sb.appendBuffer(new Uint8Array(4));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('QuotaExceededError');
+    sb.refuse = 'InvalidStateError';
+    expect(() => sb.remove(0, 5)).toThrow('refused');
+    // The player appends again, smaller: that one is copied, once.
+    sb.appendBuffer(new Uint8Array(2));
+    expect(events.map((e) => e.t)).toEqual(['sb', 'append']);
+    expect(calls.filter((c) => c.startsWith('append'))).toEqual(['append 2']);
+  });
+
+  it('carries remove(start, Infinity) through JSON as a null end', () => {
+    const { G, MediaSource } = fakeGlobal();
+    const events: TeeEvent[] = [];
+    installTee(G, { send: (e) => events.push(e), idPrefix: 'p-', kindOf });
+    const sb = new MediaSource().addSourceBuffer('audio/mp4');
+    sb.remove(10, Number.POSITIVE_INFINITY);
+    const remove = events.find((e) => e.t === 'remove');
+    expect(remove).toMatchObject({ start: 10, end: null });
+    // The runtime port serializes as JSON.
+    expect(isTeeWire(JSON.parse(JSON.stringify(remove)))).toBe(true);
+  });
+
   it('passes straight through once switched off', () => {
     const { G, MediaSource } = fakeGlobal();
     const events: TeeEvent[] = [];
@@ -193,4 +236,66 @@ describe('Relay', () => {
     relay.attach((w) => got.push(w));
     expect(got).toEqual([]);
   });
+});
+
+/** A window: `postMessage` dispatches a message event from itself, later, with the ports. */
+function fakeWindow() {
+  const { G } = fakeGlobal();
+  const win = new EventTarget() as EventTarget & Record<string, unknown>;
+  Object.assign(win, G, {
+    crypto: globalThis.crypto,
+    location: { hostname: 'example.com', search: '' },
+    postMessage(data: unknown, _origin: string, transfer: MessagePort[] = []) {
+      setTimeout(() => {
+        const e = new Event('message');
+        Object.defineProperties(e, {
+          data: { value: data },
+          source: { value: win },
+          ports: { value: transfer },
+        });
+        win.dispatchEvent(e);
+      }, 0);
+    },
+  });
+  return win as unknown as Window & typeof globalThis;
+}
+
+describe('the tee and the relay in a page', () => {
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  for (const order of ['relay first', 'tee first'] as const) {
+    it(`hand over one port, and the page never sees an offer (${order})`, async () => {
+      const win = fakeWindow();
+      const saved = globalThis.__murmurTee;
+      globalThis.__murmurTee = undefined;
+      try {
+        let relay: Relay | null = null;
+        if (order === 'relay first') relay = startRelay(win);
+        startPageTee(win);
+        if (order === 'tee first') relay = startRelay(win);
+        // The page's own handler, added after both (as at document_start).
+        const pageSaw: unknown[] = [];
+        win.addEventListener('message', (e) => pageSaw.push((e as MessageEvent).data));
+        await settle();
+        expect(pageSaw).toEqual([]);
+        expect(relay?.ports).toHaveLength(1);
+        // Events flow over the port that was taken.
+        const MS = (
+          win as unknown as { MediaSource: new () => { addSourceBuffer(t: string): unknown } }
+        ).MediaSource;
+        new MS().addSourceBuffer('audio/mp4');
+        const wires: TeeWire[] = [];
+        relay?.attach((w) => wires.push(w));
+        await settle();
+        expect(wires.map((w) => w.t)).toContain('sb');
+        // A second start in the same document does nothing.
+        startPageTee(win);
+        await settle();
+        expect(pageSaw).toEqual([]);
+        for (const p of relay?.ports ?? []) p.close();
+      } finally {
+        globalThis.__murmurTee = saved;
+      }
+    });
+  }
 });

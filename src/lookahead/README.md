@@ -22,19 +22,27 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   turned it on and gave Murmur access). It wraps `MediaSource.addSourceBuffer` /
   `removeSourceBuffer`, `SourceBuffer.appendBuffer` / `remove` / `abort` / `changeType` and
   `URL.createObjectURL`. Wrappers keep the built-in's name, length and `toString()`, call the
-  original unconditionally, and never throw into the page. Only audio is copied (one `slice()`,
-  transferred); `timestampOffset`, the append window and `mode` are read at each append.
+  original first, unconditionally, and never throw into the page: a call the original refuses
+  (a `QuotaExceededError`) throws to the page unchanged and is not reported. Only audio is copied
+  (one `slice()`, transferred); `timestampOffset`, the append window and `mode` are read at each
+  append. The relay's port offers stop at the tee (the page's handlers never see one), and the
+  tee says which it took, so no second offer is made. Nothing is left on the page's globals: a
+  second start finds its own wrappers.
 - MSE in a worker (Twitch: the element plays a `MediaSourceHandle`): on the sites marked
-  `workers` in `sites.ts` only, `worker.ts` makes `Worker` a Proxy whose `new` starts a classic
-  worker from a blob that installs the same tee (`installTee` is self-contained and goes in as its
-  own source text, with `kindOf`), then `importScripts` the original by absolute URL. The first
-  message hands it a private port (marked with a random token, never seen by the page's
-  handlers); its events go out with the page's. Module workers are left alone, as is every worker
-  after the page's CSP refused a blob worker (`securitypolicyviolation`) or when making one
-  throws. The worker's tee also reports each audio SourceBuffer's buffered ranges after every
-  update; the relay keeps them (`mediaSourceFor`) and the overlay finds the element's MediaSource
-  by matching its own `buffered` (the playhead inside counts most, then overlap, then the
-  latest). E2e builds let a fixture page ask for the worker tee (`?murmur-worker-tee`).
+  `workers` in `sites.ts` only, `worker.ts` makes `Worker` a Proxy. A classic worker started from
+  a script Blob the page made a URL for (how players run a worker script from a CDN) starts
+  instead from one new Blob: a prelude that installs the same tee (`installTee` is
+  self-contained and goes in as its own source text, with `kindOf`), then the page's Blob as it
+  is. Nothing is fetched later (a page may revoke its URL at once), and the worker keeps the CSP
+  it would have had (a blob worker's is the document's). The first message hands it a private
+  port (marked with a random token, never seen by the page's handlers); its events go out with
+  the page's. Module workers, http(s) and `data:` URLs, and blobs made elsewhere are left alone,
+  as is every worker after the page's CSP refused a blob worker (`securitypolicyviolation`) or
+  when making one throws. The worker's tee also reports each audio SourceBuffer's buffered
+  ranges after every update; the relay keeps them (`mediaSourceFor`) and the overlay finds the
+  element's MediaSource by matching its own `buffered` (the playhead inside counts most, then
+  overlap, then the latest). E2e builds let a fixture page ask for the worker tee
+  (`?murmur-worker-tee`).
 - `relay.ts` (isolated world, same frames) takes the tee's events, keeps every SourceBuffer's
   latest init segment and the last `HOLD_BYTES` of appended audio while no session runs, and
   hands everything to the overlay when a session attaches (`globalThis.__murmurTee`). So turning
@@ -105,8 +113,11 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   entry calls live (a Twitch channel), gets no timeline, and the live path handles it.
 - Sites (`sites.ts`): YouTube, Twitch (VODs; MSE in a worker; ads by the player's ad label),
   Bilibili (DASH, AAC in fMP4, main thread). Others use the MediaSource as the key.
-- A worker started from a blob sees a `blob:` `location`: a player whose worker script uses
-  relative URLs would break, which is why the worker tee is per site.
+- The worker tee is per site: a `"use strict"` at the very top of a page's worker blob no longer
+  covers the whole script (the prelude comes first), and the Proxy's own source text
+  (`Function.prototype.toString`) differs from the built-in's.
+- Pages can still tell the tee is there: `Function.prototype.toString` of a wrapped method gives
+  its JS source, and exceptions from wrapped methods carry a frame of the extension's script.
 - Players that create their MediaSource before the page scripts are registered (lookahead turned
   on mid-video) need a page reload; the popup says so.
 - Encrypted media (CENC, WebM encryption) is detected and skipped.
