@@ -38,9 +38,11 @@ export interface FitOptions {
 // Character classes
 
 /** CJK ideographs, kana, Hangul, full-width forms and CJK punctuation. */
-const FULLWIDTH = /[ᄀ-ᅟ⺀-〾ぁ-㏿㐀-䶿一-鿿ꥠ-꥿가-힣豈-﫿︰-﹏＀-｠￠-￦]/u;
+const FULLWIDTH =
+  /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
 /** Scripts written without spaces between words: a line may break between any two words. */
-const NO_SPACE = /[⺀-〾ぁ-㏿㐀-䶿一-鿿豈-﫿＀-｠฀-๿຀-໿က-႟ក-៿]/u;
+const NO_SPACE =
+  /[\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uff60\u0e00-\u0e7f\u0e80-\u0eff\u1000-\u109f\u1780-\u17ff]/u;
 /** Never at the start of a line (closing punctuation, small kana, prolonged sound mark). */
 const NO_START =
   /^[)\]}>,.!?:;%'"”’»›、。，．・：；？！ー〜～」』）】〕〉》〙〗｝ゝゞヽヾぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ々〻‐゠–]/u;
@@ -268,9 +270,9 @@ export function paginate(text: string, o: FitOptions): string[][] {
 
 /** Characters per second by script: rough adult reading speeds for subtitles. */
 const READING_CPS = { han: 9, kana: 6, hangul: 12, other: 17 } as const;
-const HAN = /[⺀-⿟々㐀-䶿一-鿿豈-﫿]/u;
-const KANA = /[ぁ-ヿㇰ-ㇿｦ-ﾟ]/u;
-const HANGUL = /[ᄀ-ᇿ㄰-㆏가-힣]/u;
+const HAN = /[\u2e80-\u2fdf\u3005\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
+const KANA = /[\u3041-\u30ff\u31f0-\u31ff\uff66-\uff9f]/u;
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]/u;
 
 export const MIN_DISPLAY_MS = 1000;
 export const MAX_DISPLAY_MS = 7000;
