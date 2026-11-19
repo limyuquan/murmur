@@ -29,6 +29,7 @@ const SECTIONS = [
   { id: 'languages', label: 'Languages' },
   { id: 'glossary', label: 'Glossary' },
   { id: 'subtitles', label: 'Subtitles' },
+  { id: 'ahead', label: 'Ahead of time' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'privacy', label: 'Privacy' },
 ] as const;
@@ -72,6 +73,7 @@ export function Options({ initial }: { initial: Settings }) {
         <LanguagesSection settings={settings} update={update} />
         <GlossarySection settings={settings} update={update} />
         <SubtitlesSection settings={settings} update={update} />
+        <AheadSection settings={settings} update={update} />
         <ShortcutsSection />
         <PrivacySection />
       </main>
@@ -637,6 +639,44 @@ function SwitchRow({
 
 // ---------------------------------------------------------------------------------------------
 
+function AheadSection({ settings, update }: { settings: Settings; update: Update }) {
+  const { sites, off } = settings.lookahead;
+  return (
+    <Section
+      id="ahead"
+      title="Subtitles ahead of time (beta)"
+      intro="On the sites you choose, Murmur reads the audio the video player has already loaded and makes subtitles before the speech plays, so they show on time. Turn it on for a site in the popup. It needs the Balanced or Best model size."
+    >
+      <div className="card divide-y divide-[var(--color-line)] px-4" data-testid="ahead">
+        <SwitchRow
+          label="On for the sites below"
+          hint="Off: Murmur leaves every site’s player alone. Takes effect when a page reloads."
+          checked={!off}
+          onChange={(on) => update({ lookahead: { off: !on } })}
+        />
+        {sites.length === 0 ? (
+          <p className="py-3 text-[var(--color-muted)]">No sites yet.</p>
+        ) : (
+          sites.map((site) => (
+            <div key={site} className="flex items-center justify-between gap-4 py-3">
+              <span>{site}</span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => update({ lookahead: { sites: sites.filter((s) => s !== site) } })}
+              >
+                Remove
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+
 interface Command {
   name?: string;
   description?: string;
@@ -695,6 +735,10 @@ function PrivacySection() {
             The tab’s audio is turned into subtitles on this computer and never sent anywhere.
           </li>
           <li>Subtitles and translations aren’t saved or sent.</li>
+          <li>
+            On sites where subtitles ahead of time are on, Murmur reads the audio the video player
+            loads, on this computer, while subtitles are on.
+          </li>
           <li>No account, no analytics, no tracking.</li>
           <li>The network is used only to download a model you choose, once.</li>
           <li>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { PROFILES } from '@/engines/profiles';
+import { sitePatterns } from '@/lookahead/sites';
 import { call } from '@/messaging/client';
 import type { SessionStatus, TabView } from '@/messaging/protocol';
 import { DOWNLOADS_KEY, type DownloadProgress } from '@/models/types';
@@ -26,6 +27,71 @@ function openOptions(section?: string): void {
     void browser.runtime.openOptionsPage();
   }
   window.close();
+}
+
+/**
+ * Subtitles ahead of time on this site (beta). Turning it on asks for access to the site (the
+ * click is what lets the browser ask), then registers the page scripts; they start with the next
+ * page load.
+ */
+function AheadRow({ view, onChange }: { view: TabView; onChange(on: boolean): void }) {
+  const site = view.site as string;
+  const [on, setOn] = useState(view.lookahead.on);
+  const [changed, setChanged] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const toggle = (next: boolean) => {
+    setProblem(null);
+    const apply = () =>
+      call('setLookahead', { site, on: next }).then(
+        () => {
+          setOn(next);
+          setChanged(true);
+          onChange(next);
+        },
+        (err: unknown) => setProblem(err instanceof Error ? err.message : String(err)),
+      );
+    if (!next) {
+      void apply();
+      return;
+    }
+    // Asked for straight from the click.
+    browser.permissions.request({ origins: sitePatterns(site) }).then(
+      (granted) => {
+        if (granted) void apply();
+        else setProblem(`Murmur needs access to ${site} for this.`);
+      },
+      (err: unknown) => setProblem(err instanceof Error ? err.message : String(err)),
+    );
+  };
+  return (
+    <div data-testid="ahead">
+      <div className="flex h-9 items-center justify-between gap-3">
+        <span id="ahead-label">Show subtitles ahead of time (beta)</span>
+        <Switch checked={on} onChange={toggle} labelledBy="ahead-label" testId="ahead-switch" />
+      </div>
+      {on && !view.lookahead.supported && (
+        <p className="text-[12px] text-[var(--color-muted)]">
+          Needs the Balanced or Best model size. Until then, subtitles come as they’re heard.
+        </p>
+      )}
+      {on && changed && (
+        <p className="flex items-center justify-between gap-3 text-[12px] text-[var(--color-muted)]">
+          <span>Starts when the page reloads.</span>
+          <button
+            type="button"
+            className="link flex-none"
+            onClick={() => {
+              void browser.tabs.reload(view.tabId);
+              window.close();
+            }}
+          >
+            Reload
+          </button>
+        </p>
+      )}
+      {problem && <p className="text-[12px] text-[var(--color-danger)]">{problem}</p>}
+    </div>
+  );
 }
 
 /**
@@ -288,6 +354,12 @@ export function Popup({
             testId="size"
           />
         </div>
+        {view.site && !view.lookahead.off && view.tabId >= 0 && (
+          <AheadRow
+            view={view}
+            onChange={(on) => setView((v) => ({ ...v, lookahead: { ...v.lookahead, on } }))}
+          />
+        )}
         {moved && view.site && (
           <div className="flex h-9 items-center justify-between gap-3">
             <span className="text-[var(--color-muted)]">Moved on {view.site}</span>
