@@ -45,14 +45,24 @@ function finished(log: OffscreenE2eLog | null): Cue[] {
     .sort((a, b) => (a.media?.start ?? 0) - (b.media?.start ?? 0));
 }
 
-/** Records, in the page, each change of the subtitles shown with the video's time. */
+/**
+ * Records, in the page, each change of the subtitles shown with the video's time, and the
+ * video's time at each animation frame the page gets (the overlay draws in those frames too, so
+ * a stall of the whole page shows in both).
+ */
 async function recordShown(page: Page): Promise<void> {
   await page.evaluate(() => {
     const video = document.querySelector('video') as HTMLVideoElement;
     const root = document.querySelector('murmur-overlay')?.shadowRoot;
     if (!root) throw new Error('no overlay');
     const shown: { t: number; ids: string[] }[] = [];
-    (window as unknown as { shown: typeof shown }).shown = shown;
+    const frames: number[] = [];
+    Object.assign(window, { shown, pageFrames: frames });
+    const frame = () => {
+      frames.push(video.currentTime);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
     const snap = () => {
       const ids = [...root.querySelectorAll('.block:not(.leaving)')].map(
         (b) => (b as HTMLElement).dataset.id ?? '',
@@ -132,17 +142,27 @@ for (const player of PLAYERS) {
 
     const log = await offscreenLog(serviceWorker);
     const cues = finished(log);
-    const shown = await page.evaluate(
-      () => (window as unknown as { shown: { t: number; ids: string[] }[] }).shown,
-    );
+    const { shown, frames } = await page.evaluate(() => {
+      const w = window as unknown as {
+        shown: { t: number; ids: string[] }[];
+        pageFrames: number[];
+      };
+      return { shown: w.shown, frames: w.pageFrames };
+    });
     // One cue per burst, timed from the media itself.
     const timing = BURSTS.map(([start]) => {
       const cue = cues.find((c) => Math.abs((c.media?.start ?? -9) - start) < 0.4);
+      const at = cue?.media?.start ?? null;
       const first = cue ? shown.find((s) => s.ids.includes(cue.id)) : undefined;
+      // The page's second frame once the video reached the cue: the overlay, which checks the
+      // video's time every frame, draws it by then.
+      const reached = at === null ? -1 : frames.findIndex((t) => t >= at - 0.001);
+      const due = reached >= 0 ? frames[reached + 1] : undefined;
       return {
         burst: start,
-        cue: cue?.media ? Number(cue.media.start.toFixed(3)) : null,
+        cue: at === null ? null : Number(at.toFixed(3)),
         shownAt: first ? Number(first.t.toFixed(3)) : null,
+        due: due === undefined ? null : Number(due.toFixed(3)),
       };
     });
     console.log(`${player.name}: ${JSON.stringify(timing)}`);
@@ -150,17 +170,29 @@ for (const player of PLAYERS) {
       expect(t.cue, `a cue for the burst at ${t.burst} s`).not.toBeNull();
       // The segmenter starts a segment 100 ms before the speech.
       expect(Math.abs((t.cue ?? 0) - (t.burst - 0.1))).toBeLessThan(0.1);
-      // Shown when the video gets there (the test tone's session has no capture lag). Usually
-      // within a frame or two; headless browsers running side by side sometimes stall a frame
-      // for a quarter second, so the bound is loose (the log line above has the real numbers).
+      // Shown when the video gets there (the test tone's session has no capture lag): never
+      // before, and by the page's next frame. Timed against the page's own frames, not a fixed
+      // bound: headless browsers running side by side sometimes stall the whole page for a
+      // quarter second or more, which delays the frame, not the overlay's scheduling.
       expect(t.shownAt, `burst at ${t.burst} s shown`).not.toBeNull();
-      expect(Math.abs((t.shownAt ?? 0) - (t.cue ?? 0))).toBeLessThan(0.35);
+      expect(t.shownAt ?? 0, `burst at ${t.burst} s not early`).toBeGreaterThanOrEqual(
+        (t.cue ?? 0) - 0.001,
+      );
+      expect(t.due, `the page drew a frame after ${t.burst} s`).not.toBeNull();
+      expect(t.shownAt ?? 0, `burst at ${t.burst} s by the next frame`).toBeLessThanOrEqual(
+        (t.due ?? 0) + 0.001,
+      );
     }
     // While lookahead was ahead, live recognition stepped aside.
     expect(sawLivePaused).toBe(true);
-    // Live cues never showed where lookahead had subtitles (while paused at 0 before play, a
-    // live line may come before lookahead's first one is finished).
-    const liveShown = shown.filter((s) => s.t > 0 && s.ids.some((id) => !id.startsWith('L')));
+    // Live cues never showed where lookahead had subtitles: from its first cue to its last.
+    // (Before the first, coverage can trail the first cue by a moment; after the last, the clip
+    // ends and live recognition, back on, hears the session's test tone, which never stops.)
+    const from = cues[0]?.media?.start ?? 0;
+    const to = cues.at(-1)?.media?.end ?? 0;
+    const liveShown = shown.filter(
+      (s) => s.t >= from && s.t <= to && s.ids.some((id) => !id.startsWith('L')),
+    );
     expect(liveShown).toEqual([]);
 
     // Seeking back shows the cue there at once, without making it again.
