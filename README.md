@@ -3,9 +3,10 @@
 Live translated subtitles over any video in Chrome. Earshot listens to the tab, turns speech into
 text, translates it, and draws the subtitles on the video, all on your own machine.
 
-> **Status: foundation.** The capture → subtitles path works end to end, but only with demo
-> engines that show *when* sound was heard instead of words. Real speech-recognition and
-> translation models plug into the same interfaces next.
+> **Status: early.** Real speech recognition and translation run in the browser: Chrome's own
+> on-device speech recognition and translator (Light), or Whisper on the graphics card with
+> Chrome's translator (Balanced, Best). A dedicated translation model and the optional companion
+> app come next.
 
 ## For humans
 
@@ -22,8 +23,9 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   Each line is translated on its own, so a video that switches language mid-way is fine; a line
   in a different language from the rest gets a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
-- **Pick a model size.** Light, Balanced or Best, or choose engines yourself. Earshot suggests one
-  that suits your device.
+- **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
+  downloads a small pack per language, after one click). Balanced and Best run Whisper on the
+  graphics card (a 1.6 GB download, once). Earshot suggests one that suits your device.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
   network use will be downloading a model you choose, once.
 
@@ -147,7 +149,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/entrypoints/offscreen/`, `src/offscreen/host.ts` | Offscreen document (`USER_MEDIA`): capture graph, engines, pipeline, cues to the overlay |
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
 | `src/pipeline/` | VAD hook, segmenter, orchestration (ASR → translation → cues), per-segment language |
-| `src/engines/` | Engine interfaces (`types.ts`), registry, hardware checks, model profiles, demo engines |
+| `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
@@ -185,7 +187,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    download size), languages, streaming, language detection.
 3. Register a factory in `src/engines/builtin.ts` whose `create()` dynamic-imports the engine.
 4. Put its id at the front of the profiles it suits in `src/engines/profiles.ts`. Profiles fall
-   back down their list, then to the demo engines, when an engine doesn't fit the device.
+   back down their list, then to the last resorts there, when an engine doesn't fit the device.
+   An engine that only finds out at load that it can't run here throws `EngineUnavailableError`
+   (`src/engines/errors.ts`); the session then tries its entry in `RUNTIME_FALLBACKS`.
 5. List what it downloads in `info.models` (id, label, size). The options page, welcome page and
    popup then show and manage those instead of the planned placeholders in
    `src/models/planned.ts`. Downloads go through a `ModelStore` (`src/models/types.ts`): add the
@@ -196,7 +200,36 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    (`src/offscreen/activity.ts`) with every frame and cue, which is how "falling behind",
    "no sound" and unsupported languages reach the popup.
 
-### 7. Known limits
+### 7. The real engines
+
+| Engine | What it is | Notes |
+|---|---|---|
+| `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
+| `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
+| `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions, cached in the Cache API. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
+
+- **Chrome language packs need a click.** Chrome only starts a speech or translation pack
+  download from a user gesture, and reports packs per site (a new origin sees `downloadable`
+  even when the pack is on disk; the click then finishes at once). Engines reject loading with
+  `EngineActionRequiredError`; the session status says `code: 'setup'` with `setup` actions,
+  and a page runs each with `runSetupAction(action)` (`src/engines/chrome/setup.ts`) straight
+  from the click handler, one action per click. A running session lists packs it met later in
+  `setup` too.
+- **Spoken languages.** `SessionConfig.spokenLanguages` tells Chrome speech which recognizers to
+  run (and lets Whisper limit detection). Without it, Chrome speech runs the languages whose
+  packs are downloaded.
+- **No COEP/COOP.** Cross-origin isolation breaks tab capture; threaded WebAssembly works
+  without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime, which ships in the
+  extension.
+- **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
+  `pnpm test:e2e`. The e2e build's `__earshot.start(tabId, 'tab', 'settings')` runs the engines
+  the settings choose (the default `'demo'` keeps Playwright offline), and the offscreen
+  document logs every cue and Chrome speech arbitration on `globalThis.__earshotLog`. Drive it
+  over CDP from a separate, temporary Chrome profile. With puppeteer over a pipe, send nothing
+  else to the browser while `start()` runs: a second CDP call then made Chrome 157 drop the
+  connection.
+
+### 8. Known limits
 
 Headless tests can't check these, so ask a human after related changes:
 
