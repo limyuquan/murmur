@@ -9,6 +9,7 @@ import { clearPositions, loadPositions, watchPositions } from '@/settings/positi
 import type { CaptionBackground, CaptionDisplay, Settings } from '@/settings/settings';
 import { REPO_URL } from '@/shared/ids';
 import { Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
+import { GlossaryEditor } from '@/ui/glossary';
 import { useHardware, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
@@ -26,6 +27,7 @@ import { SpokenLanguages } from '@/ui/spoken';
 const SECTIONS = [
   { id: 'models', label: 'Models' },
   { id: 'languages', label: 'Languages' },
+  { id: 'glossary', label: 'Glossary' },
   { id: 'subtitles', label: 'Subtitles' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'privacy', label: 'Privacy' },
@@ -68,6 +70,7 @@ export function Options({ initial }: { initial: Settings }) {
         </header>
         <ModelsSection settings={settings} update={update} />
         <LanguagesSection settings={settings} update={update} />
+        <GlossarySection settings={settings} update={update} />
         <SubtitlesSection settings={settings} update={update} />
         <ShortcutsSection />
         <PrivacySection />
@@ -396,6 +399,20 @@ function LanguagesSection({ settings, update }: { settings: Settings; update: Up
         </Row>
         <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
       </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+
+function GlossarySection({ settings, update }: { settings: Settings; update: Update }) {
+  return (
+    <Section
+      id="glossary"
+      title="Glossary"
+      intro="Names and terms, and how to write them. When a line mentions one, or something close to it (speech recognition often mishears names), the translation uses your spelling. Only the Gemma translation models (Balanced and Best) use it."
+    >
+      <GlossaryEditor settings={settings} update={update} />
     </Section>
   );
 }

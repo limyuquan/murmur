@@ -201,6 +201,38 @@ test('options: spoken languages', async ({ context, serviceWorker }) => {
   await expect(spoken.getByRole('checkbox', { name: 'English' })).toBeChecked();
 });
 
+test('options: glossary entries are added, edited and removed', async ({
+  context,
+  serviceWorker,
+}) => {
+  const glossary = () =>
+    serviceWorker.evaluate(async () => {
+      const s = await (
+        globalThis as unknown as { chrome: typeof import('wxt/browser').browser }
+      ).chrome.storage.local.get('settings');
+      return (s.settings as { glossary?: unknown } | undefined)?.glossary ?? [];
+    });
+  const page = await context.newPage();
+  await page.goto(url('options.html#glossary'));
+  const editor = page.getByTestId('glossary');
+  await editor.getByLabel('Said as').fill('Kamil');
+  await editor.getByLabel('Written as').fill('Camille');
+  await editor.getByLabel('Written as').press('Enter');
+  await expect.poll(glossary).toEqual([{ source: 'Kamil', target: 'Camille' }]);
+  // The same source again can't be added.
+  await editor.getByLabel('Said as').last().fill('Kamil');
+  await editor.getByLabel('Written as').last().fill('Other');
+  await expect(page.getByTestId('glossary-add')).toBeDisabled();
+  await expect(editor).toContainText('That one is already in.');
+  // Edits are saved when the field is left.
+  const entries = editor.getByRole('list', { name: 'Glossary entries' });
+  await entries.getByLabel('Written as').fill('Camille D.');
+  await entries.getByLabel('Said as').focus();
+  await expect.poll(glossary).toEqual([{ source: 'Kamil', target: 'Camille D.' }]);
+  await editor.getByRole('button', { name: 'Remove Kamil' }).click();
+  await expect.poll(glossary).toEqual([]);
+});
+
 test('options: the preview follows the subtitle settings', async ({ context }) => {
   const page = await context.newPage();
   await page.goto(url('options.html#subtitles'));
