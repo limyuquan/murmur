@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  compileGlossary,
   glossaryHits,
   glossaryMatch,
   MAX_GLOSSARY_HITS,
@@ -61,6 +62,59 @@ describe('glossary matching', () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ source: `w${i}`, target: `W${i}` }));
     const text = many.map((e) => e.source).join(' ');
     expect(glossaryHits(many, [text])).toHaveLength(MAX_GLOSSARY_HITS);
+  });
+
+  it('matches loosely exactly where the plain letter-by-letter comparison would', () => {
+    // A small alphabet, so near misses are common.
+    const syllables = [...'가나다라마바사아자하각난달람밥'];
+    let seed = 7;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed % n;
+    };
+    const word = (n: number) => Array.from({ length: n }, () => syllables[rand(15)]).join('');
+    let agreed = 0;
+    for (let t = 0; t < 1000; t++) {
+      const source = word(3 + rand(3));
+      const words = Array.from({ length: 1 + rand(6) }, () => word(1 + rand(5)));
+      if (rand(2)) {
+        // The source again, with a syllable changed (often only one letter of it).
+        const near = [...source];
+        near[rand(near.length)] = syllables[rand(15)] as string;
+        words.splice(rand(words.length + 1), 0, near.join(''));
+      }
+      const text = words.join(rand(2) ? ' ' : '');
+      const reference =
+        text.includes(source) ||
+        partialSimilarity(source.normalize('NFD'), text.replace(/\s+/g, '').normalize('NFD')) >=
+          0.8;
+      expect(glossaryMatch(source, text), `${source} in ${text}`).toBe(reference);
+      if (reference) agreed++;
+    }
+    expect(agreed).toBeGreaterThan(10);
+  });
+
+  it('matches a full glossary against a request in about a millisecond', () => {
+    const syllables = [...'가나다라마바사아자차카타파하각난달람밥상열정혁훈'];
+    let seed = 11;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed % n;
+    };
+    const word = (n: number) =>
+      Array.from({ length: n }, () => syllables[rand(syllables.length)]).join('');
+    const entries = Array.from({ length: 500 }, (_, i) => ({ source: word(4), target: `T${i}` }));
+    const lines = Array.from({ length: 4 }, () =>
+      Array.from({ length: 8 }, () => word(2 + rand(3))).join(' '),
+    );
+    const matcher = compileGlossary(entries);
+    matcher.hits(lines);
+    const runs = 20;
+    const start = performance.now();
+    for (let i = 0; i < runs; i++) matcher.hits(lines);
+    const perRequest = (performance.now() - start) / runs;
+    // Target < 2 ms; generous here for slow CI machines.
+    expect(perRequest).toBeLessThan(10);
   });
 
   it('keeps valid glossary settings only', () => {

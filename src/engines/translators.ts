@@ -15,7 +15,7 @@
  * line's stream may carry after its own final chunk.
  */
 import { isUnavailable } from './errors';
-import { type GlossaryEntry, glossaryHits } from './glossary';
+import { compileGlossary, type GlossaryEntry } from './glossary';
 import type {
   EngineState,
   LoadOptions,
@@ -49,6 +49,7 @@ export function withGlossary(
   entries: readonly GlossaryEntry[],
 ): TranslationEngine {
   if (!engine.info.usesGlossary || entries.length === 0) return engine;
+  const matcher = compileGlossary(entries);
   return {
     info: engine.info,
     get state() {
@@ -59,7 +60,7 @@ export function withGlossary(
     translate(request: TranslationRequest) {
       if (request.source.kind !== 'text') return engine.translate(request);
       const texts = [request.source.text, ...request.context.map((c) => c.source)];
-      return engine.translate({ ...request, glossary: glossaryHits(entries, texts) });
+      return engine.translate({ ...request, glossary: matcher.hits(texts) });
     },
   };
 }
