@@ -1,0 +1,24 @@
+{
+  "gemma4-e2b": {
+    "repo": "litert-community/gemma-4-E2B-it-litert-lm",
+    "revision": "2d74ac41a33d7da82f39f7d5720a04c68514a103",
+    "files": [
+      [
+        "gemma-4-E2B-it-web.litertlm",
+        2008432640,
+        "sha256:3a08e8d94e23b814ae5414469c370c503813949acb8ceaa17e4ebf8a35af35b5"
+      ]
+    ]
+  },
+  "gemma4-e4b": {
+    "repo": "litert-community/gemma-4-E4B-it-litert-lm",
+    "revision": "f254b5ba6e36f7d89cc7892e268e9877bc20f0a0",
+    "files": [
+      [
+        "gemma-4-E4B-it-web.litertlm",
+        2969059328,
+        "sha256:3904d826d5dddd25ea173e85204caec09e68ba038116e9b992b69cbdc94f57a0"
+      ]
+    ]
+  }
+}

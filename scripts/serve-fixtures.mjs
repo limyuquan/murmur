@@ -13,7 +13,7 @@
  * embed a frame from "another site" (frames.html).
  *
  * `/hf/<repo>/resolve/<revision>/<path>` stands in for Hugging Face in e2e builds (MODEL_HOST in
- * src/models/hub.ts): any file listed in an engine's files.json (src/engines/{whisper,qwen3asr}),
+ * src/models/hub.ts): any file listed in an engine's files.json (src/engines/{whisper,qwen3asr,llm}),
  * at its real size, filled with a fixed pattern, with Range support, at `FIXTURE_HF_MBPS` MB/s
  * (default 40) so downloads take long enough to watch and cancel. Files of the `murmur` group
  * (Murmur's own, whose repo isn't published yet) are served under any repo.
@@ -40,6 +40,9 @@ for (const entry of Object.values(await readJson('whisper/files.json'))) {
   for (const [file, bytes] of [...entry.shared, ...(entry.webgpu ?? []), ...(entry.wasm ?? [])]) {
     modelFiles.set(`${entry.repo}/${file}`, bytes);
   }
+}
+for (const entry of Object.values(await readJson('llm/files.json'))) {
+  for (const [file, bytes] of entry.files) modelFiles.set(`${entry.repo}/${file}`, bytes);
 }
 const qwen = await readJson('qwen3asr/files.json');
 for (const [file, bytes] of qwen.upstream.files)

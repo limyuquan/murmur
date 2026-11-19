@@ -1,0 +1,12 @@
+Murmur includes or downloads the following third-party software and models.
+
+LiteRT-LM.js (@litert-lm/core 0.19.0), bundled with its WebAssembly runtime.
+Copyright 2026 Google LLC. Licensed under the Apache License, Version 2.0.
+https://github.com/google-ai-edge/LiteRT-LM
+
+Gemma 4 E2B and E4B (litert-community/gemma-4-E2B-it-litert-lm,
+litert-community/gemma-4-E4B-it-litert-lm), downloaded from Hugging Face only when the person
+clicks Download. Copyright Google LLC. Licensed under the Apache License, Version 2.0.
+https://huggingface.co/google/gemma-4-E2B-it
+
+A copy of the Apache License, Version 2.0 is at https://www.apache.org/licenses/LICENSE-2.0.

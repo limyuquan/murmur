@@ -1,0 +1,124 @@
+/**
+ * Turning what the model wrote into a subtitle, and deciding when not to trust it.
+ *
+ * Cleaning (as the benchmark did, plus what a streaming subtitle needs): drop thinking blocks,
+ * labels ("Translation:", "English:"), a `[xx] source =>` echo of the context format, one pair of
+ * enclosing quotes, and keep the first non-empty line. An empty answer is "…" (what the prompt
+ * asks for when a line is unintelligible).
+ *
+ * Checking: an answer is rejected (and the line goes to another translator) when it repeats an
+ * earlier line's translation (models given context sometimes translate the context again), or is
+ * far longer than the line could need (a runaway that hit the token limit).
+ */
+
+const THINK = /<think>[\s\S]*?<\/think>/g;
+/** "Translation:", "English (US):", "Subtitle -" at the start. */
+const LABEL =
+  /^\s*(?:\*\*)?(?:translation|translated|subtitle|current|output|answer|english|[A-Z][a-z]+(?: [A-Z][a-z]+)?)(?: \([^)]{1,20}\))?(?:\*\*)?\s*[:：]\s*/i;
+const LANGUAGE_TAG = /^\s*\[[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\]\s*/;
+const QUOTES: Record<string, string> = {
+  '"': '"',
+  "'": "'",
+  '“': '”',
+  '„': '“',
+  '«': '»',
+  '「': '」',
+  '『': '』',
+};
+
+/** Removes a leading label, but only a known one or a language name followed by a colon. */
+function stripLabel(text: string, labels: readonly string[]): string {
+  const m = LABEL.exec(text);
+  if (!m) return text;
+  const word = m[0]
+    .replace(/[*:：\s]/g, '')
+    .replace(/\(.*\)/, '')
+    .toLowerCase();
+  const generic = ['translation', 'translated', 'subtitle', 'current', 'output', 'answer'];
+  if (generic.includes(word) || labels.some((l) => l.toLowerCase().replace(/\s/g, '') === word)) {
+    return text.slice(m[0].length);
+  }
+  return text;
+}
+
+export interface CleanOptions {
+  /** Names a model may put before its answer as a label: the target language's ("English"). */
+  labels?: readonly string[];
+}
+
+/**
+ * The subtitle in `raw`. `partial`: the answer is still coming, so an opening quote may not have
+ * its closing one yet, and an empty answer stays empty.
+ */
+export function cleanOutput(raw: string, options: CleanOptions = {}, partial = false): string {
+  let t = raw.replace(THINK, '');
+  if (t.includes('</think>')) t = t.slice(t.indexOf('</think>') + '</think>'.length);
+  if (partial && t.includes('<think>')) return '';
+  t = t.replace('<think>', '');
+  const labels = options.labels ?? [];
+  // The first line with text: a model sometimes adds a note on the next.
+  const lines = t.split('\n').map((l) => l.trim());
+  t = lines.find((l) => l !== '') ?? '';
+  t = stripLabel(t, labels).trim();
+  t = t.replace(LANGUAGE_TAG, '');
+  // "source => translation": the context's format, echoed.
+  const arrow = t.lastIndexOf('=>');
+  if (arrow >= 0) t = t.slice(arrow + 2).trim();
+  t = stripLabel(t, labels).trim();
+  const open = t[0];
+  const close = open ? QUOTES[open] : undefined;
+  if (close) {
+    if (t.length >= 2 && t.endsWith(close)) t = t.slice(1, -1).trim();
+    // An apostrophe opens words ("'Cause"), not only quotes: only a matched pair goes.
+    else if (open !== "'" && (partial || !t.slice(1).includes(close))) t = t.slice(1).trim();
+  }
+  if (!partial && t === '') return '…';
+  return t;
+}
+
+export type OutputCheck = { ok: true } | { ok: false; reason: 'echo' | 'length'; detail: string };
+
+export interface CheckInput {
+  /** The line that was translated. */
+  source: string;
+  /** Earlier lines given as context. */
+  context: readonly { source: string; translation: string }[];
+  /** The generation stopped at its token limit. */
+  hitLimit: boolean;
+}
+
+/** Letters and digits only, lower case: what "the same text" means here. */
+export function normalize(text: string): string {
+  return text
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Characters an answer may reasonably take for `source`: generous, but not unbounded. */
+export function maxOutputChars(source: string): number {
+  return Math.max(80, [...source].length * 8);
+}
+
+export function checkOutput(text: string, input: CheckInput): OutputCheck {
+  const out = normalize(text);
+  const src = normalize(input.source);
+  for (const c of input.context) {
+    const prev = normalize(c.translation);
+    // Too short to tell an echo from a line that really says the same ("Yes.").
+    if (prev.length < 6) continue;
+    // The same words said again translate the same: not an echo.
+    const repeated = normalize(c.source) !== '' && src.includes(normalize(c.source));
+    if (repeated) continue;
+    if (out === prev || (prev.length >= 12 && out.includes(prev))) {
+      return { ok: false, reason: 'echo', detail: `repeated an earlier line (“${c.translation}”)` };
+    }
+  }
+  if (input.hitLimit) {
+    return { ok: false, reason: 'length', detail: 'ran on to its length limit' };
+  }
+  if ([...text].length > maxOutputChars(input.source)) {
+    return { ok: false, reason: 'length', detail: 'wrote far more than the line says' };
+  }
+  return { ok: true };
+}

@@ -1,5 +1,19 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'wxt';
+
+/**
+ * LiteRT-LM's WebAssembly, for the LLM translation worker (src/engines/llm/worker.ts): only the
+ * build for browsers with relaxed SIMD and JSPI (24 MB; the package's three others are for older
+ * browsers), copied to `litert/` in the extension. The runtime's default is a CDN; the worker
+ * always names this copy.
+ */
+const LITERT_WASM = path.join(
+  path.dirname(createRequire(import.meta.url).resolve('@litert-lm/core/package.json')),
+  'wasm',
+);
+const LITERT_FILES = ['litertlm_wasm_internal.js', 'litertlm_wasm_internal.wasm'];
 
 /**
  * Public half of the key that fixes the unpacked extension ID (EXTENSION_ID in src/shared/ids.ts).
@@ -34,6 +48,13 @@ export default defineConfig({
   // Explicit imports everywhere (`wxt/browser`, `wxt/utils/define-background`, ...). Easier to
   // read for parallel agents and keeps Biome's undeclared-variable checks meaningful.
   imports: false,
+  hooks: {
+    'build:publicAssets': (_wxt, files) => {
+      for (const file of LITERT_FILES) {
+        files.push({ absoluteSrc: path.join(LITERT_WASM, file), relativeDest: `litert/${file}` });
+      }
+    },
+  },
   vite: () => ({
     plugins: [tailwindcss()],
     // The speech model worker imports transformers.js, which is ESM with top-level await.

@@ -47,6 +47,11 @@ export interface HardwareRequirements {
   minGpuBufferMB?: number;
   /** Needs WebGPU `shader-f16`. */
   shaderF16?: boolean;
+  /**
+   * Graphics memory it needs, MB, next to the speech model it runs with. Checked against a guess
+   * (`estimateGpuMemoryMB` in hardware.ts): WebGPU doesn't tell how much a card has.
+   */
+  minGpuMemoryMB?: number;
   /** One-off model download, MB. Shown before the user agrees to download. */
   downloadMB?: number;
 }

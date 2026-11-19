@@ -148,13 +148,16 @@ export async function storedBytes(
   return total;
 }
 
-/** `file` as one response, when every part is on disk. */
-export async function readFile(
+/**
+ * `file` as one Blob, when every part is on disk. The parts' blobs stay on disk until read, so
+ * this costs no memory even for a file of gigabytes (LiteRT-LM reads its model from a Blob).
+ */
+export async function readBlob(
   cache: Cache,
   source: ModelSource,
   file: ModelFile,
   partBytes = PART_BYTES,
-): Promise<Response | undefined> {
+): Promise<Blob | undefined> {
   const url = cacheKey(source, file);
   const blobs: Blob[] = [];
   for (let i = 0; i < partCount(file.bytes, partBytes); i++) {
@@ -163,7 +166,18 @@ export async function readFile(
     blobs.push(await res.blob());
   }
   const body = new Blob(blobs);
-  if (body.size !== file.bytes) return undefined;
+  return body.size === file.bytes ? body : undefined;
+}
+
+/** `file` as one response, when every part is on disk. */
+export async function readFile(
+  cache: Cache,
+  source: ModelSource,
+  file: ModelFile,
+  partBytes = PART_BYTES,
+): Promise<Response | undefined> {
+  const body = await readBlob(cache, source, file, partBytes);
+  if (!body) return undefined;
   return new Response(body, {
     headers: { 'content-length': String(file.bytes), 'content-type': 'application/octet-stream' },
   });
