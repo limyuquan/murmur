@@ -35,6 +35,8 @@ export interface BackgroundTestHook {
 export interface OffscreenE2eLog {
   /** Live cues sent so far. */
   cues: number;
+  /** The last 200 live cues sent, with the epoch ms each was sent. */
+  liveCues: { at: number; cue: Cue }[];
   lookaheadCues: { at: number; cue: Cue }[];
   lookahead: LookaheadSnapshot | null;
 }

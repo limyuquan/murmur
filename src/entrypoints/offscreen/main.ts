@@ -78,6 +78,7 @@ browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =
     const log = globalThis.__murmurLog;
     sendResponse({
       cues: log?.cues.length ?? 0,
+      liveCues: log?.cues.slice(-200) ?? [],
       lookaheadCues: log?.lookaheadCues ?? [],
       lookahead: log?.lookahead() ?? null,
     } satisfies OffscreenE2eLog);
