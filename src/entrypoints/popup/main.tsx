@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import { call } from '@/messaging/client';
+import { loadSettings } from '@/settings/settings';
 import { Popup } from './Popup';
 import '@/styles/app.css';
 
@@ -16,16 +17,16 @@ const param = new URLSearchParams(location.search).get('tab');
   ? Promise.resolve(Number(param))
   : browser.tabs.query({ active: true, currentWindow: true }).then(([t]) => t?.id ?? -1)
 )
-  .then((tabId) => call('view', { tabId }))
+  .then((tabId) => Promise.all([call('view', { tabId }), loadSettings()]))
   .then(
-    (view) =>
+    ([view, settings]) =>
       createRoot(root).render(
         <StrictMode>
-          <Popup initial={view} />
+          <Popup initial={view} settings={settings} />
         </StrictMode>,
       ),
     (err: Error) => {
       root.textContent = err.message;
-      root.className = 'p-4 w-[320px] text-sm';
+      root.className = 'p-4 w-[340px] text-sm';
     },
   );

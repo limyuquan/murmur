@@ -52,12 +52,12 @@ test('subtitles attach over the video picture, follow it, and go away on stop', 
   const popup = await page.context().newPage();
   await popup.goto(`chrome-extension://${EXTENSION_ID}/popup.html?tab=${tabId}`);
   await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'true');
-  await expect(popup.getByTestId('status')).toHaveText(/^Listening\./);
+  await expect(popup.getByTestId('status')).toHaveText(/^(Listening|Transcribing|Translating)/);
 
   // Switching off from the popup ends the session; the overlay removes itself.
   await popup.getByTestId('toggle').click();
   await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'false');
-  await expect(popup.getByTestId('status')).toHaveText('Off.');
+  await expect(popup.getByTestId('status')).toHaveText(/^Off/);
   await expect(host).toHaveCount(0);
   expect((await earshot.status()).state).toBe('idle');
 });

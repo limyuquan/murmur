@@ -1,35 +1,36 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
+import { PROFILES } from '@/engines/profiles';
 import { call } from '@/messaging/client';
 import type { SessionStatus, TabView } from '@/messaging/protocol';
+import { loadPosition, savePosition, watchPositions } from '@/settings/positions';
+import { type Settings, SIZE_PRESETS } from '@/settings/settings';
+import { Dot, Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
+import { useSettings } from '@/ui/hooks';
+import { listNames } from '@/ui/languages';
+import { describeStatus, type FixAction, isOn } from './status';
 
-/** Status line under the switch, in plain words. */
-export function statusText(view: TabView): string {
-  const s = view.status;
-  if (s.state === 'idle') return 'Off.';
-  if (!view.thisTab) {
-    return 'On in another tab. Turning it on here stops that one.';
+function openOptions(section?: string): void {
+  if (section) {
+    void browser.tabs.create({ url: browser.runtime.getURL(`/options.html#${section}`) });
+  } else {
+    void browser.runtime.openOptionsPage();
   }
-  switch (s.state) {
-    case 'starting':
-      return 'Starting…';
-    case 'loading':
-      return s.progress === null ? `${s.detail}…` : `${s.detail}: ${Math.round(s.progress * 100)}%`;
-    case 'running':
-      return s.heard ? 'Listening.' : 'Listening. No speech heard yet.';
-    case 'error':
-      return s.message;
-  }
+  window.close();
 }
 
-function isOn(view: TabView): boolean {
-  return view.thisTab && view.status.state !== 'error' && view.status.state !== 'idle';
-}
-
-export function Popup({ initial }: { initial: TabView }) {
+export function Popup({
+  initial,
+  settings: initialSettings,
+}: {
+  initial: TabView;
+  settings: Settings;
+}) {
   const [view, setView] = useState(initial);
+  const [settings, update] = useSettings(initialSettings);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [moved, setMoved] = useState(false);
 
   // The session's status lives in storage.session; follow it while the popup is open.
   useEffect(() => {
@@ -47,12 +48,23 @@ export function Popup({ initial }: { initial: TabView }) {
     return () => browser.storage.onChanged.removeListener(onChanged);
   }, []);
 
+  // Whether subtitles were dragged on this site.
+  useEffect(() => {
+    const site = view.site;
+    if (!site) return;
+    loadPosition(site).then(
+      (p) => setMoved(p !== null),
+      () => {},
+    );
+    return watchPositions((all) => setMoved(!!all[site]));
+  }, [view.site]);
+
   const on = isOn(view);
-  const toggle = async () => {
+  const run = async (work: () => Promise<SessionStatus>) => {
     setBusy(true);
     setFailure(null);
     try {
-      const status = on ? await call('stop', {}) : await call('start', { tabId: view.tabId });
+      const status = await work();
       setView((v) => ({
         ...v,
         status,
@@ -64,46 +76,149 @@ export function Popup({ initial }: { initial: TabView }) {
       setBusy(false);
     }
   };
+  const toggle = () => run(() => (on ? call('stop', {}) : call('start', { tabId: view.tabId })));
 
-  const error =
-    failure ?? (view.thisTab && view.status.state === 'error' ? statusText(view) : null);
+  const fix = (action: FixAction) => {
+    switch (action.kind) {
+      case 'retry':
+        void run(() => call('start', { tabId: view.tabId }));
+        break;
+      case 'settings':
+        openOptions(action.section);
+        break;
+      case 'profile':
+        update({ profile: action.profile });
+        setView((v) => ({ ...v, profile: action.profile }));
+        // Restart with the new models.
+        void run(async () => {
+          await call('stop', {});
+          return call('start', { tabId: view.tabId });
+        });
+        break;
+    }
+  };
+
+  const status = failure
+    ? { tone: 'error' as const, title: 'Something went wrong', detail: failure }
+    : describeStatus(view);
+  const activity =
+    view.status.state === 'running' && view.thisTab ? view.status.activity : undefined;
+  const languages = activity?.languages ?? [];
+  const sizePreset = SIZE_PRESETS.find(
+    (p) => Math.abs(p.scale - settings.overlay.fontScale) < 0.01,
+  );
+  const profileLabel = view.profile === 'custom' ? 'Custom' : PROFILES[view.profile].label;
 
   return (
-    <main className="w-[320px] p-4 text-sm flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor="toggle" className="font-medium">
-          Subtitles on this tab
-        </label>
-        <button
-          id="toggle"
-          type="button"
-          role="switch"
-          aria-checked={on}
-          className="switch"
-          disabled={busy || view.tabId < 0}
-          onClick={() => void toggle()}
-          data-testid="toggle"
-        />
-      </div>
-      <p
-        className={error ? 'text-[var(--color-danger)]' : 'text-[var(--color-muted)]'}
-        data-testid="status"
-        aria-live="polite"
-      >
-        {error ?? statusText(view)}
-      </p>
-      <p className="text-xs text-[var(--color-muted)]">
-        Speech: {view.engines.asr}
-        <br />
-        Translation: {view.engines.translation}
-      </p>
-      <footer className="flex justify-end">
+    <main className="flex w-[340px] flex-col text-[13px]">
+      <header className="flex items-center gap-2 px-4 pt-3 pb-2">
+        <Logo size={20} />
+        <h1 className="text-[14px] font-semibold tracking-[-0.01em]">Earshot</h1>
         <button
           type="button"
-          className="link text-xs"
-          onClick={() => void browser.runtime.openOptionsPage()}
+          className="icon-btn ml-auto"
+          aria-label="Settings"
+          title="Settings"
+          onClick={() => openOptions()}
         >
-          Settings
+          <Icon name="gear" size={17} />
+        </button>
+      </header>
+
+      <section className="card mx-3 p-3.5" aria-labelledby="toggle-label">
+        <div className="flex items-center justify-between gap-3">
+          <span id="toggle-label" className="text-[14px] font-semibold">
+            Subtitles on this tab
+          </span>
+          <Switch
+            large
+            checked={on}
+            onChange={() => void toggle()}
+            labelledBy="toggle-label"
+            disabled={busy || view.tabId < 0}
+            testId="toggle"
+          />
+        </div>
+
+        <div className="mt-2.5 flex items-start gap-2.5" data-testid="status" aria-live="polite">
+          <span className="mt-[5px]">
+            <Dot tone={status.tone} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{status.title}</p>
+            {status.detail && <p className="mt-0.5 text-[var(--color-muted)]">{status.detail}</p>}
+          </div>
+        </div>
+        {'progress' in status && status.progress !== undefined && (
+          <div className="mt-2.5 ml-[18px]">
+            <ProgressBar value={status.progress} label={status.title} />
+          </div>
+        )}
+        {languages.length > 0 && (
+          <p
+            className="mt-2 ml-[18px] text-[12px] text-[var(--color-muted)]"
+            data-testid="languages"
+          >
+            Heard: {listNames(languages)}
+          </p>
+        )}
+        {'action' in status && status.action && (
+          <div className="mt-3 ml-[18px]">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => fix(status.action as FixAction)}
+              disabled={busy}
+            >
+              {status.action.label}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="grid gap-1 px-4 py-3" aria-label="Quick settings">
+        <div className="flex h-9 items-center justify-between gap-3">
+          <span id="original-label">Show the original too</span>
+          <Switch
+            checked={settings.overlay.display === 'both'}
+            onChange={(both) => update({ overlay: { display: both ? 'both' : 'translation' } })}
+            labelledBy="original-label"
+            testId="dual"
+          />
+        </div>
+        <div className="flex h-9 items-center justify-between gap-3">
+          <span>Text size</span>
+          <Segmented
+            label="Text size"
+            value={sizePreset?.id ?? null}
+            options={SIZE_PRESETS.map((p) => ({ value: p.id, label: p.label, title: p.name }))}
+            onChange={(id) => {
+              const preset = SIZE_PRESETS.find((p) => p.id === id);
+              if (preset) update({ overlay: { fontScale: preset.scale } });
+            }}
+            testId="size"
+          />
+        </div>
+        {moved && view.site && (
+          <div className="flex h-9 items-center justify-between gap-3">
+            <span className="text-[var(--color-muted)]">Moved on {view.site}</span>
+            <button
+              type="button"
+              className="link text-[12px]"
+              onClick={() => void savePosition(view.site as string, null)}
+            >
+              Reset position
+            </button>
+          </div>
+        )}
+      </section>
+
+      <footer className="divider flex items-center justify-between gap-3 px-4 py-2.5 text-[12px] text-[var(--color-muted)]">
+        <span className="truncate" title={`${view.engines.asr} · ${view.engines.translation}`}>
+          Models: {profileLabel}
+        </span>
+        <button type="button" className="link flex-none" onClick={() => openOptions()}>
+          All settings
         </button>
       </footer>
     </main>
