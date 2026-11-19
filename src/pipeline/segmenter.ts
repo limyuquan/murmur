@@ -23,6 +23,10 @@
  *   Engines that listen to the track themselves (Chrome speech) use it: cutting their recognizer
  *   mid-sentence costs words, and they can't decode on request.
  *
+ * The benchmark measured these rules with a speech detector (Silero VAD). With the energy gate
+ * (vad.ts), speech over music or noise rarely shows a pause, so on such audio most segments end at
+ * the 6 s cut: a model-based `VoiceActivityDetector` is what lets the pause and sentence rules act.
+ *
  * Shorter segments also keep most segments to one language, which matters for engines that pick
  * one language per segment. A cut where the language changes (a language-ID model on a sliding
  * window) was tried in the benchmark on top of this and didn't help, so there is none.
