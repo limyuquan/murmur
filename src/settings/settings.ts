@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
     originalPlacement: 'above',
     fontScale: 1,
     background: 'box',
-    backgroundOpacity: 0.7,
+    backgroundOpacity: 0.75,
     showPartials: true,
     languageTags: true,
     avoidControls: true,

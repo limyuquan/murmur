@@ -36,7 +36,8 @@ export const OVERLAY_CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.28em;
+  /* Wider between segments than between a segment's own lines, so pairs read as pairs. */
+  gap: 0.55em;
   font-family: ${FONT_STACK};
   font-size: var(--es-font, 24px);
   font-weight: ${MAIN_WEIGHT};
@@ -58,7 +59,7 @@ export const OVERLAY_CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.12em;
+  gap: 0.06em;
   max-width: 100%;
   animation: es-in 140ms var(--es-ease);
 }

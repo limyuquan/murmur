@@ -14,7 +14,7 @@ import type { Cue } from '@/pipeline/types';
 import type { CaptionOffset } from '@/settings/positions';
 import { clampOffset } from '@/settings/positions';
 import { DEFAULT_SETTINGS, type OverlaySettings } from '@/settings/settings';
-import { CaptionStore, type RoleFit, type ViewOptions } from './captions';
+import { CaptionStore, type ViewOptions } from './captions';
 import {
   type CaptionLayout,
   captionLayout,
@@ -23,10 +23,9 @@ import {
   type Rect,
   rectChanged,
 } from './geometry';
-import { MAX_LINE_UNITS, type Measure } from './linebreak';
+import { fitFor } from './measure';
 import { describeVideo, findVideos, pickBest } from './pickVideo';
 import { adapterFor, liftToClear, type PlayerAdapter } from './sites';
-import { FONT_STACK, MAIN_WEIGHT, ORIGINAL_MIN_PX, ORIGINAL_SCALE } from './styles';
 import { OverlayView, type StatusChip, type ViewStyle } from './view';
 
 const TICK_MS = 1000;
@@ -35,7 +34,7 @@ const POINTER_IDLE_MS = 2600;
 /** Players shorter than this show the translation only (the original would be unreadable). */
 export const MIN_HEIGHT_FOR_ORIGINAL = 240;
 /** Share of the picture width the subtitles may use (the stack's side margins are 4%). */
-const STACK_WIDTH = 0.92;
+export const STACK_WIDTH = 0.92;
 
 export interface ControllerHooks {
   /** The user dragged the subtitles somewhere (or reset them, `null`). */
@@ -46,7 +45,6 @@ export class OverlayController {
   private readonly view: OverlayView;
   private readonly store = new CaptionStore();
   private readonly adapter: PlayerAdapter | null;
-  private readonly measureCanvas: CanvasRenderingContext2D | null;
   private settings: OverlaySettings = DEFAULT_SETTINGS.overlay;
   private offset: CaptionOffset | null = null;
   private video: HTMLVideoElement | null = null;
@@ -76,7 +74,6 @@ export class OverlayController {
   ) {
     this.view = new OverlayView(doc);
     this.adapter = adapterFor(win.location.hostname);
-    this.measureCanvas = doc.createElement('canvas').getContext('2d');
     this.view.setDragHandlers({
       start: (e) => this.dragStart(e),
       move: (e) => this.dragMove(e),
@@ -289,40 +286,15 @@ export class OverlayController {
 
   /** Line fitting for this layout; re-renders when it changes. */
   private updateFit(layout: CaptionLayout): void {
-    const mainPx = layout.fontPx;
-    const originalPx = Math.max(ORIGINAL_MIN_PX, mainPx * ORIGINAL_SCALE);
-    // Room for the box padding on each side.
+    // The stack's side margins leave 92% of the picture for text.
     const width = layout.box.width * STACK_WIDTH;
     const showOriginal = layout.picture.height >= MIN_HEIGHT_FOR_ORIGINAL;
-    const key = `${Math.round(width)}:${mainPx}:${showOriginal}`;
+    const key = `${Math.round(width)}:${layout.fontPx}:${showOriginal}`;
     if (key === this.lastFitKey) return;
     this.lastFitKey = key;
     this.showOriginal = showOriginal;
-    const role = (px: number, weight: number): RoleFit => {
-      const measure = this.measurer(px, weight);
-      const fit: RoleFit = { maxUnits: MAX_LINE_UNITS, maxWidth: width - px * 0.7 };
-      if (measure) fit.measure = measure;
-      return fit;
-    };
-    this.fit = { main: role(mainPx, MAIN_WEIGHT), original: role(originalPx, 400) };
+    this.fit = fitFor(this.doc, width, layout.fontPx);
     this.refresh();
-  }
-
-  private measurer(px: number, weight: number): Measure | undefined {
-    const ctx = this.measureCanvas;
-    if (!ctx) return undefined;
-    const font = `${weight} ${px}px ${FONT_STACK}`;
-    const cache = new Map<string, number>();
-    return (text) => {
-      let w = cache.get(text);
-      if (w === undefined) {
-        ctx.font = font;
-        w = ctx.measureText(text).width;
-        if (cache.size > 4000) cache.clear();
-        cache.set(text, w);
-      }
-      return w;
-    };
   }
 
   private style(layout: CaptionLayout | null): ViewStyle {
