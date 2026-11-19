@@ -231,6 +231,113 @@ describe('Pipeline hardening', () => {
   });
 });
 
+/** An ASR engine whose session the test drives by hand (`say`). */
+function handAsr() {
+  const sessions: AsrSessionOptions[] = [];
+  const asr: AsrEngine = {
+    info: new EchoAsrEngine().info,
+    state: 'ready',
+    load: async () => {},
+    unload: async () => {},
+    createSession(options) {
+      sessions.push(options);
+      return {
+        startSegment: () => {},
+        pushAudio: () => {},
+        endSegment: () => {},
+        close: async () => {},
+      };
+    },
+  };
+  let n = 0;
+  const say = (text: string, tag: string, segmentId = `s${++n}`) =>
+    sessions[0]?.onResult({
+      segmentId,
+      final: true,
+      text,
+      language: { tag, confidence: 1 },
+      startSample: n * 1000,
+      endSample: n * 1000 + 800,
+    });
+  return { asr, say };
+}
+
+describe('Pipeline with lines that mix languages', () => {
+  it('translates a line heard as the target language when part of it is in another script', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    const { pipeline, cues } = setup({ asr, translator: recordingTranslator(requests) });
+    say('That is so 귀여워 honestly', 'en');
+    say('Hello there, how are you?', 'en');
+    await pipeline.close();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.source).toEqual({
+      kind: 'text',
+      text: 'That is so 귀여워 honestly',
+      language: 'ko',
+      mixed: ['ko', 'en'],
+    });
+    const [mixed, plain] = latest(cues);
+    expect(mixed?.source.language).toBe('en');
+    expect(mixed?.untranslated).toBeNull();
+    expect(mixed?.translation?.final).toBe(true);
+    expect(plain?.untranslated).toBe('same-language');
+  });
+
+  it('keeps a mixed line translated even when the translator hears the target language', async () => {
+    const { asr, say } = handAsr();
+    const translator: TranslationEngine = {
+      info: new PassthroughTranslationEngine().info,
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      async *translate() {
+        yield { text: 'That is so cute honestly', final: true, sourceLanguage: 'en' };
+      },
+    };
+    const { pipeline, cues } = setup({ asr, translator });
+    say('That is so 귀여워 honestly', 'en');
+    await pipeline.close();
+    expect(latest(cues)[0]?.translation?.text).toBe('That is so cute honestly');
+    expect(latest(cues)[0]?.untranslated).toBeNull();
+  });
+
+  it('asks the detector about a finished line in the target’s own script', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    const detected: string[] = [];
+    const { pipeline, cues } = setup({
+      asr,
+      translator: recordingTranslator(requests),
+      detectLanguages: async (text) => {
+        detected.push(text);
+        return text.includes('mangé')
+          ? [
+              { language: 'fr', confidence: 0.6 },
+              { language: 'en', confidence: 0.4 },
+            ]
+          : [{ language: 'en', confidence: 0.98 }];
+      },
+    });
+    say('We went to the market et puis on a mangé ensemble', 'en');
+    say('We went to the market and then ate together', 'en');
+    await pipeline.close();
+    expect(detected).toHaveLength(2);
+    expect(requests.map((r) => r.source)).toEqual([
+      {
+        kind: 'text',
+        text: 'We went to the market et puis on a mangé ensemble',
+        language: 'fr',
+        mixed: ['fr', 'en'],
+      },
+    ]);
+    const forFirst = cues.filter((c) => c.id === 's1').map((c) => c.untranslated);
+    expect(forFirst[0]).toBe('same-language');
+    expect(forFirst.at(-1)).toBeNull();
+    expect(latest(cues)[1]?.untranslated).toBe('same-language');
+  });
+});
+
 describe('Pipeline with the sentence segmenter', () => {
   /**
    * A segment engine whose words end a sentence at 2.0 s ("Hello there.") and go on after that

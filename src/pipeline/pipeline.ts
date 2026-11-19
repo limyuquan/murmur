@@ -2,7 +2,10 @@
  * The pipeline: captured frames → segmenter → ASR session → translation → cues.
  *
  * - Every segment gets its own language from the ASR result (or the hint, or `und`), and is
- *   translated or not on that basis alone: a stream may switch languages at any segment.
+ *   translated or not on that basis and its text: a stream may switch languages at any segment,
+ *   and a line heard as the target language is still translated when a meaningful part of it is
+ *   in another language (mixed.ts: by script at once, by `detectLanguages` for finished lines in
+ *   the target's own script).
  * - Final source lines are translated one at a time, in order, with the last few finished lines as
  *   context. Partial lines are only translated when `translatePartials` is on (a preview that the
  *   final replaces); a newer partial aborts the previous preview.
@@ -31,6 +34,7 @@ import type {
 } from '@/engines/types';
 import { UNKNOWN_LANGUAGE } from '@/engines/types';
 import { sameLanguage } from './language';
+import { type DetectLanguages, detectForeign, foreignPart } from './mixed';
 import { type SegmentEvent, Segmenter, type SegmenterOptions } from './segmenter';
 import type { Cue } from './types';
 import { type AsyncVoiceActivityDetector, EnergyVad } from './vad';
@@ -61,6 +65,11 @@ export interface PipelineOptions {
   spokenLanguages?: readonly LanguageTag[];
   /** Nothing but `spokenLanguages` is spoken. */
   onlySpoken?: boolean;
+  /**
+   * Ranks a text's likely languages (Chrome's `LanguageDetector`, when ready). Finds another
+   * language in a finished line heard as the target language and written in its script.
+   */
+  detectLanguages?: DetectLanguages | null;
   /** The captured audio as a live track, for engines that listen to it. */
   track?: MediaStreamTrack | null;
   onCue(cue: Cue): void;
@@ -94,6 +103,8 @@ interface SegmentState {
   cue: Cue;
   /** Aborts the running partial-translation preview. */
   preview: AbortController | null;
+  /** The languages its text mixes, when it is heard as the target language but partly isn't. */
+  mixed: readonly LanguageTag[] | null;
 }
 
 export class Pipeline {
@@ -216,6 +227,7 @@ export class Pipeline {
           untranslated: 'pending',
         },
         preview: null,
+        mixed: null,
       };
       this.segments.set(id, state);
       this.prune();
@@ -254,13 +266,23 @@ export class Pipeline {
     cue.startEpochMs = this.clock.toEpochMs(result.startSample);
     cue.endEpochMs = this.clock.toEpochMs(result.endSample);
     cue.source = { text: result.text, language, final: result.final };
+    const target = this.options.targetLanguage;
 
-    if (sameLanguage(language, this.options.targetLanguage)) {
-      state.preview?.abort();
-      cue.translation = null;
-      cue.untranslated = 'same-language';
-      this.emit(cue);
-      return;
+    // Heard as the target language: translated only when part of it is in another one.
+    let from = language;
+    state.mixed = null;
+    if (sameLanguage(language, target)) {
+      const foreign = foreignPart(result.text, target, this.options.spokenLanguages ?? []);
+      if (!foreign) {
+        state.preview?.abort();
+        cue.translation = null;
+        cue.untranslated = 'same-language';
+        this.emit(cue);
+        if (result.final) this.checkMixed(state, result.text, language);
+        return;
+      }
+      from = foreign.language;
+      state.mixed = [foreign.language, language];
     }
 
     cue.untranslated = 'pending';
@@ -271,12 +293,31 @@ export class Pipeline {
       state.preview?.abort();
       if (result.text.trim() === '') return;
       const text = result.text;
-      this.finals = this.finals.then(() => this.translateFinal(state, text, language));
+      this.finals = this.finals.then(() => this.translateFinal(state, text, from));
     } else if (this.options.translatePartials && result.text.trim() !== '') {
       state.preview?.abort();
       state.preview = new AbortController();
-      void this.translate(state, result.text, language, false, state.preview.signal);
+      void this.translate(state, result.text, from, false, state.preview.signal);
     }
+  }
+
+  /**
+   * A finished line heard as the target language, in its script: when the detector finds another
+   * language in it too, translate it after all (in its turn among the finished lines).
+   */
+  private checkMixed(state: SegmentState, text: string, language: LanguageTag): void {
+    const detect = this.options.detectLanguages;
+    if (!detect || text.trim() === '') return;
+    const target = this.options.targetLanguage;
+    this.finals = this.finals.then(async () => {
+      const other = await detectForeign(text, target, detect).catch(() => null);
+      const { cue } = state;
+      if (!other || this.closing.signal.aborted || cue.source.text !== text) return;
+      state.mixed = [other, language];
+      cue.untranslated = 'pending';
+      this.emit(cue);
+      await this.translateFinal(state, text, other);
+    });
   }
 
   /** Translates a final line, giving up after the timeout so later lines go on. */
@@ -317,9 +358,10 @@ export class Pipeline {
     const target = this.options.targetLanguage;
     const lines = this.options.contextLines ?? 3;
     try {
+      const mixed = state.mixed;
       const stream = this.options.translator.translate({
         segmentId: cue.id,
-        source: { kind: 'text', text, language },
+        source: { kind: 'text', text, language, ...(mixed ? { mixed } : {}) },
         target,
         sourceFinal: final,
         context: this.context.slice(-lines),
@@ -333,7 +375,8 @@ export class Pipeline {
         }
         // A preview never overwrites a finished translation.
         if (!final && cue.translation?.final) return;
-        if (chunk.sourceLanguage && cue.source.final === final) {
+        // A mixed line keeps the language it was heard in: it was sent on purpose.
+        if (chunk.sourceLanguage && cue.source.final === final && !mixed) {
           // The engine checked the text: its language wins.
           cue.source = { ...cue.source, language: chunk.sourceLanguage };
           if (sameLanguage(chunk.sourceLanguage, target)) {

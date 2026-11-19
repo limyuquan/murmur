@@ -80,6 +80,31 @@ describe('LLM prompt', () => {
     expect(p.system).not.toContain('Korean');
   });
 
+  it('names every language of a line that mixes them', () => {
+    const prompt = buildPrompt({
+      text: 'That is so 귀여워 honestly',
+      sourceLanguage: 'ko',
+      targetLanguage: 'en',
+      context: [],
+      mixed: ['ko', 'en'],
+    });
+    expect(prompt.user).toBe(
+      'CURRENT (Korean and English, auto-detected): That is so 귀여워 honestly',
+    );
+    expect(prompt.system).toContain('The source may mix Korean and English, even inside one line.');
+    expect(prompt.system).toContain('If a part is already in English, keep it.');
+    const unknown = buildPrompt({
+      text: '이거 진짜 good idea',
+      sourceLanguage: 'und',
+      targetLanguage: 'ko',
+      context: [],
+      mixed: ['und', 'ko'],
+    });
+    expect(unknown.user).toBe(
+      'CURRENT (Korean and another language, auto-detected): 이거 진짜 good idea',
+    );
+  });
+
   it('renders sections, nested ones and variables, then trims', () => {
     expect(render('{{#a}}A{{#b}}B{{/b}}{{^b}}not B{{/b}}{{/a}} {{x}}\n', { a: true, x: 'y' })).toBe(
       'Anot B y',

@@ -19,8 +19,9 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 - **Laid out like TV subtitles.** Two lines at most, broken at natural points, each held long
   enough to read. Box, shadow or outline, in the size you like.
 - **Original and translation.** Show both lines, only the translation, or only what was said.
-  Each line is translated on its own, so a video that switches language mid-way is fine; a line
-  in a different language from the rest gets a small tag (such as `DE`).
+  Each line is translated on its own, so a video that switches language mid-way is fine, and so
+  is a line that switches inside it; a line in a different language from the rest gets a small
+  tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
   downloads a small pack per language, after one click). Balanced and Best run speech
@@ -199,7 +200,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    carrying over into the next segment. Engines that listen to the track get the older
    pause-only rule (`PAUSE_SEGMENTER`). The ASR session streams
    partial and final results, each with its own language. Finals are translated in order with
-   recent lines as context; a segment already in the target language isn't translated.
+   recent lines as context; a segment already in the target language isn't translated, unless
+   a meaningful part of it is in another one (`src/pipeline/mixed.ts`: another script at once,
+   Chrome's `LanguageDetector` for finished lines in the target's own script); such a line goes
+   to the translator marked `mixed`.
 5. Each change to a segment is sent as a whole `Cue` over the overlay's port. The overlay replaces
    it by id and lays it out (`src/overlay/linebreak.ts`, `captions.ts`): at most two segments,
    two rows per line, growing text filled so it never jumps, finished text balanced or paged and

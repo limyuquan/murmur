@@ -284,7 +284,17 @@ export interface AsrEngine extends Engine<AsrEngineInfo> {
 // Translation
 
 export type TranslationSource =
-  | { kind: 'text'; text: string; language: LanguageTag }
+  | {
+      kind: 'text';
+      text: string;
+      language: LanguageTag;
+      /**
+       * The line mixes languages: it was heard as the target language but is partly in another
+       * one (`language`, or `und` when unknown). These are every language found in it. Translate
+       * the parts not in the target language and keep the rest.
+       */
+      mixed?: readonly LanguageTag[];
+    }
   | { kind: 'speech'; samples: Float32Array; sampleRate: number; language: LanguageTag | null };
 
 export interface TranslationRequest {

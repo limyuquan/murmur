@@ -11,7 +11,10 @@
  * Murmur's wording differs from the benchmarked one in two places, both filled in from the line:
  * - the languages the source may mix are the session's (spoken languages, the line's, the earlier
  *   lines' and the target), not a fixed list; with fewer than two known, just "languages";
- * - the sentence on Korean address terms is there only when Korean is among them.
+ * - the sentence on Korean address terms is there only when Korean is among them;
+ * - a line that mixes languages (heard as the target language, partly in another) names them all
+ *   as its language: "CURRENT (Korean and English, auto-detected)", so the model translates the
+ *   other parts and keeps the target-language ones (the system message says to).
  * With the benchmark's languages (and its kind of video as `domain`), the prompt is byte for byte
  * the benchmarked one.
  */
@@ -99,6 +102,17 @@ function listNames(names: readonly string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 
+/** "Korean and English"; "English and another language" when one isn't known. */
+function mixedName(tags: readonly LanguageTag[]): string {
+  const names: string[] = [];
+  for (const tag of tags) {
+    const name = known(tag) ? languageName(primary(tag)) : null;
+    if (name && !names.includes(name)) names.push(name);
+  }
+  if (names.length < tags.length || names.length < 2) names.push('another language');
+  return listNames(names);
+}
+
 export interface PromptFlags {
   /** Subtitle brevity: drop fillers and stutters. Off by default. */
   brief?: boolean;
@@ -119,6 +133,8 @@ export interface PromptInput {
   glossary?: readonly { source: string; target: string }[];
   /** Languages the person said they hear, in their order. */
   spokenLanguages?: readonly LanguageTag[];
+  /** The languages the line mixes, when it mixes the target language with others. */
+  mixed?: readonly LanguageTag[];
   flags?: PromptFlags;
   /** The kind of video, when known ("cooking shows, interviews"). */
   domain?: string;
@@ -139,10 +155,12 @@ export function buildPrompt(input: PromptInput): Prompt {
   const flags = { ...DEFAULT_FLAGS, ...input.flags };
   const source = known(input.sourceLanguage) ? input.sourceLanguage : null;
   const languages: string[] = [];
+  const mixed = input.mixed ?? [];
   for (const tag of [
     ...(input.spokenLanguages ?? []),
     ...input.context.map((c) => c.language),
     source,
+    ...mixed,
     input.targetLanguage,
   ]) {
     // Only languages with a name: a tag the browser doesn't know says nothing to the model.
@@ -156,7 +174,7 @@ export function buildPrompt(input: PromptInput): Prompt {
   const vars: Vars = {
     text: input.text,
     target_lang: languageName(input.targetLanguage),
-    source_lang: source ? languageName(source) : '',
+    source_lang: mixed.length > 0 ? mixedName(mixed) : source ? languageName(source) : '',
     context,
     glossary,
     languages: languages.length >= 2 ? listNames(languages.map(languageName)) : 'languages',

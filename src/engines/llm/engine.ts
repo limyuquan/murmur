@@ -260,6 +260,7 @@ export class LlmTranslationEngine implements TranslationEngine {
         context: request.context,
         glossary: request.glossary ?? [],
         spokenLanguages: this.session?.spokenLanguages ?? [],
+        ...(request.source.mixed ? { mixed: request.source.mixed } : {}),
         ...(this.options.flags ? { flags: this.options.flags } : {}),
       },
       MAX_NUM_TOKENS - maxTokens - TEMPLATE_TOKENS,

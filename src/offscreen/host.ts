@@ -7,6 +7,7 @@
 import { type CaptureHandle, startCapture } from '@/capture/graph';
 import { type AudioSource, tabAudioSource, toneSource } from '@/capture/sources';
 import { createBuiltinRegistry } from '@/engines/builtin';
+import { type DetectorInstance, detectorApi } from '@/engines/chrome/api';
 import {
   isActionRequired,
   isCompanionError,
@@ -40,6 +41,7 @@ import {
   type SessionErrorCode,
   type SessionFailure,
 } from '@/messaging/protocol';
+import type { DetectLanguages } from '@/pipeline/mixed';
 import { Pipeline, type PipelineOptions } from '@/pipeline/pipeline';
 import type { SileroVad } from '@/pipeline/silero';
 import type { Cue } from '@/pipeline/types';
@@ -69,6 +71,11 @@ export interface HostDeps {
   onVad?(vad: SileroVad | null): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
   loadVad?(): Promise<SileroVad>;
+  /**
+   * Chrome's language detector when it is ready (tests replace it), to find other languages in
+   * lines heard as the target language. Never downloads it.
+   */
+  languageDetector?(): Promise<DetectorInstance | null>;
 }
 
 interface Running {
@@ -83,6 +90,8 @@ interface Running {
   translator: TranslationEngine | null;
   /** The model speech detector, loading alongside the engines (null: none wanted). */
   vad: Promise<SileroVad | null> | null;
+  /** Chrome's language detector, when it was ready. */
+  detector: DetectorInstance | null;
   heard: boolean;
   activity: ActivityTracker;
   reported: SessionActivity | undefined;
@@ -165,6 +174,7 @@ export class OffscreenHost {
       asr: null,
       translator: null,
       vad: null,
+      detector: null,
       heard: false,
       activity: new ActivityTracker(Date.now()),
       reported: undefined,
@@ -264,6 +274,19 @@ export class OffscreenHost {
         return;
       }
       this.deps.onVad?.(vad);
+      running.detector = await (this.deps.languageDetector ?? readyDetector)();
+      if (!this.isCurrent(running)) {
+        await this.teardown(running);
+        return;
+      }
+      const detector = running.detector;
+      const detectLanguages: DetectLanguages | null = detector
+        ? async (text) =>
+            (await detector.detect(text)).map((r) => ({
+              language: r.detectedLanguage,
+              confidence: r.confidence,
+            }))
+        : null;
       const mtInfo = running.translator.info;
       running.activity = new ActivityTracker(Date.now(), {
         supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
@@ -276,6 +299,7 @@ export class OffscreenHost {
         sourceLanguage: config.sourceLanguage,
         spokenLanguages: config.spokenLanguages ?? [],
         onlySpoken: config.onlySpoken ?? false,
+        detectLanguages,
         translatePartials: config.translatePartials,
         track: running.capture?.track ?? null,
         vad,
@@ -361,6 +385,8 @@ export class OffscreenHost {
     const vad = await running.vad;
     running.vad = null;
     await vad?.dispose().catch(() => {});
+    running.detector?.destroy();
+    running.detector = null;
   }
 
   /** The model speech detector, or null (the energy gate) when it can't load. Never throws. */
@@ -478,6 +504,17 @@ export class OffscreenHost {
         this.post(port, { type: 'frames', videoInFrame });
       }
     }
+  }
+}
+
+/** Chrome's language detector, when it is on this device already; null otherwise. */
+async function readyDetector(): Promise<DetectorInstance | null> {
+  const api = detectorApi();
+  if (!api) return null;
+  try {
+    return (await api.availability()) === 'available' ? await api.create() : null;
+  } catch {
+    return null;
   }
 }
 

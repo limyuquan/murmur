@@ -5,7 +5,8 @@
  * Measured on Chrome 157 (RTX 3070 PC): 18–44 ms per short line once warm, create 49–97 ms;
  * detection under 1 ms. Each line is translated on its own (the API takes no context), from the
  * language its text is in: the detector's answer wins over the speech engine's when it is sure,
- * because the text is what gets translated.
+ * because the text is what gets translated. A line that mixes languages (`source.mixed`) is
+ * translated from the language of its other part, as given.
  *
  * Packs: when the session names its spoken languages, `load()` needs their pairs into the
  * target; missing ones reject with `EngineActionRequiredError` (a click in the popup starts them,
@@ -96,7 +97,12 @@ export class ChromeTranslatorEngine implements TranslationEngine {
   async *translate(request: TranslationRequest): AsyncIterable<TranslationChunk> {
     if (request.source.kind !== 'text') throw new Error('chrome-translator translates text only.');
     const text = request.source.text;
-    const source = await this.sourceLanguage(text, request.source.language);
+    // A mixed line comes with the language of its other part: the detector would hear the target.
+    const given = request.source.language;
+    const source =
+      request.source.mixed && given !== UNKNOWN_LANGUAGE
+        ? given
+        : await this.sourceLanguage(text, given);
     request.signal.throwIfAborted();
     if (translatorLanguage(source) === translatorLanguage(request.target)) {
       yield { text, final: true, sourceLanguage: source };
