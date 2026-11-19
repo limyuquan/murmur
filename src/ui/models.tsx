@@ -267,7 +267,8 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
       break;
     case 'downloading':
     case 'queued': {
-      const fraction = status.state === 'downloading' ? status.receivedMB / info.sizeMB : null;
+      // Waiting its turn: an empty bar, not a moving one.
+      const fraction = status.state === 'downloading' ? status.receivedMB / info.sizeMB : 0;
       state = (
         <span className="flex min-w-[140px] flex-col gap-1">
           <span className="text-[var(--color-muted)]">

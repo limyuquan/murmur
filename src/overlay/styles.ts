@@ -110,6 +110,7 @@ export const OVERLAY_CSS = `
 }
 :host([data-bg="shadow"]) .text {
   text-shadow:
+    0 0 0.06em rgb(0 0 0 / calc(var(--es-bg, 0.7) + 0.25)),
     0 0.03em 0.06em rgb(0 0 0 / calc(var(--es-bg, 0.7) + 0.2)),
     0 0 0.22em rgb(0 0 0 / var(--es-bg, 0.7)),
     0 0 0.6em rgb(0 0 0 / calc(var(--es-bg, 0.7) * 0.6));
