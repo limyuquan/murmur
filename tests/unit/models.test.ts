@@ -16,6 +16,7 @@ import {
   partCount,
   partKey,
   pendingPartKey,
+  verifiedKey,
 } from '@/models/hub';
 import { ModelManager } from '@/models/manager';
 import { CacheModelStore, rangeMatches } from '@/models/store';
@@ -321,6 +322,78 @@ describe('CacheModelStore', () => {
     expect(Math.round((await verified().storedMB(pinned(good))) * 1e6)).toBe(7);
     await verified().download(pinned(good), () => {}, new AbortController().signal);
     expect(await verified().downloaded([pinned(good)])).toEqual(new Set(['a']));
+  });
+
+  it('checks a file again when its check was cut short, and never counts it ready before', async () => {
+    const hashOf = async (data: Uint8Array<ArrayBuffer>) => {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+      return `sha256:${Array.from(digest, (x) => x.toString(16).padStart(2, '0')).join('')}`;
+    };
+    const good = await hashOf(CONTENT.get('onnx/model.onnx') as Uint8Array<ArrayBuffer>);
+    const pinned = model('a', {
+      ...SOURCE,
+      files: [SOURCE.files[0] as never, { path: 'onnx/model.onnx', bytes: 25, hash: good }],
+    });
+    const caches = new FakeCaches();
+    const s = server();
+    const st = new CacheModelStore({
+      caches,
+      fetch: s.fetch,
+      partBytes: PART,
+      progressMs: 0,
+      verify: true,
+    });
+    // Stopped as the check starts (the browser closed): every byte is there, but not checked.
+    const stop = new AbortController();
+    const checks: number[] = [];
+    await expect(
+      st.download(
+        pinned,
+        (_, checking) => {
+          if (checking !== undefined) {
+            checks.push(checking);
+            stop.abort();
+          }
+        },
+        stop.signal,
+      ),
+    ).rejects.toThrow();
+    expect(checks).toEqual([0]);
+    expect(await st.storedMB(pinned)).toBeCloseTo(32 / 1e6);
+    expect(await st.downloaded([pinned])).toEqual(new Set());
+    const original = globalThis.caches;
+    Object.defineProperty(globalThis, 'caches', { value: caches, configurable: true });
+    try {
+      expect(await isComplete(pinned.source, undefined, PART)).toBe(false);
+    } finally {
+      Object.defineProperty(globalThis, 'caches', { value: original, configurable: true });
+    }
+    // Downloading again fetches nothing, checks, and then it is ready.
+    s.requests.length = 0;
+    const progress: (number | undefined)[] = [];
+    await st.download(pinned, (_, c) => progress.push(c), new AbortController().signal);
+    expect(s.requests).toEqual([]);
+    expect(progress).toContain(1);
+    expect(await st.downloaded([pinned])).toEqual(new Set(['a']));
+    // A part that goes missing takes the check with it.
+    await caches.cache.delete(partKey(cacheKey(SOURCE, 'onnx/model.onnx'), 1));
+    expect(await st.downloaded([pinned])).toEqual(new Set());
+    await st.download(pinned, () => {}, new AbortController().signal);
+    expect(s.requests).toEqual(['onnx/model.onnx bytes=10-19']);
+    expect(caches.cache.entries.has(verifiedKey(cacheKey(SOURCE, 'onnx/model.onnx')))).toBe(true);
+  });
+
+  it('deletes stored files no known model has (an older revision)', async () => {
+    const caches = new FakeCaches();
+    const st = store(caches);
+    await st.download(A, () => {}, new AbortController().signal);
+    const old = { ...SOURCE, revision: 'old' };
+    await st.download(model('old', old), () => {}, new AbortController().signal);
+    expect(Math.round((await st.usageMB()) * 1e6)).toBe(64);
+    await st.prune([A, B]);
+    expect(Math.round((await st.usageMB()) * 1e6)).toBe(32);
+    expect(await st.downloaded([A])).toEqual(new Set(['a']));
+    expect([...caches.cache.entries.keys()].some((k) => k.includes('/old/'))).toBe(false);
   });
 
   it('stops on abort', async () => {

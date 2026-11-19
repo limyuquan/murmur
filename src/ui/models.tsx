@@ -277,15 +277,22 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
     case 'downloading':
     case 'queued': {
       // Waiting its turn: an empty bar, not a moving one.
-      const fraction = status.state === 'downloading' ? status.receivedMB / info.sizeMB : 0;
+      const checking = status.state === 'downloading' ? status.checking : undefined;
+      const fraction =
+        status.state === 'downloading' ? (checking ?? status.receivedMB / info.sizeMB) : 0;
       state = (
         <span className="flex min-w-[140px] flex-col gap-1">
           <span className="text-[var(--color-muted)]">
             {status.state === 'queued'
               ? 'Waiting…'
-              : `${formatSize(status.receivedMB)} of ${formatSize(info.sizeMB)}`}
+              : checking !== undefined
+                ? `Checking the download, ${Math.round(checking * 100)}%`
+                : `${formatSize(status.receivedMB)} of ${formatSize(info.sizeMB)}`}
           </span>
-          <ProgressBar value={fraction} label={`Downloading ${info.label}`} />
+          <ProgressBar
+            value={fraction}
+            label={checking !== undefined ? `Checking ${info.label}` : `Downloading ${info.label}`}
+          />
         </span>
       );
       action = (

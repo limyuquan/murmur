@@ -119,6 +119,24 @@ export function pendingPartKey(url: string, index: number): string {
   return `${partKey(url, index)}&pending`;
 }
 
+/**
+ * Marks a file whose parts are all on disk and passed their check (its pinned hash, when the store
+ * checks hashes). A file without it isn't ready, even with every part there: a check cut short
+ * (the browser closed) runs again on the next download, which fetches nothing it already has.
+ */
+export function verifiedKey(url: string): string {
+  return `${url}?verified`;
+}
+
+/** Whether `file` passed its check (see `verifiedKey`). */
+export async function isVerified(
+  cache: Cache,
+  source: ModelSource,
+  file: ModelFile,
+): Promise<boolean> {
+  return (await cache.match(verifiedKey(cacheKey(source, file)))) !== undefined;
+}
+
 /** The part's length as stored, or null when it isn't (fully) there. */
 export async function storedPart(
   cache: Cache,
@@ -183,7 +201,7 @@ export async function readFile(
   });
 }
 
-/** Whether every file of `source` is on disk. */
+/** Whether every file of `source` is on disk and checked. */
 export async function isComplete(
   source: ModelSource,
   cache?: Cache,
@@ -191,6 +209,7 @@ export async function isComplete(
 ): Promise<boolean> {
   const c = cache ?? (await caches.open(MODEL_CACHE));
   for (const file of source.files) {
+    if (!(await isVerified(c, source, file))) return false;
     if ((await storedBytes(c, source, file, partBytes)) !== file.bytes) return false;
   }
   return true;

@@ -52,3 +52,21 @@ describe('matchesHash', () => {
     ).toBe(false);
   });
 });
+
+describe('matchesHash, stopped and in steps', () => {
+  it('reports progress and stops when told to, between steps', async () => {
+    const data = new Uint8Array(10 * 1024 * 1024);
+    const controller = new AbortController();
+    const seen: number[] = [];
+    await expect(
+      matchesHash(`sha256:${'0'.repeat(64)}`, data.length, () => chunks(data, [data.length]), {
+        signal: controller.signal,
+        onProgress: (bytes) => {
+          seen.push(bytes);
+          controller.abort(new Error('stopped'));
+        },
+      }),
+    ).rejects.toThrow('stopped');
+    expect(seen).toEqual([4 * 1024 * 1024]);
+  });
+});

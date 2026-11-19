@@ -13,6 +13,7 @@ import { matchesHash } from './digest';
 import {
   cacheKey,
   fileUrl,
+  isVerified,
   MODEL_CACHE,
   type ModelFile,
   type ModelSource,
@@ -23,6 +24,7 @@ import {
   pendingPartKey,
   storedBytes,
   storedPart,
+  verifiedKey,
 } from './hub';
 import { MB, type ModelInfo, type ModelStore } from './types';
 
@@ -34,8 +36,8 @@ export interface StoreDeps {
   /** Least time between progress reports, ms. */
   progressMs?: number;
   /**
-   * Check each file against its pinned hash once all of it arrived. Off for the e2e stand-in for
-   * Hugging Face, whose files are a pattern.
+   * Check each file against its pinned hash once all of it arrived (until it passes once: see
+   * `verifiedKey`). Off for the e2e stand-in for Hugging Face, whose files are a pattern.
    */
   verify?: boolean;
 }
@@ -65,7 +67,7 @@ export class CacheModelStore implements ModelStore {
 
   async download(
     model: ModelInfo,
-    onProgress: (receivedMB: number) => void,
+    onProgress: (receivedMB: number, checking?: number) => void,
     signal: AbortSignal,
   ): Promise<void> {
     signal.throwIfAborted();
@@ -73,21 +75,23 @@ export class CacheModelStore implements ModelStore {
     const { source } = model;
     let received = await this.storedBytes(source, cache);
     let reported = 0;
-    const report = (force = false) => {
+    const report = (force = false, checking?: number) => {
       const now = Date.now();
       if (!force && now - reported < this.progressMs) return;
       reported = now;
-      onProgress(received / MB);
+      if (checking === undefined) onProgress(received / MB);
+      else onProgress(received / MB, checking);
     };
     report(true);
     for (const file of source.files) {
       const url = fileUrl(source, file);
       const key = cacheKey(source, file);
       const parts = partCount(file.bytes, this.partBytes);
-      let fetched = false;
       for (let i = 0; i < parts; i++) {
         const [start, end] = partRange(file.bytes, i, this.partBytes);
         if ((await storedPart(cache, key, i, end - start)) !== null) continue;
+        // A part to fetch: whatever check the file passed no longer holds.
+        await cache.delete(verifiedKey(key));
         const before = received;
         try {
           await this.fetchPart(cache, url, key, file, i, parts, start, end, signal, (n) => {
@@ -98,13 +102,17 @@ export class CacheModelStore implements ModelStore {
           received = before;
           throw err;
         }
-        fetched = true;
         report(true);
       }
-      // Checked once, when its last part arrives.
-      if (fetched && this.deps.verify && file.hash) {
-        signal.throwIfAborted();
-        if (!(await matchesHash(file.hash, file.bytes, () => readParts(cache, key, parts)))) {
+      if (await isVerified(cache, source, file)) continue;
+      // Checked until it passes: a check cut short (the browser closed) runs again next time.
+      if (this.deps.verify && file.hash) {
+        report(true, 0);
+        const ok = await matchesHash(file.hash, file.bytes, () => readParts(cache, key, parts), {
+          signal,
+          onProgress: (bytes) => report(false, bytes / file.bytes),
+        });
+        if (!ok) {
           for (let i = 0; i < parts; i++) await cache.delete(partKey(key, i));
           received -= file.bytes;
           report(true);
@@ -112,7 +120,13 @@ export class CacheModelStore implements ModelStore {
             `${file.path.split('/').pop()} didn’t arrive intact. Download again to fetch it anew.`,
           );
         }
+        report(true);
       }
+      signal.throwIfAborted();
+      await cache.put(
+        verifiedKey(key),
+        new Response(file.hash ?? 'whole', { headers: { 'content-type': 'text/plain' } }),
+      );
     }
     report(true);
   }
@@ -193,10 +207,27 @@ export class CacheModelStore implements ModelStore {
     for (const file of model.source.files) {
       const url = cacheKey(model.source, file);
       if (kept.has(url)) continue;
+      await cache.delete(verifiedKey(url));
       for (let i = 0; i < partCount(file.bytes, this.partBytes); i++) {
         await cache.delete(partKey(url, i));
         await cache.delete(pendingPartKey(url, i));
       }
+    }
+  }
+
+  /**
+   * Deletes every stored entry no model in `known` has: files of a revision no longer pinned, or
+   * of a model that was dropped (gigabytes each, which nothing else would ever delete).
+   */
+  async prune(known: readonly ModelInfo[]): Promise<void> {
+    const cache = await this.open();
+    const href = (url: string) => new URL(url).href;
+    const keep = new Set(
+      known.flatMap((m) => m.source.files.map((f) => href(cacheKey(m.source, f)))),
+    );
+    for (const req of await cache.keys()) {
+      const base = req.url.replace(/\?(?:part=\d+(?:&pending)?|verified)$/, '');
+      if (!keep.has(href(base))) await cache.delete(req.url);
     }
   }
 
@@ -231,6 +262,7 @@ export class CacheModelStore implements ModelStore {
   private async complete(source: ModelSource): Promise<boolean> {
     const c = await this.open();
     for (const file of source.files) {
+      if (!(await isVerified(c, source, file))) return false;
       if ((await storedBytes(c, source, file, this.partBytes)) !== file.bytes) return false;
     }
     return true;

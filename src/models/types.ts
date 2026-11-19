@@ -28,7 +28,8 @@ export type ModelState =
   /** Part of it is on disk (a download was cancelled or cut off); downloading again resumes. */
   | { state: 'partial'; receivedMB: number }
   | { state: 'queued' }
-  | { state: 'downloading'; receivedMB: number }
+  /** `checking`: every byte arrived; how much of it was checked against its hash (0–1). */
+  | { state: 'downloading'; receivedMB: number; checking?: number }
   | { state: 'ready' }
   | { state: 'error'; message: string };
 
@@ -65,18 +66,22 @@ export interface ModelStore {
   /** How much of `model` is on disk, MB (its size once downloaded). */
   storedMB(model: ModelInfo): Promise<number>;
   /**
-   * Fetches what's missing of `model`, resuming from what's on disk, and reports MB on disk as it
-   * goes. Rejects with an AbortError when `signal` fires; what arrived so far is kept.
+   * Fetches what's missing of `model`, resuming from what's on disk, checks each file not yet
+   * checked, and reports MB on disk as it goes (and, while checking, how much of the file being
+   * checked is done, 0–1). Rejects with an AbortError when `signal` fires; what arrived so far is
+   * kept.
    */
   download(
     model: ModelInfo,
-    onProgress: (receivedMB: number) => void,
+    onProgress: (receivedMB: number, checking?: number) => void,
     signal: AbortSignal,
   ): Promise<void>;
   /** Deletes `model`'s files, except files that a model in `keep` also uses. */
   remove(model: ModelInfo, keep: readonly ModelInfo[]): Promise<void>;
   /** Space every stored model file takes, MB. */
   usageMB(): Promise<number>;
+  /** Deletes stored files that no model in `known` has (an older revision's), if it can. */
+  prune?(known: readonly ModelInfo[]): Promise<void>;
   /** Free space for more models, MB, when known. */
   availableMB(): Promise<number | null>;
 }

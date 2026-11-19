@@ -47,6 +47,17 @@ export class ModelManager {
   async reconcile(): Promise<void> {
     this.progress = {};
     await browser.storage.session.remove(DOWNLOADS_KEY);
+    await this.prune();
+  }
+
+  /** Frees files no known model uses (a revision bump leaves the old ones behind). */
+  private async prune(): Promise<void> {
+    if (this.jobs.size > 0) return;
+    try {
+      await this.deps.store.prune?.(await this.deps.known());
+    } catch {
+      // Pruning is housekeeping: never in the way of anything else.
+    }
   }
 
   async view(): Promise<ModelsView> {
@@ -103,6 +114,7 @@ export class ModelManager {
       );
       await this.deps.store.remove(info, keep);
     }
+    await this.prune();
     if (this.progress[id]) this.finish(id);
     return this.view();
   }
@@ -123,8 +135,13 @@ export class ModelManager {
       this.set(info.id, { state: 'downloading', receivedMB: 0 });
       await this.deps.store.download(
         info,
-        (receivedMB) => {
-          if (!controller.signal.aborted) this.set(info.id, { state: 'downloading', receivedMB });
+        (receivedMB, checking) => {
+          if (controller.signal.aborted) return;
+          this.set(info.id, {
+            state: 'downloading',
+            receivedMB,
+            ...(checking !== undefined ? { checking } : {}),
+          });
         },
         controller.signal,
       );

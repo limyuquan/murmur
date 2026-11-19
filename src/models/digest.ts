@@ -114,15 +114,47 @@ export class Sha256 {
  * Whether the bytes `read` yields match `hash` (`sha256:<hex>` or `git-sha1:<hex>`). Unknown
  * kinds of hash count as a match (nothing to check against).
  */
+export interface HashOptions {
+  /** Stops the check (it rejects with the signal's reason). */
+  signal?: AbortSignal;
+  /** Bytes hashed so far. */
+  onProgress?(bytes: number): void;
+}
+
+/** Bytes hashed between yields to the event loop (so the worker stays responsive). */
+const YIELD_BYTES = 4 * 1024 * 1024;
+
+const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 export async function matchesHash(
   hash: string,
   size: number,
   read: () => AsyncIterable<Uint8Array>,
+  options: HashOptions = {},
 ): Promise<boolean> {
+  const { signal, onProgress } = options;
+  signal?.throwIfAborted();
   const [kind, expected] = hash.split(':');
   if (kind === 'sha256') {
     const sha = new Sha256();
-    for await (const chunk of read()) sha.update(chunk);
+    let done = 0;
+    let sinceYield = 0;
+    for await (const chunk of read()) {
+      // In slices, so a large chunk doesn't hold the thread for long either.
+      for (let at = 0; at < chunk.length; at += YIELD_BYTES) {
+        const piece = chunk.subarray(at, Math.min(chunk.length, at + YIELD_BYTES));
+        sha.update(piece);
+        done += piece.length;
+        sinceYield += piece.length;
+        if (sinceYield >= YIELD_BYTES) {
+          sinceYield = 0;
+          onProgress?.(done);
+          await yieldNow();
+          signal?.throwIfAborted();
+        }
+      }
+    }
+    onProgress?.(done);
     return sha.hex() === expected;
   }
   if (kind === 'git-sha1') {
