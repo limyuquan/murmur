@@ -10,7 +10,14 @@
  */
 import { concat, indexOf } from './bytes';
 import { ascObjectType } from './fmp4';
-import type { AudioTrackConfig, DemuxEvent, Demuxer, EncodedSample } from './types';
+import {
+  type AudioTrackConfig,
+  DEMUX_LIMITS,
+  DemuxError,
+  type DemuxEvent,
+  type Demuxer,
+  type EncodedSample,
+} from './types';
 
 const ID = {
   EBML: 0x1a45dfa3,
@@ -160,6 +167,11 @@ function configOf(t: Track): AudioTrackConfig | null {
 
 export class WebmDemuxer implements Demuxer {
   private pending = new Uint8Array(0);
+  /** Pushed bytes not yet joined to `pending` (the element at its start needs more). */
+  private waiting: Uint8Array[] = [];
+  private waitingBytes = 0;
+  /** Bytes `pending` must reach before the element at its start can be read. */
+  private need = 0;
   /** Bytes still to drop of an element being skipped. */
   private skip = 0;
   private resyncing = false;
@@ -180,7 +192,16 @@ export class WebmDemuxer implements Demuxer {
       this.skip -= n;
       u8 = u8.subarray(n);
     }
-    u8 = concat(this.pending, u8);
+    // An element arriving in many pushes is joined once, not copied again on every push.
+    if (this.pending.length + this.waitingBytes + u8.length < this.need) {
+      this.waiting.push(u8.slice());
+      this.waitingBytes += u8.length;
+      return events;
+    }
+    u8 = concat(this.pending, ...this.waiting, u8);
+    this.waiting = [];
+    this.waitingBytes = 0;
+    this.need = 0;
     if (this.resyncing) {
       const cluster = indexOf(u8, CLUSTER_ID);
       const ebml = indexOf(u8, EBML_ID);
@@ -194,11 +215,19 @@ export class WebmDemuxer implements Demuxer {
     }
     const samples = this.batch;
     let o = 0;
+    let need = 0;
     while (o < u8.length) {
       const id = readVint(u8, o, true);
-      if (!id) break;
+      // A zero byte can't start an id or a size: not a stream we can follow from here.
+      if (!id) {
+        if (u8[o] === 0) return this.lost(events, samples, 'bad element id');
+        break;
+      }
       const size = readVint(u8, o + id.length);
-      if (!size) break;
+      if (!size) {
+        if (u8[o + id.length] === 0) return this.lost(events, samples, 'bad element size');
+        break;
+      }
       const body = o + id.length + size.length;
       if (MASTERS.has(id.value)) {
         this.enter(id.value, events);
@@ -207,12 +236,14 @@ export class WebmDemuxer implements Demuxer {
       }
       if (size.unknown) {
         // A leaf can't have an unknown size: this isn't a stream we can follow.
-        events.push({ type: 'warning', message: 'unknown-size leaf' });
-        this.resyncing = true;
-        this.pending = new Uint8Array(0);
-        return this.finish(events, samples);
+        return this.lost(events, samples, 'unknown-size leaf');
       }
       const end = body + size.value;
+      const read = id.value === ID.SimpleBlock || id.value === ID.Block || LEAVES.has(id.value);
+      // Read whole: a frame or a header field, never megabytes (skipped elements stream past).
+      if (read && size.value > DEMUX_LIMITS.headerBytes) {
+        throw new DemuxError(`element of ${size.value} bytes`);
+      }
       if (id.value === ID.SimpleBlock || id.value === ID.Block) {
         // Peek at the track: another track's frame is skipped without buffering it.
         const track = readVint(u8, body);
@@ -227,7 +258,10 @@ export class WebmDemuxer implements Demuxer {
           o = end;
           continue;
         }
-        if (end > u8.length) break;
+        if (end > u8.length) {
+          need = end - o;
+          break;
+        }
         this.readBlock(u8, body, end, track, samples, events);
         o = end;
         continue;
@@ -242,17 +276,33 @@ export class WebmDemuxer implements Demuxer {
         o = end;
         continue;
       }
-      if (end > u8.length) break;
+      if (end > u8.length) {
+        need = end - o;
+        break;
+      }
       this.readLeaf(id.value, u8, body, size.value);
       o = end;
     }
     this.pending = u8.slice(o);
+    this.need = need;
     return this.finish(events, samples);
   }
 
   reset(): void {
     this.pending = new Uint8Array(0);
+    this.waiting = [];
+    this.waitingBytes = 0;
+    this.need = 0;
     this.skip = 0;
+  }
+
+  /** Lost the element structure: look for the next cluster or header. */
+  private lost(events: DemuxEvent[], samples: EncodedSample[], why: string): DemuxEvent[] {
+    events.push({ type: 'warning', message: why });
+    this.resyncing = true;
+    this.pending = new Uint8Array(0);
+    this.need = 0;
+    return this.finish(events, samples);
   }
 
   resync(): void {

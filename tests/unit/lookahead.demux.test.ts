@@ -110,13 +110,15 @@ describe('parseMovie (progressive MP4)', () => {
     const moov = boxes.find((b) => b.type === 'moov');
     const movie = parseMovie(bytes.subarray(moov?.start, (moov?.start ?? 0) + (moov?.size ?? 0)));
     expect(movie?.config).toMatchObject({ codec: 'mp4a.40.2', sampleRate: 44100, channels: 1 });
-    const samples = movie?.samples ?? [];
-    expect(samples).toHaveLength(131);
+    const samples = movie?.samples;
+    expect(samples?.length).toBe(131);
     // ffprobe: the edit list starts the track 1024 samples in, so the first packet is at -23 ms.
-    expect(samples[0]?.time).toBeCloseTo(-0.02322, 4);
-    expect(samples[1]).toMatchObject({ offset: 96, size: 4 });
-    expect(samples[1]?.time).toBeCloseTo(0, 5);
-    expect(samples.at(-1)).toMatchObject({ offset: 9119, size: 4 });
+    expect(samples?.get(0)?.time).toBeCloseTo(-0.02322, 4);
+    expect(samples?.get(1)).toMatchObject({ offset: 96, size: 4 });
+    expect(samples?.get(1)?.time).toBeCloseTo(0, 5);
+    expect(samples?.get(130)).toMatchObject({ offset: 9119, size: 4 });
+    // The first sample ends at 0, so it isn't in [0, 0.05).
+    expect(samples?.between(0, 0.05).map((s) => s.offset)).toEqual([96, 100, 104]);
   });
 });
 

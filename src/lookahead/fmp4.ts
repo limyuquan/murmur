@@ -11,7 +11,14 @@
  * sample earlier by its `media_time` (encoder priming), and `cts` offsets apply.
  */
 import { concat, fourcc, i32, u16, u32, u64 } from './bytes';
-import type { AudioTrackConfig, DemuxEvent, Demuxer, EncodedSample } from './types';
+import {
+  type AudioTrackConfig,
+  DEMUX_LIMITS,
+  DemuxError,
+  type DemuxEvent,
+  type Demuxer,
+  type EncodedSample,
+} from './types';
 
 interface Box {
   type: string;
@@ -273,6 +280,7 @@ interface TrafRun {
 
 function parseMoof(u8: Uint8Array, moof: Box, moofAbs: number, tracks: Mp4Track[]): TrafRun[] {
   const out: TrafRun[] = [];
+  let total = 0;
   for (const traf of boxes(u8, moof.body, moof.end)) {
     if (traf.type !== 'traf') continue;
     const tfhd = child(u8, traf, 'tfhd');
@@ -318,7 +326,19 @@ function parseMoof(u8: Uint8Array, moof: Box, moofAbs: number, tracks: Mp4Track[
       }
       if (tflags & 0x4) q += 4;
       first = false;
-      for (let i = 0; i < count && q <= trun.end; i++) {
+      // A count can't claim more entries than the box holds, nor (with no per-sample fields)
+      // more samples than a fragment can carry.
+      const perEntry =
+        4 *
+        ((tflags & 0x100 ? 1 : 0) +
+          (tflags & 0x200 ? 1 : 0) +
+          (tflags & 0x400 ? 1 : 0) +
+          (tflags & 0x800 ? 1 : 0));
+      const fits = perEntry > 0 ? Math.max(0, Math.floor((trun.end - q) / perEntry)) : count;
+      if (Math.min(count, fits) + total > DEMUX_LIMITS.fragmentSamples) {
+        throw new DemuxError(`fragment of ${count} samples`);
+      }
+      for (let i = 0; i < count && i < fits; i++) {
         let duration = defaultDuration;
         let size = defaultSize;
         let cts = 0;
@@ -337,6 +357,7 @@ function parseMoof(u8: Uint8Array, moof: Box, moofAbs: number, tracks: Mp4Track[
         }
         run.samples.push({ offset, size, duration, cts });
         offset += size;
+        total++;
       }
       next = offset;
     }
@@ -345,13 +366,25 @@ function parseMoof(u8: Uint8Array, moof: Box, moofAbs: number, tracks: Mp4Track[
   return out;
 }
 
+/** Throws when a box claims more than lookahead will buffer. */
+function checkBoxSize(type: string, size: number): void {
+  const limit =
+    type === 'moov' || type === 'moof' ? DEMUX_LIMITS.headerBytes : DEMUX_LIMITS.boxBytes;
+  if (size > limit) throw new DemuxError(`box ${type} of ${size} bytes`);
+}
+
 const SEGMENT_STARTS = new Set(['ftyp', 'styp', 'moov', 'moof', 'sidx', 'emsg', 'prft']);
 const IGNORED = new Set(['ftyp', 'styp', 'sidx', 'free', 'skip', 'emsg', 'prft', 'uuid', 'mfra']);
 /** Larger "boxes" found while resyncing are garbage. */
-const MAX_BOX = 256 * 1024 * 1024;
+const MAX_BOX = DEMUX_LIMITS.boxBytes;
 
 export class Fmp4Demuxer implements Demuxer {
   private pending = new Uint8Array(0);
+  /** Pushed bytes not yet joined to `pending` (the box at its start needs more). */
+  private waiting: Uint8Array[] = [];
+  private waitingBytes = 0;
+  /** Bytes `pending` must reach before the box at its start can be read. */
+  private need = 0;
   /** Absolute stream position of `pending[0]`. */
   private position = 0;
   private tracks: Mp4Track[] = [];
@@ -363,7 +396,16 @@ export class Fmp4Demuxer implements Demuxer {
 
   push(bytes: Uint8Array): DemuxEvent[] {
     const events: DemuxEvent[] = [];
-    let u8 = concat(this.pending, bytes);
+    // A large box arriving in many pushes is joined once, not copied again on every push.
+    if (this.pending.length + this.waitingBytes + bytes.length < this.need) {
+      this.waiting.push(bytes.slice());
+      this.waitingBytes += bytes.length;
+      return events;
+    }
+    let u8 = concat(this.pending, ...this.waiting, bytes);
+    this.waiting = [];
+    this.waitingBytes = 0;
+    this.need = 0;
     if (this.resyncing) {
       const at = this.findSegmentStart(u8);
       if (at < 0) {
@@ -381,6 +423,7 @@ export class Fmp4Demuxer implements Demuxer {
     for (const box of boxes(u8, 0, u8.length)) {
       // `size == 0` means "to the end of the stream": wait for more unless it is a known end.
       if (u32(u8, box.start) === 0) break;
+      checkBoxSize(box.type, box.size);
       consumed = box.end;
       const abs = this.position + box.start;
       if (box.type === 'moov') {
@@ -400,11 +443,26 @@ export class Fmp4Demuxer implements Demuxer {
     }
     this.position += consumed;
     this.pending = u8.slice(consumed);
+    // The next box, cut off: refuse one that claims too much, else wait for all of it.
+    if (this.pending.length >= 8) {
+      let size = u32(this.pending, 0);
+      const type = fourcc(this.pending, 4);
+      if (size === 1 && this.pending.length >= 16) size = u64(this.pending, 8);
+      if (size === 0) {
+        if (this.pending.length > DEMUX_LIMITS.boxBytes) throw new DemuxError('unbounded box');
+      } else if (size !== 1) {
+        checkBoxSize(type, size);
+        this.need = size;
+      }
+    }
     return events;
   }
 
   reset(): void {
     this.pending = new Uint8Array(0);
+    this.waiting = [];
+    this.waitingBytes = 0;
+    this.need = 0;
     this.moof = null;
   }
 
@@ -485,9 +543,54 @@ export interface IndexedSample {
   duration: number;
 }
 
+/** A file's audio samples, kept compact (a 2 h file has some 300k). */
+export class SampleIndex {
+  private readonly offsets: Float64Array;
+  private readonly sizes: Uint32Array;
+  private readonly times: Float64Array;
+  private readonly durations: Float64Array;
+  length = 0;
+
+  constructor(capacity: number) {
+    this.offsets = new Float64Array(capacity);
+    this.sizes = new Uint32Array(capacity);
+    this.times = new Float64Array(capacity);
+    this.durations = new Float64Array(capacity);
+  }
+
+  push(s: IndexedSample): void {
+    const i = this.length++;
+    this.offsets[i] = s.offset;
+    this.sizes[i] = s.size;
+    this.times[i] = s.time;
+    this.durations[i] = s.duration;
+  }
+
+  get(i: number): IndexedSample | undefined {
+    if (i < 0 || i >= this.length) return undefined;
+    return {
+      offset: this.offsets[i] as number,
+      size: this.sizes[i] as number,
+      time: this.times[i] as number,
+      duration: this.durations[i] as number,
+    };
+  }
+
+  /** The samples that overlap `[from, to)` seconds. */
+  between(from: number, to: number): IndexedSample[] {
+    const out: IndexedSample[] = [];
+    for (let i = 0; i < this.length; i++) {
+      const t = this.times[i] as number;
+      if (t + (this.durations[i] as number) > from && t < to)
+        out.push(this.get(i) as IndexedSample);
+    }
+    return out;
+  }
+}
+
 export interface MovieAudio {
   config: AudioTrackConfig;
-  samples: IndexedSample[];
+  samples: SampleIndex;
 }
 
 /** The audio track of a whole `moov` box (`u8` starts with it), with its sample table. */
@@ -501,7 +604,12 @@ export function parseMovie(u8: Uint8Array): MovieAudio | null {
   return null;
 }
 
-function sampleTable(u8: Uint8Array, stbl: Box, track: Mp4Track): IndexedSample[] {
+/** Entries a table box claims, but no more than it holds (`first`: where they start). */
+function entries(u8: Uint8Array, box: Box, countAt: number, first: number, size: number): number {
+  return Math.min(u32(u8, countAt), Math.max(0, Math.floor((box.end - first) / size)));
+}
+
+function sampleTable(u8: Uint8Array, stbl: Box, track: Mp4Track): SampleIndex {
   const get = (t: string) => child(u8, stbl, t);
   const stsz = get('stsz');
   const stsc = get('stsc');
@@ -509,41 +617,52 @@ function sampleTable(u8: Uint8Array, stbl: Box, track: Mp4Track): IndexedSample[
   const co64 = get('co64');
   const stts = get('stts');
   const ctts = get('ctts');
-  if (!stsz || !stsc || (!stco && !co64) || !stts) return [];
-  const count = u32(u8, stsz.body + 8);
+  if (!stsz || !stsc || (!stco && !co64) || !stts) return new SampleIndex(0);
   const fixed = u32(u8, stsz.body + 4);
+  // Sizes listed one by one can't be more than the box holds; a fixed size, any count, up to
+  // the limit (each sample still needs a chunk and a duration below).
+  const count = fixed
+    ? u32(u8, stsz.body + 8)
+    : entries(u8, stsz, stsz.body + 8, stsz.body + 12, 4);
+  if (count > DEMUX_LIMITS.indexSamples) throw new DemuxError(`index of ${count} samples`);
   const size = (i: number) => fixed || u32(u8, stsz.body + 12 + 4 * i);
   const chunks: number[] = [];
   if (stco) {
-    const n = u32(u8, stco.body + 4);
+    const n = entries(u8, stco, stco.body + 4, stco.body + 8, 4);
     for (let i = 0; i < n; i++) chunks.push(u32(u8, stco.body + 8 + 4 * i));
   } else if (co64) {
-    const n = u32(u8, co64.body + 4);
+    const n = entries(u8, co64, co64.body + 4, co64.body + 8, 8);
     for (let i = 0; i < n; i++) chunks.push(u64(u8, co64.body + 8 + 8 * i));
   }
   const runs: [firstChunk: number, perChunk: number][] = [];
-  const nsc = u32(u8, stsc.body + 4);
+  const nsc = entries(u8, stsc, stsc.body + 4, stsc.body + 8, 12);
   for (let i = 0; i < nsc; i++) {
     runs.push([u32(u8, stsc.body + 8 + 12 * i), u32(u8, stsc.body + 12 + 12 * i)]);
   }
-  const durations: number[] = [];
-  const nts = u32(u8, stts.body + 4);
-  for (let i = 0; i < nts && durations.length < count; i++) {
+  const durations = new Uint32Array(count);
+  let known = 0;
+  const nts = entries(u8, stts, stts.body + 4, stts.body + 8, 8);
+  for (let i = 0; i < nts && known < count; i++) {
     const n = u32(u8, stts.body + 8 + 8 * i);
     const d = u32(u8, stts.body + 12 + 8 * i);
-    for (let k = 0; k < n && durations.length < count; k++) durations.push(d);
+    const until = Math.min(count, known + n);
+    durations.fill(d, known, until);
+    known = until;
   }
-  const offsets: number[] = [];
+  const offsets = new Int32Array(count);
   if (ctts) {
     const version = u8[ctts.body] ?? 0;
-    const n = u32(u8, ctts.body + 4);
-    for (let i = 0; i < n && offsets.length < count; i++) {
+    const n = entries(u8, ctts, ctts.body + 4, ctts.body + 8, 8);
+    let filled = 0;
+    for (let i = 0; i < n && filled < count; i++) {
       const c = u32(u8, ctts.body + 8 + 8 * i);
       const o = version === 1 ? i32(u8, ctts.body + 12 + 8 * i) : u32(u8, ctts.body + 12 + 8 * i);
-      for (let k = 0; k < c && offsets.length < count; k++) offsets.push(o);
+      const until = Math.min(count, filled + c);
+      offsets.fill(o, filled, until);
+      filled = until;
     }
   }
-  const out: IndexedSample[] = [];
+  const out = new SampleIndex(count);
   let index = 0;
   let dts = 0;
   let run = 0;

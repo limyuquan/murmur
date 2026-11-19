@@ -24,6 +24,9 @@ import type { Span } from './types';
 
 /** Decoded audio kept, at most, seconds (16-bit, 16 kHz: 32 KB/s; 10 min ≈ 19 MB). */
 export const PCM_CAP_S = 600;
+/** Distinct warnings kept, and their length (for diagnostics only). */
+const MAX_WARNINGS = 50;
+const MAX_WARNING_CHARS = 120;
 /** A playing video's report wins over a paused one's from another frame for this long. */
 const PLAYING_WINS_MS = 3000;
 
@@ -275,6 +278,10 @@ export class LookaheadHost {
           config: (c) => runs.config(c),
           frame: (time, duration, data, jump) => runs.frame(time, duration, data, jump),
           warn: (m) => this.warn(m),
+          failed: (m) => {
+            this.warn(`gave up on a SourceBuffer: ${m}`);
+            runs.end();
+          },
         });
         this.buffers.set(wire.sb, { ms: wire.ms, mime: wire.mime, appends: 0, mirror, runs });
         return;
@@ -413,8 +420,12 @@ export class LookaheadHost {
     }
   }
 
+  /** Counts a warning. The texts come from the page's bytes, so both are bounded. */
   private warn(message: string): void {
-    this.warnings.set(message, (this.warnings.get(message) ?? 0) + 1);
+    const key =
+      message.length > MAX_WARNING_CHARS ? `${message.slice(0, MAX_WARNING_CHARS)}…` : message;
+    if (!this.warnings.has(key) && this.warnings.size >= MAX_WARNINGS) return;
+    this.warnings.set(key, (this.warnings.get(key) ?? 0) + 1);
   }
 }
 

@@ -28,12 +28,16 @@ export function u64(u8: Uint8Array, o: number): number {
   return u32(u8, o) * 4294967296 + u32(u8, o + 4);
 }
 
-export function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-  if (a.length === 0) return b;
-  if (b.length === 0) return a;
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a);
-  out.set(b, a.length);
+export function concat(...parts: Uint8Array[]): Uint8Array {
+  const nonEmpty = parts.filter((p) => p.length > 0);
+  if (nonEmpty.length === 0) return parts[0] ?? new Uint8Array(0);
+  if (nonEmpty.length === 1) return nonEmpty[0] as Uint8Array;
+  const out = new Uint8Array(nonEmpty.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of nonEmpty) {
+    out.set(p, at);
+    at += p.length;
+  }
   return out;
 }
 

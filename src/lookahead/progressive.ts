@@ -73,7 +73,7 @@ export class ProgressiveSource {
       if (covered) from = covered[1];
       if (from >= until) return;
       const to = Math.min(until, from + STEP_S);
-      const samples = movie.samples.filter((s) => s.time + s.duration > from && s.time < to);
+      const samples = movie.samples.between(from, to);
       if (samples.length === 0) {
         this.done.add(from, to);
         return;

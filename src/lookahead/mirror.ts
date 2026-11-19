@@ -6,7 +6,7 @@
  */
 import { Fmp4Demuxer } from './fmp4';
 import { kindOf, type TrackKind } from './kind';
-import type { AudioTrackConfig, Demuxer } from './types';
+import type { AudioTrackConfig, DemuxEvent, Demuxer } from './types';
 import { WebmDemuxer } from './webm';
 
 /** A jump bigger than this between one frame's end and the next frame starts a new run. */
@@ -43,6 +43,11 @@ export interface MirrorSink {
   frame(time: number, duration: number | null, data: Uint8Array, jump: boolean): void;
   /** Something was skipped (counted). */
   warn?(message: string): void;
+  /**
+   * The bytes broke the demuxer's limits (`DemuxError`): nothing more is read from this
+   * SourceBuffer, and what it had is given up on.
+   */
+  failed?(message: string): void;
 }
 
 export class SourceBufferMirror {
@@ -52,6 +57,8 @@ export class SourceBufferMirror {
   private next: number | null = null;
   /** Start of the last frame (for frames of unknown duration). */
   private last: number | null = null;
+  /** The bytes broke the demuxer's limits: nothing more is read, whatever comes. */
+  private gaveUp = false;
 
   constructor(
     private mime: string,
@@ -73,7 +80,18 @@ export class SourceBufferMirror {
       this.next = null;
       this.last = null;
     }
-    for (const event of demuxer.push(info.bytes)) {
+    let events: DemuxEvent[];
+    try {
+      events = demuxer.push(info.bytes);
+    } catch (err) {
+      // Never into the session: this SourceBuffer is given up on, the live path covers it.
+      this.demuxer = null;
+      this.config = null;
+      this.gaveUp = true;
+      this.sink.failed?.(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    for (const event of events) {
       if (event.type === 'warning') {
         this.sink.warn?.(event.message);
       } else if (event.type === 'init') {
@@ -112,7 +130,7 @@ export class SourceBufferMirror {
   /** `changeType()`: another container or codec from the next init segment on. */
   changeType(mime: string): void {
     this.mime = mime;
-    this.demuxer = demuxerFor(mime);
+    this.demuxer = this.gaveUp ? null : demuxerFor(mime);
     this.config = null;
     this.next = null;
     this.last = null;

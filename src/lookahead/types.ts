@@ -32,9 +32,32 @@ export type DemuxEvent =
   /** Something the demuxer skipped or couldn't read (counted for diagnostics). */
   | { type: 'warning'; message: string };
 
+/**
+ * Bytes a demuxer won't follow: sizes or counts past its limits (a corrupt stream, or bytes made
+ * to exhaust memory). The SourceBuffer is given up on; the live path covers it.
+ */
+export class DemuxError extends Error {
+  override readonly name = 'DemuxError';
+}
+
+/** Limits for what a page's bytes may claim, so they can't exhaust memory or time. */
+export const DEMUX_LIMITS = {
+  /** An index or fragment header (`moov`, `moof`), or a WebM element read whole. */
+  headerBytes: 16 * 1024 * 1024,
+  /** Any box or element buffered whole (an `mdat` of a muxed fragment included). */
+  boxBytes: 128 * 1024 * 1024,
+  /** Samples in one fragment (10 s of 48 kHz AAC is 469). */
+  fragmentSamples: 65_536,
+  /** Samples in a progressive file's index (about 6 h of AAC). */
+  indexSamples: 1_000_000,
+} as const;
+
 /** A streaming demuxer for what a page appends to one SourceBuffer. */
 export interface Demuxer {
-  /** Feeds the next bytes (any slice; boxes and elements may span pushes). */
+  /**
+   * Feeds the next bytes (any slice; boxes and elements may span pushes). Throws `DemuxError`
+   * when they claim more than `DEMUX_LIMITS` allows.
+   */
   push(bytes: Uint8Array): DemuxEvent[];
   /** `SourceBuffer.abort()`: drop a partly parsed segment; the init stays. */
   reset(): void;
