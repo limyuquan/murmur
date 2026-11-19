@@ -1,0 +1,81 @@
+import tailwindcss from '@tailwindcss/vite';
+import { defineConfig } from 'wxt';
+
+/**
+ * Public half of the key that fixes the unpacked extension ID (EXTENSION_ID in src/shared/ids.ts).
+ * The private half was never saved; the store assigns its own ID to the `store` build. A fixed ID
+ * lets a future local companion app list Earshot in its native-messaging `allowed_origins`.
+ */
+const PUBLIC_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsqoaTZGI3zf4zzOZ1ytCFoz/SAMrg5MGU0ggmmzlOK/7WNhVDYhupz/n0l7oc3ytHfxEFxCzeN1ODRzTrWOSiD74/U4c6jJX/RQoj8IkgyaTgeuBY8Ode1VUWSH+jb/7Gjmk/jVGyJHwnZtVUNxvlgPjkmicJGwbDTgzL9ry0dgNKKcPS9wYMI7VQ/XPsQKDnOF3mAtJTv2UzCg7zUdEhkmLciQqoohi29V10hmbm/Ytw3cZJfuMxAifiUpwBnRfco6G0DGa8i4z/bB5i4ahSjaGPfqEeuNiao1Nb3Wd+9qI5uRrurvNmB6eX4lkw6FDITJyEU9e/sNWD+9M2M7mKQIDAQAB';
+
+/**
+ * Optional suffix for the output folder (e.g. `EARSHOT_E2E_ID=a pnpm test:e2e` builds into
+ * `.output/chrome-mv3-e2e-a`), so parallel runs don't overwrite each other's e2e build.
+ * tests/e2e/fixtures.ts reads the same variable.
+ */
+const outSuffix = process.env.EARSHOT_E2E_ID ? `-${process.env.EARSHOT_E2E_ID}` : '';
+
+/**
+ * Earshot build config. The manifest is generated from here.
+ *
+ * Modes:
+ * - `production` (`pnpm build`, `pnpm zip`): the build people load unpacked, fixed ID via `key`.
+ * - `store` (`pnpm zip:store`): Chrome Web Store upload, no `key` (the store rejects it).
+ * - `development` (`pnpm dev`): WXT dev runner, fixed ID via `key`.
+ * - `e2e` (`pnpm build:e2e`): outputs to `.output/chrome-mv3-e2e`, fixed ID via `key`, adds
+ *   `<all_urls>` so Playwright can inject the overlay without a toolbar click, and enables the
+ *   `__earshot` test hooks (gated on `import.meta.env.MODE === 'e2e'`, tree-shaken elsewhere).
+ */
+export default defineConfig({
+  srcDir: 'src',
+  outDirTemplate: `{{browser}}-mv{{manifestVersion}}{{modeSuffix}}${outSuffix}`,
+  modules: ['@wxt-dev/module-react'],
+  manifestVersion: 3,
+  // Explicit imports everywhere (`wxt/browser`, `wxt/utils/define-background`, ...). Easier to
+  // read for parallel agents and keeps Biome's undeclared-variable checks meaningful.
+  imports: false,
+  vite: () => ({
+    plugins: [tailwindcss()],
+  }),
+  manifest: ({ mode }) => ({
+    name: 'Earshot',
+    description: 'Live translated subtitles over any video, made on your own machine.',
+    minimum_chrome_version: '120',
+    ...(mode !== 'store' && { key: PUBLIC_KEY }),
+    permissions: [
+      // Tab audio, minted by the service worker and opened by the offscreen document.
+      'tabCapture',
+      // The one offscreen document that holds the audio graph and the speech models.
+      'offscreen',
+      // A toolbar click or the shortcut grants the current tab: capture and overlay injection,
+      // with no install warning and no standing access to any site.
+      'activeTab',
+      // Injects the overlay script into the tab (all frames) on demand.
+      'scripting',
+      // Settings (local) and the running session (session).
+      'storage',
+      // Downloaded models live in the Cache API / OPFS; keep them from being evicted.
+      'unlimitedStorage',
+    ],
+    // Asked for at runtime only (keep subtitles across page loads, players in cross-origin
+    // frames). Never granted at install.
+    optional_host_permissions: ['<all_urls>'],
+    // e2e only: Playwright can't click the toolbar, so the test build gets the access a click
+    // would grant.
+    ...(mode === 'e2e' && { host_permissions: ['<all_urls>'] }),
+    // `default_popup` comes from the `popup` entrypoint. `icons` is discovered from public/icon/
+    // (rendered from assets/icon.svg by `pnpm icons`).
+    action: {
+      default_title: 'Earshot',
+      default_icon: { 16: 'icon/16.png', 32: 'icon/32.png', 48: 'icon/48.png' },
+    },
+    // `options_ui` comes from the `options` entrypoint (opens in a tab: see its index.html).
+    commands: {
+      _execute_action: {
+        suggested_key: { default: 'Alt+Shift+E' },
+        description: 'Open Earshot',
+      },
+    },
+  }),
+});

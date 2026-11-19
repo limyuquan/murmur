@@ -1,0 +1,62 @@
+{
+  "name": "earshot",
+  "displayName": "Earshot",
+  "description": "Live translated subtitles over any video, made on your own machine.",
+  "version": "0.1.0",
+  "author": "Lim Yu Quan",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "chrome-extension",
+    "subtitles",
+    "captions",
+    "speech-recognition",
+    "translation",
+    "on-device",
+    "webgpu"
+  ],
+  "homepage": "https://github.com/limyuquan/earshot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/limyuquan/earshot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/limyuquan/earshot/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "build:e2e": "wxt build --mode e2e",
+    "zip": "wxt zip",
+    "zip:store": "wxt zip --mode store",
+    "icons": "node scripts/icons.mjs",
+    "typecheck": "wxt prepare && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:e2e": "pnpm build:e2e && playwright test",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "prepare": "wxt prepare"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@wxt-dev/module-react": "1.2.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "wxt": "0.21.4"
+  }
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <title>Earshot</title>
+  <rect width="128" height="128" rx="28" fill="#1d1d1f"/>
+  <path d="M44 30a26 26 0 0 1 40 0" fill="none" stroke="#5fd394" stroke-width="8" stroke-linecap="round"/>
+  <path d="M54 44a12 12 0 0 1 20 0" fill="none" stroke="#5fd394" stroke-width="8" stroke-linecap="round"/>
+  <rect x="34" y="68" width="60" height="14" rx="7" fill="#fcfcfb" opacity="0.7"/>
+  <rect x="20" y="90" width="88" height="18" rx="9" fill="#fcfcfb"/>
+</svg>
