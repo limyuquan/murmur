@@ -31,7 +31,9 @@ function box(type: string, ...parts: (Uint8Array | number[])[]): Uint8Array {
 function u32s(...values: number[]): Uint8Array {
   const out = new Uint8Array(values.length * 4);
   const view = new DataView(out.buffer);
-  values.forEach((v, i) => view.setUint32(i * 4, v >>> 0));
+  values.forEach((v, i) => {
+    view.setUint32(i * 4, v >>> 0);
+  });
   return out;
 }
 
