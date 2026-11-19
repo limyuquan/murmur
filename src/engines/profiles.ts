@@ -5,7 +5,8 @@
  * its id at the front of the profiles it suits. `custom` uses the engines chosen in settings.
  */
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
-import { checkEngine, type HardwareInfo } from './hardware';
+import { checkEngine, gpuKind, type HardwareInfo } from './hardware';
+import { GEMMA_E2B_ID, GEMMA_E4B_ID } from './llm/info';
 import { QWEN3_ASR_ID } from './qwen3asr/info';
 import type { EngineRegistry } from './registry';
 import type { EngineInfo } from './types';
@@ -27,7 +28,7 @@ export const DEMO_ASR_ID = 'demo-echo';
 export const DEMO_TRANSLATION_ID = 'demo-passthrough';
 export const WHISPER_BASE_ID = 'whisper-base';
 export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
-export { QWEN3_ASR_ID };
+export { GEMMA_E2B_ID, GEMMA_E4B_ID, QWEN3_ASR_ID };
 
 /**
  * What runs when an engine turns out not to work here once it loads (EngineUnavailableError):
@@ -37,6 +38,19 @@ export const RUNTIME_FALLBACKS: Readonly<Record<string, string>> = {
   [CHROME_WEBSPEECH_ID]: WHISPER_BASE_ID,
   // Its worker found no 16-bit float shaders after all, or its files aren't published.
   [QWEN3_ASR_ID]: WHISPER_TURBO_ID,
+  // Out of graphics memory, no WebGPU after all, or a Chrome too old for the runtime. Not E4B
+  // to E2B: E2B may not be downloaded.
+  [GEMMA_E2B_ID]: CHROME_TRANSLATOR_ID,
+  [GEMMA_E4B_ID]: CHROME_TRANSLATOR_ID,
+};
+
+/**
+ * Translators that may be too slow or fail on a single line, and the one that translates such a
+ * line instead (engines/translators.ts).
+ */
+export const LINE_FALLBACKS: Readonly<Record<string, string>> = {
+  [GEMMA_E2B_ID]: CHROME_TRANSLATOR_ID,
+  [GEMMA_E4B_ID]: CHROME_TRANSLATOR_ID,
 };
 
 /**
@@ -55,23 +69,26 @@ export const PROFILES: Record<ProfileId, ModelProfile> = {
     asr: [CHROME_WEBSPEECH_ID, WHISPER_BASE_ID],
     translation: [CHROME_TRANSLATOR_ID],
   },
-  // Translation stays Chrome's until an in-browser translation model is chosen (benchmarks).
   // Qwen3-ASR follows language switches best; turbo where it can't run (no 16-bit float shaders,
-  // or its files aren't published in this build).
+  // or its files aren't published in this build). Gemma 4 E2B translates with the lines before;
+  // Chrome's translator where it doesn't fit (too little graphics memory).
   balanced: {
     id: 'balanced',
     label: 'Balanced',
-    description: 'Medium models on the graphics card. Better accuracy, larger download.',
+    description:
+      'Speech recognition and a translation model on the graphics card. Better accuracy, larger download.',
     asr: [QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
-    translation: [CHROME_TRANSLATOR_ID],
+    translation: [GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
-  // Until the companion app exists, the best the browser runs.
+  // Until the companion app exists, the best the browser runs: the larger translation model,
+  // E2B where E4B doesn't fit.
   best: {
     id: 'best',
     label: 'Best',
-    description: 'The largest models: a strong graphics card or the companion app.',
-    asr: [WHISPER_TURBO_ID, WHISPER_BASE_ID],
-    translation: [CHROME_TRANSLATOR_ID],
+    description:
+      'The largest models in the browser: needs a graphics card with its own memory, or the companion app.',
+    asr: [QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
+    translation: [GEMMA_E4B_ID, GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
 };
 
@@ -136,6 +153,14 @@ export function recommendProfile(hw: HardwareInfo): ProfileId {
   if (hw.companion) return 'best';
   if (!hw.webgpu.available) return 'light';
   const memory = hw.deviceMemoryGB ?? 4;
-  if (hw.webgpu.shaderF16 && memory >= 8 && hw.webgpu.maxBufferMB >= 1024) return 'best';
+  // Best's translation model wants a card with its own memory.
+  if (
+    hw.webgpu.shaderF16 &&
+    memory >= 8 &&
+    hw.webgpu.maxBufferMB >= 1024 &&
+    gpuKind(hw.webgpu) === 'discrete'
+  ) {
+    return 'best';
+  }
   return 'balanced';
 }

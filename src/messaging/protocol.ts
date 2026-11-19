@@ -106,6 +106,11 @@ export type SessionStatus =
        * plain words.
        */
       problems?: string[];
+      /**
+       * Lines the chosen translator didn't translate (too slow, a failure, or it couldn't load),
+       * which another one did instead, in plain words.
+       */
+      translationNote?: string;
     }
   | ({ state: 'error'; tabId: number; sessionId: string } & SessionFailure);
 
@@ -193,6 +198,8 @@ export interface SessionConfig {
   spokenLanguages?: string[];
   /** Only `spokenLanguages` are spoken: engines that detect languages pick among them. */
   onlySpoken?: boolean;
+  /** The person's glossary (settings.ts); translators that use one get the entries a line needs. */
+  glossary?: { source: string; target: string }[];
 }
 
 export type OffscreenCommand =

@@ -49,6 +49,19 @@ describe('describeStatus', () => {
     expect(missing.action).toMatchObject({ kind: 'settings', section: 'models' });
   });
 
+  it('adds which lines another translator did, when all is well', () => {
+    const note = '2 lines translated by Chrome translation, as Gemma 4 E2B took longer than 3 s.';
+    const ok = describeStatus(
+      view({ ...running(activity()), translationNote: note } as SessionStatus),
+    );
+    expect(ok).toMatchObject({ tone: 'ok', detail: `About 2.4 s behind the speech. ${note}` });
+    // A warning says its own thing.
+    const behind = describeStatus(
+      view({ ...running(activity({ behind: true })), translationNote: note } as SessionStatus),
+    );
+    expect(behind.detail).not.toContain(note);
+  });
+
   it('says when the session is on another tab', () => {
     const s = describeStatus(view(running(activity()), { tabId: 2, thisTab: false }));
     expect(s.title).toBe('On in another tab');

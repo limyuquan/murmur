@@ -14,6 +14,7 @@ import {
   PASSTHROUGH_INFO,
   STALLED_ASR_INFO,
 } from './demo/info';
+import { GEMMA_E2B_INFO, GEMMA_E4B_INFO } from './llm/info';
 import { QWEN3_ASR_INFO } from './qwen3asr/info';
 import { EngineRegistry } from './registry';
 import type { AnyEngine, AsrEngine, TranslationEngine } from './types';
@@ -38,10 +39,9 @@ export function createBuiltinRegistry(factories: EngineFactories = {}): EngineRe
   ]) {
     registry.registerAsr({ info, create: make<AsrEngine>(info.id) });
   }
-  registry.registerTranslation({
-    info: CHROME_TRANSLATOR_INFO,
-    create: make<TranslationEngine>(CHROME_TRANSLATOR_INFO.id),
-  });
+  for (const info of [CHROME_TRANSLATOR_INFO, GEMMA_E2B_INFO, GEMMA_E4B_INFO]) {
+    registry.registerTranslation({ info, create: make<TranslationEngine>(info.id) });
+  }
   if (IS_E2E) {
     registry
       .registerAsr({ info: ECHO_ASR_INFO, create: make<AsrEngine>(ECHO_ASR_INFO.id) })

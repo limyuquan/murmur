@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { type HardwareInfo, NO_HARDWARE } from '@/engines/hardware';
+import { GEMMA_E2B_INFO, GEMMA_E4B_INFO } from '@/engines/llm/info';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from '@/engines/whisper/info';
 import { allModels, knownModels, modelsFor, totalMB } from '@/models/catalog';
@@ -27,6 +28,7 @@ const GPU: HardwareInfo = {
   cores: 12,
   companion: false,
 };
+const NVIDIA: HardwareInfo = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'nvidia' } };
 
 describe('catalog', () => {
   const registry = createBuiltinRegistry();
@@ -34,8 +36,14 @@ describe('catalog', () => {
   it('needs the WebGPU or the WebAssembly build of the profile’s speech model', () => {
     // Light: Chrome's own engines, nothing to download from Murmur.
     expect(modelsFor('light', custom, registry, GPU)).toEqual([]);
+    // Speech first, then translation.
     expect(modelsFor('balanced', custom, registry, GPU).map((m) => m.id)).toEqual([
       'whisper-large-v3-turbo-webgpu',
+      'gemma4-e2b-webgpu',
+    ]);
+    expect(modelsFor('best', custom, registry, NVIDIA).map((m) => m.id)).toEqual([
+      'whisper-large-v3-turbo-webgpu',
+      'gemma4-e4b-webgpu',
     ]);
     // No WebGPU: turbo doesn't fit, so base, in its processor build.
     expect(modelsFor('balanced', custom, registry, NO_HARDWARE).map((m) => m.id)).toEqual([
@@ -45,16 +53,28 @@ describe('catalog', () => {
     // The demo engines of the custom choice exist in e2e builds only: here it falls back to base.
     expect(all.map((m) => [m.info.id, m.profiles])).toEqual([
       ['whisper-large-v3-turbo-webgpu', ['balanced', 'best']],
+      ['gemma4-e2b-webgpu', ['balanced', 'best']],
       ['whisper-base-webgpu', []],
     ]);
     expect(knownModels(registry).map((m) => m.id)).toEqual([
       'whisper-base-webgpu',
       'whisper-base-wasm',
       'whisper-large-v3-turbo-webgpu',
+      'gemma4-e2b-webgpu',
+      'gemma4-e4b-webgpu',
     ]);
   });
 
   it('declares exact files whose sizes add up to the download', () => {
+    for (const info of [GEMMA_E2B_INFO, GEMMA_E4B_INFO]) {
+      const [m] = info.models ?? [];
+      const [file] = m?.source.files ?? [];
+      expect(m?.source.revision).toMatch(/^[0-9a-f]{40}$/);
+      expect(file?.path).toMatch(/-web\.litertlm$/);
+      expect(file?.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(Math.round((file?.bytes ?? 0) / 1e6)).toBe(m?.sizeMB);
+      expect(info.requirements.downloadMB).toBe(m?.sizeMB);
+    }
     for (const info of [WHISPER_BASE_INFO, WHISPER_TURBO_INFO]) {
       for (const m of info.models ?? []) {
         const bytes = m.source.files.reduce((n, f) => n + f.bytes, 0);
@@ -64,7 +84,7 @@ describe('catalog', () => {
       }
     }
     const sizes = knownModels(registry).map((m) => formatSize(m.sizeMB));
-    expect(sizes).toEqual(['209 MB', '80 MB', '1.6 GB']);
+    expect(sizes).toEqual(['209 MB', '80 MB', '1.6 GB', '2.0 GB', '3.0 GB']);
     expect(totalMB(knownModels(registry))).toBeGreaterThan(1800);
   });
 });

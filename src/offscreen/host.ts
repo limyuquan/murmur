@@ -15,8 +15,10 @@ import {
   isUnsupportedLanguage,
 } from '@/engines/errors';
 import { ENGINE_FACTORIES } from '@/engines/factories';
-import { detectHardware } from '@/engines/hardware';
+import { detectHardware, type HardwareInfo } from '@/engines/hardware';
 import { loadWithFallback } from '@/engines/loading';
+import { LINE_FALLBACKS } from '@/engines/profiles';
+import { type FallbackEvent, sessionTranslator } from '@/engines/translators';
 import type {
   AsrEngine,
   AsrEngineInfo,
@@ -87,6 +89,8 @@ interface Running {
   setup: SetupAction[];
   /** Engine failures the session carries on despite (each reported once). */
   problems: string[];
+  /** Lines another translator did instead of the chosen one, and why (each reported). */
+  translationNote: string | null;
 }
 
 /**
@@ -165,6 +169,7 @@ export class OffscreenHost {
       ticker: null,
       setup: [],
       problems: [],
+      translationNote: null,
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
@@ -242,6 +247,7 @@ export class OffscreenHost {
         return;
       }
       this.deps.onEngines?.(running.asr, running.translator);
+      running.translator = this.withLineHelpers(running, running.translator, hardware);
       const asrInfo = running.asr.info;
       // A fallback engine may want the detector when the chosen one didn't, or not want it.
       if (wantsModelVad(asrInfo)) running.vad ??= this.loadVad();
@@ -366,6 +372,47 @@ export class OffscreenHost {
     }
   }
 
+  /**
+   * The session's translator: the loaded one with the glossary, and Chrome's translator for any
+   * line it is too slow for or fails on (engines/translators.ts). Says so when the chosen one
+   * couldn't load and another took its place.
+   */
+  private withLineHelpers(
+    running: Running,
+    translator: TranslationEngine,
+    hardware: HardwareInfo,
+  ): TranslationEngine {
+    const { config } = running;
+    const chosen = this.registry.translationInfo(config.translationEngine);
+    if (translator.info.id !== config.translationEngine && chosen) {
+      running.translationNote = `${chosen.label} couldn’t run here, so ${translator.info.label} translates.`;
+    }
+    const backupId = LINE_FALLBACKS[translator.info.id];
+    let fellBack = 0;
+    return sessionTranslator(translator, {
+      glossary: config.glossary ?? [],
+      backup: backupId
+        ? async () => {
+            const backup = await this.registry.createTranslation(backupId);
+            // No pack check up front: a line whose pack is missing asks for it (`setup`).
+            await backup.load({ hardware, signal: running.controller.signal });
+            return backup;
+          }
+        : null,
+      onFallback: (event: FallbackEvent) => {
+        if (!this.isCurrent(running)) return;
+        fellBack++;
+        const backupLabel =
+          this.registry.translationInfo(backupId ?? '')?.label ?? 'another translator';
+        running.translationNote = event.permanent
+          ? `${translator.info.label} ${event.reason}, so ${backupLabel} translates.`
+          : `${fellBack} ${fellBack === 1 ? 'line' : 'lines'} translated by ${backupLabel}, as ${translator.info.label} ${event.reason}.`;
+        console.warn(LOG_PREFIX, 'line translated by the backup', event);
+        this.reportRunning(running);
+      },
+    });
+  }
+
   private isCurrent(running: Running): boolean {
     return this.session === running;
   }
@@ -383,6 +430,7 @@ export class OffscreenHost {
       activity: running.reported,
       ...(running.setup.length > 0 ? { setup: [...running.setup] } : {}),
       ...(running.problems.length > 0 ? { problems: [...running.problems] } : {}),
+      ...(running.translationNote ? { translationNote: running.translationNote } : {}),
     });
   }
 

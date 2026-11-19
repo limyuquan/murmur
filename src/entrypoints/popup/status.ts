@@ -55,8 +55,17 @@ export function describeStatus(view: TabView): StatusLine {
     case 'error':
       return describeError(s.code, s.message, view.profile, (s.missingModels ?? []).length > 0);
     case 'running':
-      return describeRunning(view, s.heard, s.activity, s.setup, s.problems);
+      return withNote(
+        describeRunning(view, s.heard, s.activity, s.setup, s.problems),
+        s.translationNote,
+      );
   }
+}
+
+/** A running session's line, with the translation note after what it says, when all is well. */
+function withNote(line: StatusLine, note: string | undefined): StatusLine {
+  if (!note || line.tone !== 'ok') return line;
+  return { ...line, detail: line.detail ? `${line.detail} ${note}` : note };
 }
 
 function describeRunning(

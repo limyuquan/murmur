@@ -182,6 +182,7 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
         translatePartials: settings.translatePartials,
         spokenLanguages: spoken,
         onlySpoken: settings.onlySpoken,
+        ...(settings.glossary.length > 0 ? { glossary: settings.glossary } : {}),
       };
       // Answered once the capture is open; the models load after, reporting by event.
       const reply = await step(
