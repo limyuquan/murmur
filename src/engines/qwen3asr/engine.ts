@@ -11,7 +11,9 @@
  *   partial's answer minus its last few tokens (`rollbackPrefix`), so only the tail is decoded
  *   again. Finals, and probes (the segmenter asking about a pause), decode from scratch.
  */
+
 import { isComplete } from '@/models/hub';
+import { DecodeQueue } from '../decodequeue';
 import { EngineUnavailableError, ModelError } from '../errors';
 import { type SegmentDecode, SegmentSession } from '../segments';
 import type {
@@ -62,6 +64,8 @@ export class Qwen3AsrEngine implements AsrEngine {
   private worker: Worker | null = null;
   private loading: Promise<void> | null = null;
   private nextId = 1;
+  /** Live decodes before lookahead's on the one worker (decodequeue.ts). */
+  private readonly queue = new DecodeQueue();
   private readonly pending = new Map<
     number,
     { resolve(o: DecodeOutput): void; reject(e: Error): void }
@@ -173,7 +177,9 @@ export class Qwen3AsrEngine implements AsrEngine {
           const prefix = last && rollback !== null ? rollbackPrefix(last.ids, rollback) : null;
           // Measured now: decoding hands the samples' buffer to the worker.
           const audioMs = Math.round((samples.length / options.sampleRate) * 1000);
-          const out = await this.decode(samples, languages, prefix);
+          const out = await this.queue.run(options.batch ? 'batch' : 'live', () =>
+            this.decode(samples, languages, prefix),
+          );
           // A language forced by the prefix keeps the probability it was chosen with.
           const languageProb = prefix && last ? last.languageProb : out.languageProb;
           // A probe (decoded in full) is as good a base for the next partial.

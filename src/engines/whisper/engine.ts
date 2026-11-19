@@ -7,8 +7,10 @@
  * finals never wait behind partials), and passes every decode through the hallucination guards
  * (filters.ts). Every result carries the language Whisper detected for that segment.
  */
+
 import { isComplete } from '@/models/hub';
 import { primaryLanguage } from '@/pipeline/language';
+import { DecodeQueue } from '../decodequeue';
 import { ModelError } from '../errors';
 import { SegmentSession } from '../segments';
 import type {
@@ -28,6 +30,8 @@ export class WhisperAsrEngine implements AsrEngine {
   private worker: Worker | null = null;
   private loading: Promise<void> | null = null;
   private nextId = 1;
+  /** Live decodes before lookahead's on the one worker (decodequeue.ts). */
+  private readonly queue = new DecodeQueue();
   private readonly pending = new Map<
     number,
     { resolve(o: DecodeOutput): void; reject(e: Error): void }
@@ -148,8 +152,11 @@ export class WhisperAsrEngine implements AsrEngine {
   createSession(options: AsrSessionOptions): AsrSession {
     // Any language unless the person said only theirs are spoken.
     const languages = options.onlySpoken ? whisperLanguages(options.spokenLanguages) : null;
+    const priority = options.batch ? 'batch' : 'live';
     return new SegmentSession(
-      { decode: (_job, samples) => this.decode(samples, languages) },
+      {
+        decode: (_job, samples) => this.queue.run(priority, () => this.decode(samples, languages)),
+      },
       options,
       this.schedulerOptions,
     );
