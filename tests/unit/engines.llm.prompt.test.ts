@@ -8,26 +8,27 @@ import {
 } from '@/engines/llm/prompt';
 
 /**
- * Golden prompts: what the benchmark's own renderer (prompt v2) gives for these inputs, with
- * Murmur's two generic changes (the session's languages, no fixed kind of video). Any change to
- * the wording changes what was measured: re-run the benchmark before updating these.
+ * Golden prompts: what the benchmark's own renderer gives for these inputs with prompt v3 (bench
+ * prompts/llm_subtitle/v3, chosen in murmur-notes bench/results/summary_prompt_hillclimb.md), with
+ * the session's languages and no kind of video. Any change to the wording changes what was
+ * measured: re-run the benchmark before updating these.
  */
 /** Prompts as the benchmark renderer gives them for the same inputs (generated, not hand-written). */
 const GOLDEN = {
   a: {
     system:
-      'You translate live video subtitles into English. Output ONLY the English subtitle for CURRENT: no notes, no quotes, no preamble, no source text.\nStyle: natural, casual spoken English; keep the speaker\'s tone, jokes and attitude; do not explain.\nThe source may mix French and English, even inside one line. Translate every part of CURRENT, whatever its language; never skip a part because it is in another language. If a part is already in English, keep it.\nCURRENT comes from automatic speech recognition and may contain misrecognised words. If a word looks wrong, infer the intended word from the context and the glossary (names are often misheard), but never invent content. If CURRENT is unintelligible, output "…".\nWrite names of people, groups, fandoms and shows with their official romanised spelling, exactly as in the GLOSSARY; never translate a name as a word.',
-    user: "GLOSSARY: Camille = Camille; tarte Tatin = tarte Tatin\nCONTEXT (earlier lines, already translated; do not translate again):\n[fr] Bonjour à tous. => Hello, everyone.\n[?] Merci d'être là. => Thanks for being here.\nCURRENT (French, auto-detected): Aujourd'hui, Camille prépare une tarte.",
+      'Translate CURRENT, one line of live video subtitles, into English. Reply with the subtitle only.\nUse natural, casual spoken English and keep the speaker\'s tone.\nLines may mix French and English: translate every part; keep parts already in English.\nCURRENT is an automatic transcript: fix misheard words from the context and glossary, but never invent content. Leave out a word you cannot make sense of instead of guessing a sound-alike. If nothing is intelligible, reply "…".\nNames: official romanised spelling, as in the GLOSSARY, spelt the same as in the earlier lines; never translate a name.',
+    user: "GLOSSARY: Camille = Camille; tarte Tatin = tarte Tatin\nEARLIER LINES (context only):\n[fr] Bonjour à tous. => Hello, everyone.\n[?] Merci d'être là. => Thanks for being here.\nCURRENT (French): Aujourd'hui, Camille prépare une tarte.",
   },
   b: {
     system:
-      "You translate live video subtitles into German. Output ONLY the German subtitle for CURRENT: no notes, no quotes, no preamble, no source text.\nStyle: natural, casual spoken German; keep the speaker's tone, jokes and attitude; do not explain.\nKeep it short enough to read at a glance: at most 2 lines of about 42 characters. Drop fillers (음, 어, 그, 아니, あの, えっと, um), stutters and repeated words, but keep every piece of meaning.\nThe source may mix languages, even inside one line. Translate every part of CURRENT, whatever its language; never skip a part because it is in another language. If a part is already in German, keep it.\nWrite names of people, groups, fandoms and shows with their official romanised spelling; never translate a name as a word.",
+      "Translate CURRENT, one line of live video subtitles, into German. Reply with the subtitle only.\nUse natural, casual spoken German and keep the speaker's tone.\nKeep it short enough to read at a glance: at most 2 lines of about 42 characters. Drop fillers (음, 어, 그, 아니, あの, えっと, um), stutters and repeated words, but keep every piece of meaning.\nLines may mix languages: translate every part; keep parts already in German.\nNames: official romanised spelling, spelt the same as in the earlier lines; never translate a name.",
     user: 'CURRENT: Guten Morgen',
   },
   c: {
     system:
-      'You translate live video subtitles into English. Output ONLY the English subtitle for CURRENT: no notes, no quotes, no preamble, no source text.\nStyle: natural, casual spoken English; keep the speaker\'s tone, jokes and attitude; do not explain.\nThe source may mix Korean and English, even inside one line. Translate every part of CURRENT, whatever its language; never skip a part because it is in another language. If a part is already in English, keep it.\nCURRENT comes from automatic speech recognition and may contain misrecognised words. If a word looks wrong, infer the intended word from the context and the glossary (names are often misheard), but never invent content. If CURRENT is unintelligible, output "…".\nWrite names of people, groups, fandoms and shows with their official romanised spelling; never translate a name as a word.\nTranslate Korean address terms (언니, 오빠, 형, 누나, 선배) naturally: usually the person\'s name or nothing; keep them romanised only when used as a nickname.',
-    user: 'CURRENT (Korean, auto-detected): 안녕하세요',
+      'Translate CURRENT, one line of live video subtitles, into English. Reply with the subtitle only.\nUse natural, casual spoken English and keep the speaker\'s tone.\nLines may mix Korean and English: translate every part; keep parts already in English.\nCURRENT is an automatic transcript: fix misheard words from the context, but never invent content. Leave out a word you cannot make sense of instead of guessing a sound-alike. If nothing is intelligible, reply "…".\nNames: official romanised spelling, spelt the same as in the earlier lines; never translate a name.\nKorean address terms (언니, 오빠, 형, 누나, 선배) are not names: use the person\'s name or leave them out; never write unnie, oppa, hyung or noona.',
+    user: 'CURRENT (Korean): 안녕하세요',
   },
 };
 
@@ -73,9 +74,9 @@ describe('LLM prompt', () => {
       context: [{ source: 'Hola', translation: 'Hi', language: 'es' }],
       spokenLanguages: ['fr', 'xyzzy'],
     });
-    expect(p.system).toContain('The source may mix French, Spanish, Italian and English,');
+    expect(p.system).toContain('Lines may mix French, Spanish, Italian and English:');
     expect(p.user).toBe(
-      'CONTEXT (earlier lines, already translated; do not translate again):\n[es] Hola => Hi\nCURRENT (Italian, auto-detected): Ciao a tutti',
+      'EARLIER LINES (context only):\n[es] Hola => Hi\nCURRENT (Italian): Ciao a tutti',
     );
     expect(p.system).not.toContain('Korean');
   });
@@ -88,11 +89,9 @@ describe('LLM prompt', () => {
       context: [],
       mixed: ['ko', 'en'],
     });
-    expect(prompt.user).toBe(
-      'CURRENT (Korean and English, auto-detected): That is so 귀여워 honestly',
-    );
-    expect(prompt.system).toContain('The source may mix Korean and English, even inside one line.');
-    expect(prompt.system).toContain('If a part is already in English, keep it.');
+    expect(prompt.user).toBe('CURRENT (Korean and English): That is so 귀여워 honestly');
+    expect(prompt.system).toContain('Lines may mix Korean and English: translate every part;');
+    expect(prompt.system).toContain('keep parts already in English.');
     const unknown = buildPrompt({
       text: '이거 진짜 good idea',
       sourceLanguage: 'und',
@@ -100,9 +99,7 @@ describe('LLM prompt', () => {
       context: [],
       mixed: ['und', 'ko'],
     });
-    expect(unknown.user).toBe(
-      'CURRENT (Korean and another language, auto-detected): 이거 진짜 good idea',
-    );
+    expect(unknown.user).toBe('CURRENT (Korean and another language): 이거 진짜 good idea');
   });
 
   it('renders sections, nested ones and variables, then trims', () => {
@@ -132,7 +129,7 @@ describe('LLM prompt', () => {
     expect(fitted.user).not.toContain('ligne 1');
     expect(fitted.user).toContain('ligne 3');
     expect(fitted.user).toContain('GLOSSARY: Bonjour = Hello');
-    expect(fitPrompt(input, 0).user).toBe('CURRENT (French, auto-detected): Bonjour');
+    expect(fitPrompt(input, 0).user).toBe('CURRENT (French): Bonjour');
   });
 
   it('allows an answer long enough for the line, within limits', () => {

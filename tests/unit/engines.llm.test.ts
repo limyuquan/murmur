@@ -321,9 +321,9 @@ describe('LLM translation engine', () => {
     );
     const [gen] = worker.generations;
     expect(gen?.user).toBe(
-      'GLOSSARY: Camille = Camille\nCONTEXT (earlier lines, already translated; do not translate again):\n[fr] Salut => Hi\nCURRENT (French, auto-detected): Bonjour Camille',
+      'GLOSSARY: Camille = Camille\nEARLIER LINES (context only):\n[fr] Salut => Hi\nCURRENT (French): Bonjour Camille',
     );
-    expect(gen?.system).toContain('The source may mix French, German and English');
+    expect(gen?.system).toContain('Lines may mix French, German and English');
     expect(records[0]).toMatchObject({
       segmentId: 's1',
       final: true,
@@ -344,7 +344,7 @@ describe('LLM translation engine', () => {
       ),
     );
     expect(worker.generations.map((g) => g.user)).toEqual([
-      'CURRENT (German, auto-detected): Hallo',
+      'CURRENT (German): Hallo',
       'CURRENT: Danke',
     ]);
   });
@@ -361,7 +361,7 @@ describe('LLM translation engine', () => {
     );
     expect(chunks.at(-1)).toEqual({ text: 'At 85 points, it was 15th place', final: true });
     expect(worker.generations[0]?.user).toBe(
-      'CONTEXT (earlier lines, already translated; do not translate again):\n[ko] 150 명이 왔어 => 150 people came\nCURRENT (Korean, auto-detected): 85 점으로 15 위',
+      'EARLIER LINES (context only):\n[ko] 150 명이 왔어 => 150 people came\nCURRENT (Korean): 85 점으로 15 위',
     );
   });
 
@@ -397,7 +397,7 @@ describe('LLM translation engine', () => {
     ]);
     const revision = worker.generations[1];
     expect(revision?.user).toBe(
-      'CONTEXT (earlier lines, already translated; do not translate again):\n[fr] Bonjour => Hello there\nCURRENT (French, auto-detected): Hier je suis allé\nNEXT (the line right after CURRENT, which finishes its sentence; only for context, do not translate it): au magasin avec ma sœur.',
+      'EARLIER LINES (context only):\n[fr] Bonjour => Hello there\nCURRENT (French): Hier je suis allé\nNEXT (the line right after CURRENT, which finishes its sentence; only for context, do not translate it): au magasin avec ma sœur.',
     );
     expect(records.map((r) => [r.segmentId, r.revision ?? false])).toEqual([
       ['s1', false],

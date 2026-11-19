@@ -1,44 +1,48 @@
 /**
- * The translation prompt for the LLM engine (prompt v2, as benchmarked): a system message that
- * says what to do, and a user turn with the glossary entries the line uses, the last few finished
- * lines (each with its language and translation) and the line itself, with the language the
- * speech engine heard it in.
+ * The translation prompt for the LLM engine (prompt v3, as benchmarked in murmur-notes
+ * bench/results/summary_prompt_hillclimb.md): a short system message that says what to do, and a
+ * user turn with the glossary entries the line uses, the last few finished lines (each with its
+ * language and translation) and the line itself, with the language the speech engine heard it in.
+ *
+ * v3 over v2: about a third fewer prompt tokens (the same rules, said tersely), a misheard word
+ * the model can't place is left out rather than replaced by a sound-alike, names are spelt as in
+ * the earlier lines, and Korean address terms are never written as unnie/oppa/hyung/noona (unless
+ * the `honorifics` flag asks for them). It is meant for 6 earlier lines (pipeline.ts).
  *
  * Templates use a tiny mustache subset, rendered exactly as the benchmark rendered them:
  * `{{var}}` substitutes, `{{#var}}…{{/var}}` keeps the block when `var` is set, `{{^var}}…{{/var}}`
  * when it isn't, and the result is trimmed.
  *
- * Murmur's wording differs from the benchmarked one in two places, both filled in from the line:
+ * Filled in from the session and the line:
  * - the languages the source may mix are the session's (spoken languages, the line's, the earlier
  *   lines' and the target), not a fixed list; with fewer than two known, just "languages";
  * - the sentence on Korean address terms is there only when Korean is among them;
  * - a revision of a line already translated has the line that finishes its sentence after it
  *   (`NEXT`, for context only);
  * - a line that mixes languages (heard as the target language, partly in another) names them all
- *   as its language: "CURRENT (Korean and English, auto-detected)", so the model translates the
- *   other parts and keeps the target-language ones (the system message says to).
- * With the benchmark's languages (and its kind of video as `domain`), the prompt is byte for byte
- * the benchmarked one.
+ *   as its language: "CURRENT (Korean and English)", so the model translates the other parts and
+ *   keeps the target-language ones (the system message says to).
+ * With the benchmark's languages (and no `domain`), the prompt is byte for byte the benchmarked one.
  */
 import type { LanguageTag } from '../types';
 import { UNKNOWN_LANGUAGE } from '../types';
 
 export const SYSTEM_TEMPLATE =
-  'You translate live video subtitles{{#domain}} ({{domain}}){{/domain}} into {{target_lang}}. Output ONLY the {{target_lang}} subtitle for CURRENT: no notes, no quotes, no preamble, no source text.\n' +
-  "Style: natural, casual spoken {{target_lang}}; keep the speaker's tone, jokes and attitude; do not explain.\n" +
+  'Translate CURRENT, one line of live video subtitles{{#domain}} ({{domain}}){{/domain}}, into {{target_lang}}. Reply with the subtitle only.\n' +
+  "Use natural, casual spoken {{target_lang}} and keep the speaker's tone.\n" +
   '{{#brief}}Keep it short enough to read at a glance: at most 2 lines of about 42 characters. Drop fillers (음, 어, 그, 아니, あの, えっと, um), stutters and repeated words, but keep every piece of meaning.\n' +
-  '{{/brief}}The source may mix {{languages}}, even inside one line. Translate every part of CURRENT, whatever its language; never skip a part because it is in another language. If a part is already in {{target_lang}}, keep it.\n' +
-  '{{#noisy}}CURRENT comes from automatic speech recognition and may contain misrecognised words. If a word looks wrong, infer the intended word from the context and the glossary (names are often misheard), but never invent content. If CURRENT is unintelligible, output "…".\n' +
-  '{{/noisy}}Write names of people, groups, fandoms and shows with their official romanised spelling{{#glossary}}, exactly as in the GLOSSARY{{/glossary}}; never translate a name as a word.\n' +
-  '{{#korean}}{{#honorifics}}Keep Korean address terms the fans know as romanised words (oppa, unnie, hyung, noona, sunbae, maknae).\n' +
-  "{{/honorifics}}{{^honorifics}}Translate Korean address terms (언니, 오빠, 형, 누나, 선배) naturally: usually the person's name or nothing; keep them romanised only when used as a nickname.\n" +
-  '{{/honorifics}}{{/korean}}\n';
+  '{{/brief}}Lines may mix {{languages}}: translate every part; keep parts already in {{target_lang}}.\n' +
+  '{{#noisy}}CURRENT is an automatic transcript: fix misheard words from the context{{#glossary}} and glossary{{/glossary}}, but never invent content. Leave out a word you cannot make sense of instead of guessing a sound-alike. If nothing is intelligible, reply "…".\n' +
+  '{{/noisy}}Names: official romanised spelling{{#glossary}}, as in the GLOSSARY{{/glossary}}, spelt the same as in the earlier lines; never translate a name.\n' +
+  '{{#korean}}{{#honorifics}}Keep Korean address terms romanised (oppa, unnie, hyung, noona, sunbae, maknae).\n' +
+  "{{/honorifics}}{{^honorifics}}Korean address terms (언니, 오빠, 형, 누나, 선배) are not names: use the person's name or leave them out; never write unnie, oppa, hyung or noona.\n" +
+  '{{/honorifics}}{{/korean}}';
 
 export const USER_TEMPLATE =
   '{{#glossary}}GLOSSARY: {{glossary}}\n' +
-  '{{/glossary}}{{#context}}CONTEXT (earlier lines, already translated; do not translate again):\n' +
+  '{{/glossary}}{{#context}}EARLIER LINES (context only):\n' +
   '{{context}}\n' +
-  '{{/context}}{{#source_lang}}CURRENT ({{source_lang}}, auto-detected): {{/source_lang}}{{^source_lang}}CURRENT: {{/source_lang}}{{text}}\n' +
+  '{{/context}}{{#source_lang}}CURRENT ({{source_lang}}): {{/source_lang}}{{^source_lang}}CURRENT: {{/source_lang}}{{text}}\n' +
   '{{#next}}NEXT (the line right after CURRENT, which finishes its sentence; only for context, do not translate it): {{next}}\n{{/next}}';
 
 type Vars = Record<string, string | boolean | undefined>;

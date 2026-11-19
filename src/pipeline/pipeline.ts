@@ -68,7 +68,7 @@ export interface PipelineOptions {
    * `TRACK_SEGMENTER` for track engines. With a `vad`, its frames must be the vad's size.
    */
   segmenter?: Segmenter;
-  /** Earlier final lines passed as translation context. Default 3. */
+  /** Earlier final lines passed as translation context. Default 6 (what prompt v3 was tuned with). */
   contextLines?: number;
   /** Languages the person expects to hear (empty: not said). */
   spokenLanguages?: readonly LanguageTag[];
@@ -478,7 +478,7 @@ export class Pipeline {
   ): Promise<void> {
     const { cue } = state;
     const target = this.options.targetLanguage;
-    const lines = this.options.contextLines ?? 3;
+    const lines = this.options.contextLines ?? 6;
     let stream: AsyncIterator<TranslationChunk> | null = null;
     /** The stream goes on in the background, for a revision of the line before. */
     let handedOff = false;
