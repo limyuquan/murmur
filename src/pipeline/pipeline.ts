@@ -50,7 +50,17 @@ export interface PipelineOptions {
   onError(error: Error): void;
   /** How the speech engine is keeping up. */
   onHealth?(health: AsrHealth): void;
+  /**
+   * Longest a final line's translation may take before it is given up (marked failed), so one
+   * that hangs doesn't hold up every later line. Default `TRANSLATION_TIMEOUT_MS`.
+   */
+  translationTimeoutMs?: number;
 }
+
+export const TRANSLATION_TIMEOUT_MS = 10_000;
+
+/** A later line of a split segment: `<parent>.<n>`. */
+const SPLIT_LINE = /^(.+)\.(\d+)$/;
 
 interface SegmentState {
   cue: Cue;
@@ -137,7 +147,7 @@ export class Pipeline {
       state = {
         cue: {
           id,
-          seq: ++this.seq,
+          seq: this.seqFor(id),
           startEpochMs: this.clock.toEpochMs(startSample),
           endEpochMs: this.clock.toEpochMs(endSample),
           source: { text: '', language: UNKNOWN_LANGUAGE, final: false },
@@ -150,6 +160,18 @@ export class Pipeline {
       this.prune();
     }
     return state;
+  }
+
+  /**
+   * The next number, or for a later line of a split segment, a number right after its segment:
+   * it may arrive after the next segment started.
+   */
+  private seqFor(id: string): number {
+    const split = SPLIT_LINE.exec(id);
+    const parent = split ? this.segments.get(split[1] as string) : undefined;
+    if (!parent) return ++this.seq;
+    const n = Number(split?.[2]);
+    return parent.cue.seq + 1 - 1 / Math.max(2, n);
   }
 
   private onAsrResult(result: AsrResult): void {
@@ -177,11 +199,38 @@ export class Pipeline {
       state.preview?.abort();
       if (result.text.trim() === '') return;
       const text = result.text;
-      this.finals = this.finals.then(() => this.translate(state, text, language, true));
+      this.finals = this.finals.then(() => this.translateFinal(state, text, language));
     } else if (this.options.translatePartials && result.text.trim() !== '') {
       state.preview?.abort();
       state.preview = new AbortController();
       void this.translate(state, result.text, language, false, state.preview.signal);
+    }
+  }
+
+  /** Translates a final line, giving up after the timeout so later lines go on. */
+  private async translateFinal(
+    state: SegmentState,
+    text: string,
+    language: LanguageTag,
+  ): Promise<void> {
+    if (this.closing.signal.aborted) return;
+    const timeout = new AbortController();
+    const signal = AbortSignal.any([this.closing.signal, timeout.signal]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timeout.abort(new Error('The translation took too long.'));
+        resolve();
+      }, this.options.translationTimeoutMs ?? TRANSLATION_TIMEOUT_MS);
+    });
+    // A translator that ignores the signal still lets the queue go on.
+    await Promise.race([this.translate(state, text, language, true, signal), expired]);
+    clearTimeout(timer);
+    if (timeout.signal.aborted && !this.closing.signal.aborted) {
+      const { cue } = state;
+      cue.untranslated = 'failed';
+      this.emit(cue);
+      this.options.onError(timeout.signal.reason as Error);
     }
   }
 

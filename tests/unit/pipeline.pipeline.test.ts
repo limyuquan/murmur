@@ -156,6 +156,77 @@ describe('Pipeline with the demo engines', () => {
   });
 });
 
+describe('Pipeline hardening', () => {
+  it('gives up on a translation that hangs, and goes on with the next line', async () => {
+    let calls = 0;
+    const translator = new PassthroughTranslationEngine();
+    const passthrough = translator.translate.bind(translator);
+    translator.translate = (request) => {
+      calls++;
+      // The first line's translation never settles and ignores its signal.
+      return calls === 1
+        ? {
+            [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
+          }
+        : passthrough(request);
+    };
+    const { pipeline, cues, errors } = setup({ translator, translationTimeoutMs: 50 });
+    feed(pipeline, concat([burst(0.5, 0.3), burst(1, 0), burst(0.5, 0.3), burst(1, 0)]));
+    await pipeline.close();
+    const [first, second] = latest(cues);
+    expect(first?.untranslated).toBe('failed');
+    expect(second?.untranslated).toBeNull();
+    expect(second?.translation?.final).toBe(true);
+    expect(errors.map((e) => e.message)).toEqual(['The translation took too long.']);
+  });
+
+  it('orders the second line of a split segment right after its segment', async () => {
+    const results: AsrSessionOptions[] = [];
+    const asr: AsrEngine = {
+      info: new EchoAsrEngine().info,
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      createSession(options) {
+        results.push(options);
+        return {
+          startSegment: () => {},
+          pushAudio: () => {},
+          endSegment: () => {},
+          close: async () => {},
+        };
+      },
+    };
+    const { pipeline, cues } = setup({ asr, sourceLanguage: 'fr' });
+    const session = results[0] as AsrSessionOptions;
+    const say = (segmentId: string, text: string) =>
+      session.onResult({
+        segmentId,
+        final: true,
+        text,
+        language: { tag: 'fr', confidence: 1 },
+        startSample: 0,
+        endSample: 100,
+      });
+    say('s1', 'un');
+    // The next segment starts before the first one's second line is decided.
+    session.onResult({
+      segmentId: 's2',
+      final: false,
+      text: 'trois',
+      language: null,
+      startSample: 200,
+      endSample: 300,
+    });
+    say('s1.2', 'deux');
+    await pipeline.close();
+    const order = latest(cues)
+      .sort((a, b) => a.seq - b.seq)
+      .map((c) => c.id);
+    expect(order).toEqual(['s1', 's1.2', 's2']);
+  });
+});
+
 describe('sameLanguage', () => {
   it('compares primary subtags and never matches unknown', () => {
     expect(sameLanguage('en-US', 'en')).toBe(true);

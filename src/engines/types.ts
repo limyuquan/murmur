@@ -189,6 +189,11 @@ export interface Engine<I extends EngineInfo> {
 // Speech recognition
 
 export interface AsrResult {
+  /**
+   * The segment it belongs to. A segment the engine splits into several lines (a language
+   * switch inside it) sends its later lines as `<segmentId>.<n>` (n = 2, 3, ...): they are
+   * ordered right after their segment, even when they come after the next one started.
+   */
   segmentId: string;
   /** False: may still change (shown dimmed). True: the segment's last word. */
   final: boolean;

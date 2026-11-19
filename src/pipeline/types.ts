@@ -15,7 +15,10 @@ export interface CueText {
 export interface Cue {
   /** The segment id; stable across updates. */
   id: string;
-  /** Order of the segment in the session. */
+  /**
+   * Order of the segment in the session. A later line of a split segment comes right after its
+   * segment, with a fractional number (`3.5` after `3`).
+   */
   seq: number;
   /** When the speech is heard, epoch ms (see capture/clock.ts). */
   startEpochMs: number;
