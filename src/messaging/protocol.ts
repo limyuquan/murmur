@@ -13,9 +13,10 @@
  */
 import type { ProfileChoice } from '@/engines/profiles';
 import type { LanguageTag, SetupAction } from '@/engines/types';
+import type { PlayheadReport, TeeWire } from '@/lookahead/protocol';
 import type { ModelsView } from '@/models/types';
 import type { Cue } from '@/pipeline/types';
-import type { OverlaySettings } from '@/settings/settings';
+import type { LookaheadSettings, OverlaySettings } from '@/settings/settings';
 
 // ---------------------------------------------------------------------------------------------
 // Session state (service worker owns it; kept in storage.session so it outlives worker restarts)
@@ -148,6 +149,15 @@ export interface TabView {
   };
   /** The tab's site (positions are kept per site), when Murmur can see its address. */
   site: string | null;
+  /** Subtitles ahead of time (beta), for this site. */
+  lookahead: {
+    /** On for this site (and not switched off everywhere). */
+    on: boolean;
+    /** Switched off everywhere (Settings). */
+    off: boolean;
+    /** The engines a session would use can do it (Chrome's speech recognition can't). */
+    supported: boolean;
+  };
 }
 
 /** op → [args, result]. */
@@ -164,6 +174,11 @@ export interface Ops {
   downloadModels: [{ ids: string[] }, ModelsView];
   cancelDownload: [{ id: string }, ModelsView];
   deleteModel: [{ id: string }, ModelsView];
+  /**
+   * Subtitles ahead of time on `site`, or not. The page asks for access to the site first (a
+   * click is needed for that); this registers the page scripts.
+   */
+  setLookahead: [{ site: string; on: boolean }, LookaheadSettings];
 }
 
 export type Op = keyof Ops;
@@ -249,7 +264,18 @@ export type OverlayMessage =
   | { type: 'reset' }
   /** To the top frame: whether a frame inside it has a video with its own overlay. */
   | { type: 'frames'; videoInFrame: boolean }
-  | { type: 'status'; status: OverlayStatus };
+  | { type: 'status'; status: OverlayStatus }
+  /**
+   * Lookahead runs in this session. `lagS`: how long after the page plays a moment the person
+   * hears it (Murmur plays the captured tab audio back itself), so cues are shown then.
+   */
+  | { type: 'lookahead'; lagS: number }
+  /** Lookahead has finished subtitles for these spans of `timeline` (a content key). */
+  | { type: 'coverage'; timeline: string; spans: [number, number][] }
+  /** Lookahead cues of `timeline` starting in `[start, end)` are void (the audio was replaced). */
+  | { type: 'drop'; timeline: string; start: number; end: number }
+  /** Read bytes `[start, end)` of `url` with the page's access, answer with a `fetched` tee. */
+  | { type: 'fetch'; id: number; url: string; start: number; end: number };
 
 /** The overlay's chip for a session status. */
 export function overlayStatus(status: ActiveSessionStatus): OverlayStatus {
@@ -272,7 +298,13 @@ export function overlayStatus(status: ActiveSessionStatus): OverlayStatus {
  * to draw on, so the top frame knows when a player in another frame shows the subtitles.
  */
 export type OverlayHello = { type: 'hello'; frameUrl: string };
-export type OverlayToHost = OverlayHello | { type: 'video'; present: boolean };
+export type OverlayToHost =
+  | OverlayHello
+  | { type: 'video'; present: boolean }
+  /** Lookahead: what the page's player did (from the relay), or an answer to a `fetch`. */
+  | { type: 'tee'; wire: TeeWire }
+  /** Lookahead: where the video this frame follows is, and what it plays. */
+  | { type: 'playhead'; report: PlayheadReport };
 
 /** What the overlay renders with; the overlay reads it from storage itself. */
 export type { OverlaySettings };

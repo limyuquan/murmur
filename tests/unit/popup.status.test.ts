@@ -17,6 +17,7 @@ function view(status: SessionStatus, patch: Partial<TabView> = {}): TabView {
     profile: 'balanced',
     models: { ready: true, missingMB: 0 },
     site: 'example.com',
+    lookahead: { on: false, off: false, supported: true },
     ...patch,
   };
 }

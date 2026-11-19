@@ -3,8 +3,9 @@ import { browser } from 'wxt/browser';
 import type { Op, Ops } from '@/messaging/protocol';
 import { modelsFor, splitMissing, totalMB } from '@/models/catalog';
 import { siteKey } from '@/settings/positions';
-import { loadSettings } from '@/settings/settings';
+import { loadSettings, lookaheadOn } from '@/settings/settings';
 import { deviceHardware, registry } from './engines';
+import { setLookaheadSite } from './lookahead';
 import { modelStore, models } from './models';
 import {
   engineLabels,
@@ -28,6 +29,7 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
         engines.translation,
       );
       const tab = tabId >= 0 ? await browser.tabs.get(tabId).catch(() => null) : null;
+      const site = tab?.url ? siteKey(tab.url) : null;
       void reattachOverlay(tabId);
       return {
         tabId,
@@ -49,7 +51,13 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
               }
             : {}),
         },
-        site: tab?.url ? siteKey(tab.url) : null,
+        site,
+        lookahead: {
+          on: lookaheadOn(settings, site),
+          off: settings.lookahead.off,
+          // Engines that listen to the tab's track (Chrome's) can't take audio ahead of time.
+          supported: registry.asrInfo(engines.asr)?.audioInput !== 'track',
+        },
       };
     },
     start: ({ tabId }) => startSession(tabId),
@@ -58,6 +66,7 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
     downloadModels: ({ ids }) => models.download(ids),
     cancelDownload: ({ id }) => models.cancel(id),
     deleteModel: ({ id }) => models.remove(id),
+    setLookahead: ({ site, on }) => setLookaheadSite(site, on),
   };
   const handler = handlers[op] as ((a: Ops[K][0]) => Promise<Ops[K][1]>) | undefined;
   if (!handler) throw new Error(`Unknown operation: ${String(op)}`);

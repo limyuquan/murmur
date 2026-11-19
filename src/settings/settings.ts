@@ -64,6 +64,19 @@ export interface Settings {
    */
   glossary: GlossaryEntry[];
   overlay: OverlaySettings;
+  /** Subtitles ahead of time (beta): see src/lookahead/README.md. */
+  lookahead: LookaheadSettings;
+}
+
+export interface LookaheadSettings {
+  /**
+   * Sites (`siteKey`: host name without `www.`) where Murmur reads the audio the page's player
+   * has buffered, to make subtitles before the speech plays. Off everywhere until the person
+   * turns it on for a site.
+   */
+  sites: string[];
+  /** Off everywhere, whatever `sites` says (the kill switch). */
+  off: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -85,7 +98,12 @@ export const DEFAULT_SETTINGS: Settings = {
     languageTags: true,
     avoidControls: true,
   },
+  lookahead: { sites: [], off: false },
 };
+
+/** Most sites with lookahead on. */
+export const MAX_LOOKAHEAD_SITES = 100;
+const SITE = /^[a-z0-9.-]{1,253}$/;
 
 /** Chrome's speech recognition runs at most this many recognizers (engines/chrome/webspeech.ts). */
 export const MAX_SPOKEN_FOR_CHROME = 4;
@@ -119,9 +137,10 @@ export const SIZE_PRESETS = [
   { id: 'large', label: 'L', name: 'Large', scale: 1.3 },
 ] as const;
 
-export type SettingsPatch = Partial<Omit<Settings, 'overlay' | 'custom'>> & {
+export type SettingsPatch = Partial<Omit<Settings, 'overlay' | 'custom' | 'lookahead'>> & {
   overlay?: Partial<OverlaySettings>;
   custom?: Partial<Settings['custom']>;
+  lookahead?: Partial<LookaheadSettings>;
 };
 
 const TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
@@ -131,6 +150,7 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
   const s = (isObject(stored) ? stored : {}) as SettingsPatch;
   const o = (isObject(s.overlay) ? s.overlay : {}) as Partial<OverlaySettings>;
   const c = (isObject(s.custom) ? s.custom : {}) as Partial<Settings['custom']>;
+  const l = (isObject(s.lookahead) ? s.lookahead : {}) as Partial<LookaheadSettings>;
   const d = base;
   return {
     targetLanguage: isTag(s.targetLanguage) ? s.targetLanguage : d.targetLanguage,
@@ -161,7 +181,20 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
       languageTags: bool(o.languageTags, d.overlay.languageTags),
       avoidControls: bool(o.avoidControls, d.overlay.avoidControls),
     },
+    lookahead: {
+      sites: Array.isArray(l.sites)
+        ? [
+            ...new Set(l.sites.filter((x): x is string => typeof x === 'string' && SITE.test(x))),
+          ].slice(0, MAX_LOOKAHEAD_SITES)
+        : d.lookahead.sites,
+      off: bool(l.off, d.lookahead.off),
+    },
   };
+}
+
+/** Whether lookahead is on for `site`. */
+export function lookaheadOn(settings: Pick<Settings, 'lookahead'>, site: string | null): boolean {
+  return !!site && !settings.lookahead.off && settings.lookahead.sites.includes(site);
 }
 
 /** Applies `patch` to `current` (nested objects merged one level deep), validated. */
@@ -172,6 +205,7 @@ export function applyPatch(current: Settings, patch: SettingsPatch): Settings {
       ...patch,
       overlay: { ...current.overlay, ...patch.overlay },
       custom: { ...current.custom, ...patch.custom },
+      lookahead: { ...current.lookahead, ...patch.lookahead },
     },
     current,
   );
