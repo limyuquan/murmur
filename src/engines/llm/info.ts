@@ -59,6 +59,8 @@ const common = {
   streaming: true,
   usesContext: true,
   usesGlossary: true,
+  // It rereads a line whose sentence the next line finishes.
+  revises: true,
   license: 'Apache-2.0',
   homepage: 'https://huggingface.co/google/gemma-4-E2B-it',
 } as const;

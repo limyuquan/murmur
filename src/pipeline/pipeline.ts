@@ -20,7 +20,10 @@
  *   segment calls only as pause markers (no audio): they get the pause strategy, with segments
  *   that run longer before a forced cut, since cutting a recognizer mid-sentence costs words.
  * - A translation engine may correct a line's language (it checked the text) and may revise an
- *   earlier line's translation (`TranslationChunk.revises`).
+ *   earlier line's translation (`TranslationChunk.revises`). Engines with `revises` are offered
+ *   the line before (`previous`) when the new line ends a sentence that line left open, while
+ *   it is still on screen, once per line; the rest of the stream is read in the background, so
+ *   the next line doesn't wait for the revision.
  */
 import { SampleClock } from '@/capture/clock';
 import { type AudioFrame, PIPELINE_SAMPLE_RATE } from '@/capture/types';
@@ -30,12 +33,17 @@ import type {
   AsrResult,
   AsrSession,
   LanguageTag,
+  TranslationChunk,
   TranslationEngine,
+  TranslationRequest,
 } from '@/engines/types';
 import { UNKNOWN_LANGUAGE } from '@/engines/types';
+import { LINGER_MS } from '@/overlay/captions';
+import { readingMs } from '@/overlay/linebreak';
 import { sameLanguage } from './language';
 import { type DetectLanguages, detectForeign, foreignPart } from './mixed';
 import { type SegmentEvent, Segmenter, type SegmenterOptions } from './segmenter';
+import { isSentenceEnd } from './sentence';
 import type { Cue } from './types';
 import { type AsyncVoiceActivityDetector, EnergyVad } from './vad';
 import { VadStage } from './vadstage';
@@ -78,6 +86,8 @@ export interface PipelineOptions {
   onHealth?(health: AsrHealth): void;
   /** Sees each segment start and end (e2e builds log them, with why each ended). */
   onSegment?(event: Extract<SegmentEvent, { type: 'start' | 'end' }>): void;
+  /** The time, ms (tests replace it). Default `Date.now`. */
+  now?: () => number;
   /**
    * Longest a final line's translation may take before it is given up (marked failed), so one
    * that hangs doesn't hold up every later line. Default `TRANSLATION_TIMEOUT_MS`.
@@ -105,6 +115,17 @@ interface SegmentState {
   preview: AbortController | null;
   /** The languages its text mixes, when it is heard as the target language but partly isn't. */
   mixed: readonly LanguageTag[] | null;
+  /** When its translation was finished (`now()`), or null. */
+  translatedAt: number | null;
+}
+
+/** The last finished line, which the next one may finish the sentence of. */
+interface LastLine {
+  state: SegmentState;
+  source: string;
+  language: LanguageTag;
+  /** Already sent for a revision (once per line). */
+  revised: boolean;
 }
 
 export class Pipeline {
@@ -121,9 +142,12 @@ export class Pipeline {
   private position = 0;
   private readonly closing = new AbortController();
   private finals: Promise<void> = Promise.resolve();
+  private lastLine: LastLine | null = null;
+  private readonly now: () => number;
   private seq = 0;
 
   constructor(private readonly options: PipelineOptions) {
+    this.now = options.now ?? Date.now;
     this.ownSegments = options.asr.info.audioInput === 'track';
     const model = this.ownSegments ? null : (options.vad ?? null);
     if (model) {
@@ -185,6 +209,7 @@ export class Pipeline {
     this.flush();
     await this.vadStage?.drain();
     await this.finals;
+    // Revisions still under way are dropped: the lines they would change are gone.
     this.closing.abort();
     for (const s of this.segments.values()) s.preview?.abort();
     await this.session.close();
@@ -228,6 +253,7 @@ export class Pipeline {
         },
         preview: null,
         mixed: null,
+        translatedAt: null,
       };
       this.segments.set(id, state);
       this.prune();
@@ -278,7 +304,13 @@ export class Pipeline {
         cue.translation = null;
         cue.untranslated = 'same-language';
         this.emit(cue);
-        if (result.final) this.checkMixed(state, result.text, language);
+        if (result.final && result.text.trim() !== '') {
+          // A line not translated: the next one has no line before it to revise.
+          this.finals = this.finals.then(() => {
+            this.lastLine = null;
+          });
+          this.checkMixed(state, result.text, language);
+        }
         return;
       }
       from = foreign.language;
@@ -336,10 +368,12 @@ export class Pipeline {
         resolve();
       }, this.options.translationTimeoutMs ?? TRANSLATION_TIMEOUT_MS);
     });
+    const previous = this.previousFor(text, language);
     // A translator that ignores the signal still lets the queue go on.
-    await Promise.race([this.translate(state, text, language, true, signal), expired]);
+    await Promise.race([this.translate(state, text, language, true, signal, previous), expired]);
     clearTimeout(timer);
     if (timeout.signal.aborted && !this.closing.signal.aborted) {
+      this.lastLine = null;
       const { cue } = state;
       cue.untranslated = 'failed';
       this.emit(cue);
@@ -353,22 +387,31 @@ export class Pipeline {
     language: LanguageTag,
     final: boolean,
     signal: AbortSignal = this.closing.signal,
+    previous?: TranslationRequest['previous'],
   ): Promise<void> {
     const { cue } = state;
     const target = this.options.targetLanguage;
     const lines = this.options.contextLines ?? 3;
+    let stream: AsyncIterator<TranslationChunk> | null = null;
+    /** The stream goes on in the background, for a revision of the line before. */
+    let handedOff = false;
     try {
       const mixed = state.mixed;
-      const stream = this.options.translator.translate({
-        segmentId: cue.id,
-        source: { kind: 'text', text, language, ...(mixed ? { mixed } : {}) },
-        target,
-        sourceFinal: final,
-        context: this.context.slice(-lines),
-        signal,
-      });
-      for await (const chunk of stream) {
-        if (signal.aborted) return;
+      stream = this.options.translator
+        .translate({
+          segmentId: cue.id,
+          source: { kind: 'text', text, language, ...(mixed ? { mixed } : {}) },
+          target,
+          sourceFinal: final,
+          context: this.context.slice(-lines),
+          ...(previous ? { previous } : {}),
+          signal,
+        })
+        [Symbol.asyncIterator]();
+      for (;;) {
+        const step = await stream.next();
+        if (step.done || signal.aborted) return;
+        const chunk = step.value;
         if (chunk.revises) {
           this.revise(chunk.revises.segmentId, chunk.text);
           continue;
@@ -383,33 +426,96 @@ export class Pipeline {
             cue.translation = null;
             cue.untranslated = 'same-language';
             this.emit(cue);
+            if (final) this.lastLine = null;
             return;
           }
         }
         cue.translation = { text: chunk.text, language: target, final: final && chunk.final };
         if (cue.translation.final) cue.untranslated = null;
         this.emit(cue);
-      }
-      if (final && cue.translation?.final) {
-        this.context.push({
-          source: text,
-          translation: cue.translation.text,
-          language: cue.source.language,
-        });
-        if (this.context.length > lines) this.context.shift();
+        if (cue.translation.final) {
+          this.context.push({
+            source: text,
+            translation: cue.translation.text,
+            language: cue.source.language,
+          });
+          if (this.context.length > lines) this.context.shift();
+          state.translatedAt = this.now();
+          this.lastLine = { state, source: text, language, revised: false };
+          // The line is done; a revision of the line before may follow without holding up
+          // the next line.
+          if (previous) {
+            handedOff = true;
+            this.followRevisions(stream, signal);
+          }
+          return;
+        }
       }
     } catch (err) {
       if (signal.aborted || !final) return;
+      this.lastLine = null;
       cue.untranslated = 'failed';
       this.emit(cue);
       this.options.onError(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      if (!handedOff) await stream?.return?.();
     }
   }
 
-  /** A better translation of an earlier line. */
+  /** Reads the rest of a finished line's stream for a revision of the line before. */
+  private followRevisions(stream: AsyncIterator<TranslationChunk>, signal: AbortSignal): void {
+    void (async () => {
+      try {
+        for (;;) {
+          const step = await stream.next();
+          if (step.done || signal.aborted) break;
+          if (step.value.revises) this.revise(step.value.revises.segmentId, step.value.text);
+        }
+      } catch {
+        // A revision is a bonus; the line itself is done.
+      } finally {
+        await stream.return?.().catch(() => {});
+      }
+    })();
+  }
+
+  /**
+   * The line before, for the translator to revise along with `text`: when it is still on screen,
+   * its sentence was left open, `text` ends it, and it wasn't revised yet (once per line).
+   */
+  private previousFor(text: string, language: LanguageTag): TranslationRequest['previous'] {
+    const last = this.lastLine;
+    if (!this.options.translator.info.revises || !last || last.revised) return undefined;
+    const { cue } = last.state;
+    if (!cue.translation?.final || cue.untranslated !== null) return undefined;
+    if (isSentenceEnd(last.source, { rule: 'either', language: last.language })) return undefined;
+    if (!isSentenceEnd(text, { rule: 'either', language })) return undefined;
+    if (!this.onScreen(last.state)) return undefined;
+    last.revised = true;
+    return {
+      segmentId: cue.id,
+      source: last.source,
+      translation: cue.translation.text,
+      language: last.language,
+    };
+  }
+
+  /**
+   * Whether a finished line's translation is likely still on screen: the overlay holds it for its
+   * reading time, and a little longer.
+   */
+  private onScreen(state: SegmentState): boolean {
+    const shown = state.translatedAt;
+    const text = state.cue.translation?.text;
+    if (shown === null || !text) return false;
+    return this.now() - shown < readingMs(text) + LINGER_MS;
+  }
+
+  /** A better translation of an earlier line, while it is on screen. */
   private revise(segmentId: string, text: string): void {
     const state = this.segments.get(segmentId);
-    if (!state?.cue.translation) return;
+    if (!state?.cue.translation || !this.onScreen(state)) return;
+    if (state.cue.translation.text === text) return;
     const before = state.cue.translation.text;
     state.cue.translation = { ...state.cue.translation, text, final: true };
     const ctx = this.context.find((c) => c.translation === before);

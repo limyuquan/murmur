@@ -338,6 +338,135 @@ describe('Pipeline with lines that mix languages', () => {
   });
 });
 
+describe('Pipeline revisions', () => {
+  /**
+   * A translator that revises: each line's translation is `<text> (en)`; a request with the line
+   * before gets `revision` (or nothing, when null) as that line's new translation.
+   */
+  function revisingTranslator(requests: TranslationRequest[], revision: string | null) {
+    const inner = new PassthroughTranslationEngine();
+    const translator: TranslationEngine = {
+      info: { ...inner.info, revises: true },
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      async *translate(req): AsyncIterable<TranslationChunk> {
+        requests.push(req);
+        const text = req.source.kind === 'text' ? req.source.text : '';
+        yield { text: `${text} (en)`, final: true };
+        if (req.previous && revision !== null) {
+          yield { text: revision, final: true, revises: { segmentId: req.previous.segmentId } };
+        }
+      },
+    };
+    return translator;
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('revises the line before when the new one finishes its sentence', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    const { pipeline, cues } = setup({
+      asr,
+      translator: revisingTranslator(requests, 'Yesterday I went to'),
+    });
+    say('Hier je suis allé au', 'fr');
+    say('magasin avec ma sœur.', 'fr');
+    await settle();
+    say('Bonjour', 'fr');
+    await pipeline.close();
+    expect(requests[0]?.previous).toBeUndefined();
+    expect(requests[1]?.previous).toEqual({
+      segmentId: 's1',
+      source: 'Hier je suis allé au',
+      translation: 'Hier je suis allé au (en)',
+      language: 'fr',
+    });
+    const [first, second] = latest(cues);
+    expect(first?.translation).toEqual({
+      text: 'Yesterday I went to',
+      language: 'en',
+      final: true,
+    });
+    expect(second?.translation?.text).toBe('magasin avec ma sœur. (en)');
+    // Later lines have the revised translation as context.
+    expect(requests[2]?.context[0]?.translation).toBe('Yesterday I went to');
+  });
+
+  it('leaves a line alone that ended its own sentence, or a sentence still going on', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    const { pipeline } = setup({ asr, translator: revisingTranslator(requests, 'Revised') });
+    say('Bonjour à tous.', 'fr');
+    say('Aujourd’hui on va', 'fr');
+    say('cuisiner une', 'fr');
+    await pipeline.close();
+    expect(requests.map((r) => r.previous)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('only revises a line still on screen, and not a line in the target language', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    let now = 0;
+    const { pipeline } = setup({
+      asr,
+      translator: revisingTranslator(requests, 'Revised'),
+      now: () => now,
+    });
+    say('Hier je suis allé au', 'fr');
+    await settle();
+    now += 60_000;
+    say('magasin.', 'fr');
+    await settle();
+    say('I went to the', 'en');
+    say('magasin.', 'fr');
+    await pipeline.close();
+    expect(requests.map((r) => r.previous)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('keeps the translation when the revision says the same, or comes too late', async () => {
+    const requests: TranslationRequest[] = [];
+    const { asr, say } = handAsr();
+    const { pipeline, cues } = setup({
+      asr,
+      translator: revisingTranslator(requests, 'Hier je suis allé au (en)'),
+    });
+    say('Hier je suis allé au', 'fr');
+    say('magasin.', 'fr');
+    await settle();
+    await pipeline.close();
+    expect(cues.filter((c) => c.id === 's1' && c.translation?.final)).toHaveLength(1);
+  });
+
+  it('doesn’t hold up the next line while a revision is under way', async () => {
+    const order: string[] = [];
+    const { asr, say } = handAsr();
+    const inner = new PassthroughTranslationEngine();
+    const translator: TranslationEngine = {
+      info: { ...inner.info, revises: true },
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      async *translate(req): AsyncIterable<TranslationChunk> {
+        const text = req.source.kind === 'text' ? req.source.text : '';
+        order.push(text);
+        yield { text: `${text} (en)`, final: true };
+        if (req.previous) {
+          // A revision that never comes, until the session closes.
+          await new Promise((resolve) => req.signal.addEventListener('abort', resolve));
+        }
+      },
+    };
+    const { pipeline, cues } = setup({ asr, translator });
+    say('Hier je suis allé au', 'fr');
+    say('magasin.', 'fr');
+    say('Et voilà.', 'fr');
+    await pipeline.close();
+    expect(order).toEqual(['Hier je suis allé au', 'magasin.', 'Et voilà.']);
+    expect(latest(cues).every((c) => c.translation?.final)).toBe(true);
+  });
+});
+
 describe('Pipeline with the sentence segmenter', () => {
   /**
    * A segment engine whose words end a sentence at 2.0 s ("Hello there.") and go on after that

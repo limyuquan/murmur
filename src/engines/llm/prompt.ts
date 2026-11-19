@@ -12,6 +12,8 @@
  * - the languages the source may mix are the session's (spoken languages, the line's, the earlier
  *   lines' and the target), not a fixed list; with fewer than two known, just "languages";
  * - the sentence on Korean address terms is there only when Korean is among them;
+ * - a revision of a line already translated has the line that finishes its sentence after it
+ *   (`NEXT`, for context only);
  * - a line that mixes languages (heard as the target language, partly in another) names them all
  *   as its language: "CURRENT (Korean and English, auto-detected)", so the model translates the
  *   other parts and keeps the target-language ones (the system message says to).
@@ -36,7 +38,8 @@ export const USER_TEMPLATE =
   '{{#glossary}}GLOSSARY: {{glossary}}\n' +
   '{{/glossary}}{{#context}}CONTEXT (earlier lines, already translated; do not translate again):\n' +
   '{{context}}\n' +
-  '{{/context}}{{#source_lang}}CURRENT ({{source_lang}}, auto-detected): {{/source_lang}}{{^source_lang}}CURRENT: {{/source_lang}}{{text}}\n';
+  '{{/context}}{{#source_lang}}CURRENT ({{source_lang}}, auto-detected): {{/source_lang}}{{^source_lang}}CURRENT: {{/source_lang}}{{text}}\n' +
+  '{{#next}}NEXT (the line right after CURRENT, which finishes its sentence; only for context, do not translate it): {{next}}\n{{/next}}';
 
 type Vars = Record<string, string | boolean | undefined>;
 
@@ -135,6 +138,11 @@ export interface PromptInput {
   spokenLanguages?: readonly LanguageTag[];
   /** The languages the line mixes, when it mixes the target language with others. */
   mixed?: readonly LanguageTag[];
+  /**
+   * The line right after this one, which finishes its sentence: for a revision of a line already
+   * translated, now that the rest of the sentence is known.
+   */
+  next?: string;
   flags?: PromptFlags;
   /** The kind of video, when known ("cooking shows, interviews"). */
   domain?: string;
@@ -180,6 +188,7 @@ export function buildPrompt(input: PromptInput): Prompt {
     languages: languages.length >= 2 ? listNames(languages.map(languageName)) : 'languages',
     korean: languages.includes('ko'),
     domain: input.domain ?? '',
+    next: input.next ?? '',
     brief: flags.brief,
     noisy: flags.noisy,
     honorifics: flags.honorifics,

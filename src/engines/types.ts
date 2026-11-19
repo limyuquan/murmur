@@ -310,6 +310,18 @@ export interface TranslationRequest {
   context: readonly { source: string; translation: string; language?: LanguageTag }[];
   /** Fixed renderings to keep (names, terms), for engines with `usesGlossary`. */
   glossary?: readonly { source: string; target: string }[];
+  /**
+   * For engines with `revises`, on a finished line only: the line just before this one, whose
+   * sentence this line finishes, while its translation is still on screen. The engine may send a
+   * better translation of it (`TranslationChunk.revises`) after this line's own final chunk; the
+   * request's consumer keeps reading for it without holding up later lines.
+   */
+  previous?: {
+    segmentId: string;
+    source: string;
+    translation: string;
+    language?: LanguageTag;
+  };
   signal: AbortSignal;
 }
 
@@ -318,9 +330,10 @@ export interface TranslationChunk {
   text: string;
   final: boolean;
   /**
-   * Engines with `revises` only: a better translation of an earlier line, found while translating
-   * this one (an LLM rereading the previous line with the next one in view). `text` replaces that
-   * line's final translation; `final` is ignored. Absent for this request's own translation.
+   * Engines with `revises` only: a better translation of an earlier line (`previous`), found
+   * after translating this one (an LLM rereading the previous line with this one in view). `text`
+   * replaces that line's final translation; `final` is ignored. Comes after this request's own
+   * final chunk; absent on its own chunks.
    */
   revises?: { segmentId: string };
   /** The language the engine found the source to be in, when it checked (may differ from the request's). */

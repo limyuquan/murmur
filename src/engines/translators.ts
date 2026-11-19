@@ -10,7 +10,8 @@
  *   the backup translates every later line.
  *
  * Previews of unfinished lines get neither the budget nor the backup: a later preview or the
- * finished line replaces them anyway.
+ * finished line replaces them anyway. Nor does a revision of the line before, which a finished
+ * line's stream may carry after its own final chunk.
  */
 import { isUnavailable } from './errors';
 import { type GlossaryEntry, glossaryHits } from './glossary';
@@ -109,18 +110,30 @@ export class LineFallbackTranslator implements TranslationEngine {
     const timeout = setTimeout(() => timer.abort(new Error('too slow')), budget);
     let reason: string;
     let permanent = false;
+    let done = false;
     try {
       for await (const chunk of this.primary.translate({ ...request, signal })) {
         if (signal.aborted) break;
+        if (done) {
+          // After the line's own final, only revisions of the line before.
+          if (chunk.revises) yield chunk;
+          continue;
+        }
         yield chunk;
-        if (chunk.final) return;
+        if (chunk.final && !chunk.revises) {
+          // The line is done: no budget, nor backup, for what follows (a revision).
+          done = true;
+          clearTimeout(timeout);
+          if (!request.previous) return;
+        }
       }
+      if (done) return;
       if (request.signal.aborted) return;
       reason = timer.signal.aborted
         ? `took longer than ${formatSeconds(budget)}`
         : 'gave no answer';
     } catch (err) {
-      if (request.signal.aborted) return;
+      if (request.signal.aborted || done) return;
       if (timer.signal.aborted) {
         reason = `took longer than ${formatSeconds(budget)}`;
       } else {

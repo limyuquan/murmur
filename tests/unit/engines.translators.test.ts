@@ -170,6 +170,34 @@ describe('line fallback', () => {
     ]);
   });
 
+  it('passes a revision of the line before after the line, with no budget nor backup', async () => {
+    vi.useFakeTimers();
+    const primary = scripted(INFO, async function* (r) {
+      yield { text: 'Hello', final: true };
+      // The revision takes longer than the line's budget, then fails: neither matters.
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      yield { text: 'Better', final: true, revises: { segmentId: 's0' } };
+      if (r.segmentId === 's2') throw new Error('worker crashed');
+    });
+    const events: unknown[] = [];
+    const t = new LineFallbackTranslator(primary, {
+      backup: async () => backup(),
+      budgetMs: 3000,
+      onFallback: (e) => events.push(e),
+    });
+    const previous = { segmentId: 's0', source: 'Je suis', translation: 'I am' };
+    const first = collect(t.translate(request('allé.', { previous })));
+    const second = collect(t.translate(request('allé.', { segmentId: 's2', previous })));
+    await vi.advanceTimersByTimeAsync(5000);
+    const revised = [
+      { text: 'Hello', final: true },
+      { text: 'Better', final: true, revises: { segmentId: 's0' } },
+    ];
+    expect(await first).toEqual(revised);
+    expect(await second).toEqual(revised);
+    expect(events).toEqual([]);
+  });
+
   it('leaves previews and aborted lines alone', async () => {
     const primary = scripted(
       INFO,

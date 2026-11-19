@@ -122,3 +122,38 @@ export function checkOutput(text: string, input: CheckInput): OutputCheck {
   }
   return { ok: true };
 }
+
+/** How much two texts differ: the edit distance of their letters and digits, over the longer. */
+export function changeShare(a: string, b: string): number {
+  const x = [...normalize(a)];
+  const y = [...normalize(b)];
+  if (x.length === 0 && y.length === 0) return 0;
+  let row = Array.from({ length: y.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= x.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= y.length; j++) {
+      next[j] = Math.min(
+        (row[j] as number) + 1,
+        (next[j - 1] as number) + 1,
+        (row[j - 1] as number) + (x[i - 1] === y[j - 1] ? 0 : 1),
+      );
+    }
+    row = next;
+  }
+  return (row[y.length] as number) / Math.max(x.length, y.length);
+}
+
+/** Least change (`changeShare`) for a revision to replace a line on screen. */
+export const REVISION_MIN_CHANGE = 0.2;
+
+/**
+ * Whether `revised`, a new translation of a line already shown as `before`, is worth showing: it
+ * changes the line materially, and doesn't take in the next line's translation (`next`) too.
+ */
+export function worthRevising(revised: string, before: string, next: string): boolean {
+  const out = normalize(revised);
+  if (out === '' || changeShare(revised, before) < REVISION_MIN_CHANGE) return false;
+  const following = normalize(next);
+  if (following.length >= 6 && out.includes(following)) return false;
+  return out.length <= normalize(before).length * 2 + 16;
+}

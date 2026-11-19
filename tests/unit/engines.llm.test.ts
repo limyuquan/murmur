@@ -8,8 +8,24 @@ import {
 } from '@/engines/llm/engine';
 import { GEMMA_E2B_ID, GEMMA_E2B_INFO } from '@/engines/llm/info';
 import type { FromWorker, ToWorker } from '@/engines/llm/messages';
-import { checkOutput, cleanOutput } from '@/engines/llm/output';
+import { changeShare, checkOutput, cleanOutput, worthRevising } from '@/engines/llm/output';
 import type { TranslationChunk, TranslationRequest } from '@/engines/types';
+
+describe('LLM revisions', () => {
+  it('counts how much a text changed, by its letters and digits', () => {
+    expect(changeShare('Yesterday I went.', 'yesterday, I went')).toBe(0);
+    expect(changeShare('abcd', 'abce')).toBe(0.25);
+    expect(changeShare('', '')).toBe(0);
+  });
+
+  it('shows a revision that changes the line, alone', () => {
+    expect(worthRevising('Yesterday I went', 'Yesterday I am gone', 'to the shop.')).toBe(true);
+    expect(worthRevising('Yesterday, I went.', 'Yesterday I went', 'to the shop.')).toBe(false);
+    expect(worthRevising('Yesterday I went to the shop.', 'I went', 'to the shop.')).toBe(false);
+    expect(worthRevising('', 'I went', 'to the shop.')).toBe(false);
+    expect(worthRevising('a'.repeat(60), 'I went', 'there')).toBe(false);
+  });
+});
 
 describe('LLM output', () => {
   const labels = ['English'];
@@ -287,6 +303,80 @@ describe('LLM translation engine', () => {
     expect(worker.generations[0]?.user).toBe(
       'CONTEXT (earlier lines, already translated; do not translate again):\n[ko] 150 명이 왔어 => 150 people came\nCURRENT (Korean, auto-detected): 85 점으로 15 위',
     );
+  });
+
+  it('revises the line before with this one after it, once this line is done', async () => {
+    worker.auto = false;
+    worker.answers = ['to the shop with my sister.', 'Yesterday I went'];
+    const previous = {
+      segmentId: 's0',
+      source: 'Hier je suis allé',
+      translation: 'Yesterday I am gone',
+      language: 'fr',
+    };
+    const records: GenerationRecord[] = [];
+    engine.onGeneration = (r) => records.push(r);
+    const out = collect(
+      engine.translate(
+        request('au magasin avec ma sœur.', {
+          context: [
+            { source: 'Bonjour', translation: 'Hello there', language: 'fr' },
+            { source: previous.source, translation: previous.translation, language: 'fr' },
+          ],
+          previous,
+        }),
+      ),
+    );
+    await tick();
+    worker.finish();
+    await tick();
+    worker.finish();
+    expect((await out).filter((c) => c.final)).toEqual([
+      { text: 'to the shop with my sister.', final: true },
+      { text: 'Yesterday I went', final: true, revises: { segmentId: 's0' } },
+    ]);
+    const revision = worker.generations[1];
+    expect(revision?.user).toBe(
+      'CONTEXT (earlier lines, already translated; do not translate again):\n[fr] Bonjour => Hello there\nCURRENT (French, auto-detected): Hier je suis allé\nNEXT (the line right after CURRENT, which finishes its sentence; only for context, do not translate it): au magasin avec ma sœur.',
+    );
+    expect(records.map((r) => [r.segmentId, r.revision ?? false])).toEqual([
+      ['s1', false],
+      ['s0', true],
+    ]);
+  });
+
+  it('sends no revision that changes nothing, or that takes in the next line', async () => {
+    const previous = {
+      segmentId: 's0',
+      source: 'Hier je suis allé',
+      translation: 'Yesterday I went',
+    };
+    worker.answers = ['to the shop.', 'Yesterday, I went.'];
+    const finals = async () =>
+      (await collect(engine.translate(request('au magasin.', { previous })))).filter(
+        (c) => c.final,
+      );
+    expect(await finals()).toEqual([{ text: 'to the shop.', final: true }]);
+    worker.answers = ['to the shop.', 'Yesterday I went to the shop.'];
+    expect(await finals()).toEqual([{ text: 'to the shop.', final: true }]);
+  });
+
+  it('lets the next finished line go before a revision, which it stops', async () => {
+    worker.auto = false;
+    worker.answers = ['to the shop.', 'never sent', 'Thanks'];
+    const previous = { segmentId: 's0', source: 'Hier je suis allé', translation: 'I am gone' };
+    const first = collect(engine.translate(request('au magasin.', { previous })));
+    await tick();
+    worker.finish();
+    await tick();
+    // The revision runs; a finished line arrives.
+    const second = collect(engine.translate(request('Merci', { segmentId: 's2' })));
+    await tick();
+    expect(worker.sent.some((m) => m.type === 'cancel')).toBe(true);
+    await tick();
+    worker.finish();
+    expect((await first).filter((c) => c.final)).toEqual([{ text: 'to the shop.', final: true }]);
+    expect((await second).at(-1)).toEqual({ text: 'Thanks', final: true });
   });
 
   it('rejects an answer that repeats the context', async () => {

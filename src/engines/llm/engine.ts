@@ -10,7 +10,11 @@
  *   languages. Every line is translated, whatever its language. Number words in the lines are
  *   given as digits (numbers.ts); the subtitle keeps what was said.
  * - The answer streams: a growing draft (`final: false`) as tokens come, then the cleaned final
- *   one. An answer that repeats an earlier line or runs away is rejected with `LlmOutputError`,
+ *   one.
+ * - Revisions: given the line before (`request.previous`, whose sentence this line finishes),
+ *   once this line's final is out the engine translates that line again with this one after it
+ *   (`NEXT`), queued like a preview so the next finished line goes first and stops it, and sends
+ *   the new translation (`revises`) when it changes the line materially (output.ts). An answer that repeats an earlier line or runs away is rejected with `LlmOutputError`,
  *   so the session can have another translator do that line (translators.ts).
  */
 import { isComplete } from '@/models/hub';
@@ -27,7 +31,7 @@ import type {
 import { LLM_SOURCES, type LlmEngineId, llmModelId, modelFile } from './info';
 import type { FromWorker, GenerationStats, ToWorker } from './messages';
 import { numeralsToDigits } from './numbers';
-import { checkOutput, cleanOutput } from './output';
+import { checkOutput, cleanOutput, worthRevising } from './output';
 import {
   buildPrompt,
   fitPrompt,
@@ -91,6 +95,8 @@ export interface GenerationRecord {
   text: string;
   /** Why the answer was rejected, if it was. */
   rejected?: string;
+  /** A revision of an earlier line (`segmentId`). */
+  revision?: boolean;
 }
 
 type JobEvent =
@@ -102,6 +108,8 @@ interface Job {
   id: number;
   segmentId: string;
   final: boolean;
+  /** Translates an earlier line again (queued like a preview). */
+  revision: boolean;
   prompt: Prompt;
   maxTokens: number;
   raw: string;
@@ -274,6 +282,7 @@ export class LlmTranslationEngine implements TranslationEngine {
     const labels = [languageName(request.target)];
     let draft = '';
     let draftAt = 0;
+    let own = '';
     try {
       for (;;) {
         const event = await this.next(job, request.signal);
@@ -300,21 +309,92 @@ export class LlmTranslationEngine implements TranslationEngine {
         });
         this.record(job, event, out, check.ok ? undefined : check.detail);
         if (!check.ok) throw new LlmOutputError(check.reason, check.detail);
+        own = out;
         yield { text: out, final: true };
-        return;
+        break;
       }
     } finally {
       request.signal.removeEventListener('abort', onAbort);
       // The consumer stopped early: stop the generation too.
       if (!job.settled) this.stop(job);
     }
+    const previous = request.previous;
+    if (!previous || !request.sourceFinal || request.signal.aborted) return;
+    const revised = await this.revise(request, previous, text, own);
+    if (revised !== null) {
+      yield { text: revised, final: true, revises: { segmentId: previous.segmentId } };
+    }
   }
 
-  private enqueue(segmentId: string, final: boolean, prompt: Prompt, maxTokens: number): Job {
+  /**
+   * `previous` translated again with `text` (the line that finishes its sentence) after it: the
+   * new translation when it is worth showing, else null. Never throws: a revision is a bonus.
+   */
+  private async revise(
+    request: TranslationRequest,
+    previous: NonNullable<TranslationRequest['previous']>,
+    text: string,
+    translation: string,
+  ): Promise<string | null> {
+    if (this.broken || !this.worker) return null;
+    const source = previous.source.trim();
+    // The earlier lines before it (the request's context ends with the previous line itself).
+    const context = request.context.filter(
+      (c) => !(c.source === previous.source && c.translation === previous.translation),
+    );
+    const maxTokens = maxOutputTokens(source);
+    const prompt = fitPrompt(
+      {
+        text: numeralsToDigits(source),
+        sourceLanguage: previous.language ?? null,
+        targetLanguage: request.target,
+        context: context.map((c) => ({ ...c, source: numeralsToDigits(c.source) })),
+        glossary: request.glossary ?? [],
+        spokenLanguages: this.session?.spokenLanguages ?? [],
+        next: numeralsToDigits(text),
+        ...(this.options.flags ? { flags: this.options.flags } : {}),
+      },
+      MAX_NUM_TOKENS - maxTokens - TEMPLATE_TOKENS,
+    );
+    const job = this.enqueue(previous.segmentId, false, prompt, maxTokens, true);
+    const onAbort = () => this.stop(job);
+    request.signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      for (;;) {
+        const event = await this.next(job, request.signal);
+        if (!event || event.type === 'error') return null;
+        if (event.type === 'token') continue;
+        if (event.cancelled) return null;
+        const out = cleanOutput(event.text, { labels: [languageName(request.target)] });
+        const decoded = Math.max(event.stats.outputTokens ?? 0, job.tokens);
+        const check = checkOutput(out, { source, context, hitLimit: decoded >= maxTokens });
+        const worth = check.ok && worthRevising(out, previous.translation, translation);
+        this.record(
+          job,
+          event,
+          out,
+          !check.ok ? check.detail : worth ? undefined : 'no material change',
+        );
+        return worth ? out : null;
+      }
+    } finally {
+      request.signal.removeEventListener('abort', onAbort);
+      if (!job.settled) this.stop(job);
+    }
+  }
+
+  private enqueue(
+    segmentId: string,
+    final: boolean,
+    prompt: Prompt,
+    maxTokens: number,
+    revision = false,
+  ): Job {
     const job: Job = {
       id: this.nextId++,
       segmentId,
       final,
+      revision,
       prompt,
       maxTokens,
       raw: '',
@@ -447,6 +527,7 @@ export class LlmTranslationEngine implements TranslationEngine {
       raw: event.text,
       text,
       ...(rejected ? { rejected } : {}),
+      ...(job.revision ? { revision: true } : {}),
     });
   }
 }
