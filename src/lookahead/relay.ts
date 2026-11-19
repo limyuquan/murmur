@@ -10,7 +10,7 @@
  * player has already buffered ahead, not just what it appends next. This stays in the page's
  * memory; nothing leaves it until the person turns subtitles on.
  */
-import { toBase64 } from './bytes';
+import { rangeBody, toBase64 } from './bytes';
 import { topLevelBoxes } from './fmp4';
 import type { TrackKind } from './kind';
 import {
@@ -218,19 +218,14 @@ export class Relay implements TeeRelayApi {
     start: number,
     end: number,
   ): Promise<{ bytes: Uint8Array; total: number | null }> {
+    // Cookies for the page's own origin only (as a media element's request would send them).
     const response = await this.fetcher(url, {
       headers: { Range: `bytes=${start}-${end - 1}` },
-      credentials: 'include',
+      credentials: 'same-origin',
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const total = Number(/\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1]);
-    let bytes = new Uint8Array(await response.arrayBuffer());
-    // A server that ignores Range sends the whole file.
-    if (response.status === 200) bytes = bytes.slice(start, end);
-    return {
-      bytes,
-      total: Number.isFinite(total) ? total : response.status === 200 ? bytes.length : null,
-    };
+    // Streamed, and no further than needed when the server ignores Range: this runs in the
+    // page's renderer.
+    return rangeBody(response, start, end);
   }
 
   private forward(event: Exclude<TeeEvent, { t: 'append' | 'buffered' }>): void {

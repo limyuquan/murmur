@@ -67,8 +67,12 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   (a language switch, a re-fetch); behind it, only the audio goes.
 - `progressive.ts`: `<video src="….mp4">` without MSE. Reads the index (`moov`, at the start or
   the end) with a few small range reads, then only the byte ranges holding audio near the
-  playhead. A file on the page's origin is read through the page (its cookies); anything else by
-  the offscreen document, under the person's site permissions (plain CORS without them).
+  playhead. Reads go through the page first (its cookies for its own origin; another origin's
+  file only where its server lets the page read it, like the player's own requests); else the
+  offscreen document reads it, under the person's site permissions (plain CORS without them),
+  and that request's `Origin` names the extension. A server that ignores `Range` is streamed no
+  further than needed (and not at all for a range far into the file). A failed read is tried
+  again (2 s, then doubling, 5 times) before the source gives up.
 - `runner.ts` + `scheduler.ts` run the same `Pipeline` (Silero VAD → segmenter → ASR → MT) over
   the decoded audio, in batch mode (finals only, no catching up). Rules: the stretch at the
   playhead first, never behind it, at most `HORIZON_S` (90 s) ahead, at most `IN_FLIGHT_S` pushed

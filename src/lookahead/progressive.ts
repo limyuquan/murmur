@@ -6,11 +6,13 @@
  * (neighbouring frames are read together, interleaved video between them included when the gap is
  * small).
  *
- * Reading goes through a `RangeReader`: the page's own access for a file on the page's origin
- * (cookies included), else the offscreen document's, where the browser applies the person's site
- * permissions (CORS without them).
+ * Reading goes through a `RangeReader`: the page's own access (cookies included for a file on the
+ * page's origin; a file from another origin only where its server allows the page to read it),
+ * else the offscreen document's, where the browser applies the person's site permissions (CORS
+ * without them). A read that fails is tried again later, a few times, before the source gives up.
  */
 
+import { rangeBody } from './bytes';
 import { type IndexedSample, type MovieAudio, parseMovie, topLevelBoxes } from './fmp4';
 import { DISCONTINUITY_S, type MirrorSink } from './mirror';
 import { HORIZON_S } from './scheduler';
@@ -29,14 +31,33 @@ export function fetchReader(
   return {
     async read(start, end) {
       const response = await fetcher(url, { headers: { Range: `bytes=${start}-${end - 1}` } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const total = Number(/\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1]);
-      let bytes = new Uint8Array(await response.arrayBuffer());
-      if (response.status === 200) bytes = bytes.slice(start, end);
-      return { bytes, total: Number.isFinite(total) ? total : null };
+      return rangeBody(response, start, end);
     },
   };
 }
+
+/**
+ * Reads with `first`; once a read fails there, with `second` from then on (a cross-origin file is
+ * read through the page, like the player's own requests, unless its server refuses that).
+ */
+export function fallbackReader(first: RangeReader, second: RangeReader): RangeReader {
+  let current = first;
+  return {
+    async read(start, end) {
+      if (current === second) return second.read(start, end);
+      try {
+        return await first.read(start, end);
+      } catch {
+        current = second;
+        return second.read(start, end);
+      }
+    },
+  };
+}
+
+/** Failed reads in a row before a source gives up; the waits between them double from this, ms. */
+const MAX_RETRIES = 5;
+const RETRY_MS = 2000;
 
 /** Frames read together when the bytes between them are fewer than this. */
 const MERGE_GAP = 64 * 1024;
@@ -52,17 +73,22 @@ export class ProgressiveSource {
   private readonly done = new SpanSet(DISCONTINUITY_S);
   private busy = false;
   private lastEnd: number | null = null;
+  /** Failed reads in a row, and when the next try may go. */
+  private retries = 0;
+  private retryAt = 0;
+  /** Why the source gave up for good (no audio track, a broken index, reads failing on). */
   failed: string | null = null;
 
   constructor(
     private readonly reader: RangeReader,
     private readonly sink: MirrorSink,
     private readonly horizon = HORIZON_S,
+    private readonly now: () => number = Date.now,
   ) {}
 
   /** Reads and decodes what's missing from the playhead to the horizon (one step at a time). */
   async ensure(playhead: number): Promise<void> {
-    if (this.busy || this.failed) return;
+    if (this.busy || this.failed || this.now() < this.retryAt) return;
     this.busy = true;
     try {
       const movie = await this.index();
@@ -91,8 +117,15 @@ export class ProgressiveSource {
       const first = samples[0] as IndexedSample;
       const last = samples.at(-1) as IndexedSample;
       this.done.add(first.time, last.time + last.duration);
+      this.retries = 0;
     } catch (err) {
-      this.failed = err instanceof Error ? err.message : String(err);
+      const message = err instanceof Error ? err.message : String(err);
+      // A broken index won't mend; a read (a 503, a timeout) may work later.
+      if ((err instanceof Error && err.name === 'DemuxError') || ++this.retries > MAX_RETRIES) {
+        this.failed = message;
+      } else {
+        this.retryAt = this.now() + RETRY_MS * 2 ** (this.retries - 1);
+      }
     } finally {
       this.busy = false;
     }
@@ -104,11 +137,18 @@ export class ProgressiveSource {
   }
 
   private index(): Promise<MovieAudio | null> {
-    this.movie ??= this.readIndex().then((movie) => {
-      if (!movie) this.failed = 'no audio track';
-      else this.sink.config(movie.config);
-      return movie;
-    });
+    this.movie ??= this.readIndex().then(
+      (movie) => {
+        if (!movie) this.failed = 'no audio track';
+        else this.sink.config(movie.config);
+        return movie;
+      },
+      (err: unknown) => {
+        // Read again next time.
+        this.movie = null;
+        throw err;
+      },
+    );
     return this.movie;
   }
 

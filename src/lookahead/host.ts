@@ -16,7 +16,7 @@ import { LagCalibrator, type LagEstimate } from './calibrate';
 import { AudioRuns, type CreateDecoder, webCodecsDecoder } from './decode';
 import { SourceBufferMirror } from './mirror';
 import { BLOCK_BYTES, PcmTimeline, toSample } from './pcm';
-import { fetchReader, ProgressiveSource, type RangeReader } from './progressive';
+import { fallbackReader, fetchReader, ProgressiveSource, type RangeReader } from './progressive';
 import type { PlayheadReport, TeeWire } from './protocol';
 import { LookaheadRunner, type PipelineHooks } from './runner';
 import { playheadAt } from './scheduler';
@@ -365,9 +365,12 @@ export class LookaheadHost {
         (start, samples) => this.write(timeline, start, samples),
         this.deps.createDecoder ?? webCodecsDecoder,
       );
+      // Through the page first, like the player's own requests (another origin's server may not
+      // let the page read it: then the offscreen document reads it).
+      const page = this.pageReader(port, state, url);
       const reader = sameOrigin(url, state.frameUrl)
-        ? this.pageReader(port, state, url)
-        : fetchReader(url, this.deps.fetch);
+        ? page
+        : fallbackReader(page, fetchReader(url, this.deps.fetch));
       entry = { source: new ProgressiveSource(reader, runs), runs };
       this.progressive.set(timeline, entry);
     }

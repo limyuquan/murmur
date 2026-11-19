@@ -43,7 +43,10 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   still detected, so videos that switch language work.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
   network use is downloading a model when you click Download (from Hugging Face; a stopped
-  download picks up where it left off), and Chrome's own language packs.
+  download picks up where it left off), and Chrome's own language packs. With subtitles ahead of
+  time on, a video played straight from a file (no streaming player) is read ahead from the
+  same server the video comes from, as the player would; a server on another site that doesn't
+  let the page read it is read by Murmur itself, which that server can see.
 
 <a id="install"></a>**Install** (not on the Chrome Web Store)
 
@@ -118,7 +121,9 @@ setting it up for someone. Run commands from the repo root and keep every browse
   local `wasmPaths`; LiteRT-LM's WebAssembly is copied to `litert/` at build time and the LLM
   worker names it). Model weights downloaded at runtime are data and are fine, but only after
   the user agrees to the download.
-- **No network otherwise.** No telemetry, no analytics, no calls home.
+- **No network otherwise.** No telemetry, no analytics, no calls home. The one exception is
+  lookahead's reads of a progressive video file (`src/lookahead/progressive.ts`): through the page
+  first, else from the offscreen document (its `Origin` is the extension's).
 - **Plain TypeScript in pages.** `src/overlay/` runs inside other people's pages: no React, no
   Tailwind, all styles inside the closed shadow root.
 - **Generic names.** Use neutral examples in code, tests and docs (`example.com`, `fr` → `en`).

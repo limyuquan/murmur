@@ -71,3 +71,54 @@ export function fromBase64(b64: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+
+/** A server that ignores `Range` is read through no further than this before the range starts. */
+export const MAX_SKIP_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Bytes `[start, end)` of a response to a Range request, and the file's size when the server says.
+ * A 206 is the range itself. A 200 (the server ignored Range) is streamed, and cancelled once
+ * `end` is reached: never the whole file, and not at all when the range starts far into it.
+ */
+export async function rangeBody(
+  response: Response,
+  start: number,
+  end: number,
+): Promise<{ bytes: Uint8Array; total: number | null }> {
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const fromRange = Number(/\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1]);
+  const length = Number(response.headers.get('content-length') ?? Number.NaN);
+  const whole = response.status === 200;
+  // A 200 is the whole file: its length is the file's size (before any slicing).
+  const total = Number.isFinite(fromRange)
+    ? fromRange
+    : whole && Number.isFinite(length) && length > 0
+      ? length
+      : null;
+  const skip = whole ? start : 0;
+  if (skip > MAX_SKIP_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error('The server ignores byte ranges.');
+  }
+  const want = end - start;
+  const out = new Uint8Array(want);
+  let got = 0;
+  let seen = 0;
+  const reader = response.body?.getReader();
+  if (!reader) return { bytes: out.subarray(0, 0), total };
+  try {
+    while (got < want) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      const from = Math.max(0, skip - seen);
+      seen += value.length;
+      if (from >= value.length) continue;
+      const piece = value.subarray(from, from + (want - got));
+      out.set(piece, got);
+      got += piece.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return { bytes: out.subarray(0, got), total };
+}
