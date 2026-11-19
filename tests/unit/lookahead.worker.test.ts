@@ -251,6 +251,12 @@ describe('sites', () => {
     expect(BILIBILI.contentKey(loc('/video/BV1xx411c7mD', '?p=3&t=10'))).toBe(
       'bilibili:BV1xx411c7mD:p3',
     );
+    expect(BILIBILI.contentKey(loc('/en/video/BV1xx411c7mD', '?trackid=x'))).toBe(
+      'bilibili:BV1xx411c7mD:p1',
+    );
+    expect(BILIBILI.contentKey(loc('/list/123', '?bvid=BV1xx411c7mD&p=2'))).toBe(
+      'bilibili:BV1xx411c7mD:p2',
+    );
     expect(BILIBILI.contentKey(loc('/bangumi/play/ep123456'))).toBe('bilibili:ep123456');
     expect(BILIBILI.contentKey(loc('/'))).toBeNull();
   });

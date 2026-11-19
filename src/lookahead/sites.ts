@@ -64,13 +64,21 @@ export const TWITCH: LookaheadSite = {
   workers: true,
 };
 
-/** Bilibili: DASH (AAC in fMP4) on the main thread. A video's parts (`?p=`) are separate. */
+/**
+ * Bilibili: DASH (AAC in fMP4) on the main thread. A video's parts (`?p=`) are separate; the path
+ * may start with a locale (`/en/video/…`).
+ */
 export const BILIBILI: LookaheadSite = {
   hosts: ['bilibili.com', 'm.bilibili.com'],
   contentKey(location) {
-    const video = /^\/video\/(BV[0-9A-Za-z]{10}|av\d{1,20})(?:\/|$)/i.exec(location.pathname)?.[1];
+    const query = new URLSearchParams(location.search);
+    // `/video/<id>`, also under a locale (`/en/video/…`); a list plays `?bvid=`.
+    const video =
+      /^\/(?:[a-z]{2}(?:-[a-z]{2,4})?\/)?video\/(BV[0-9A-Za-z]{10}|av\d{1,20})(?:\/|$)/i.exec(
+        location.pathname,
+      )?.[1] ?? /^BV[0-9A-Za-z]{10}$/.exec(query.get('bvid') ?? '')?.[0];
     if (video) {
-      const part = Number(new URLSearchParams(location.search).get('p') ?? '1');
+      const part = Number(query.get('p') ?? '1');
       return `bilibili:${video}:p${Number.isInteger(part) && part > 0 ? part : 1}`;
     }
     const episode = /^\/bangumi\/play\/((?:ep|ss)\d{1,20})(?:\/|$)/.exec(location.pathname)?.[1];
