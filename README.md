@@ -159,7 +159,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/pipeline/` | VAD hook, segmenter, orchestration (ASR → translation → cues), per-segment language |
 | `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
-| `src/messaging/` | Every message type between contexts (`protocol.ts`), popup → SW client |
+| `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
 | `src/models/` | Downloadable models: catalog per profile and device, download manager (runs in the SW), Cache API store (`store.ts`) and the reader model workers use (`hub.ts`) |
 | `src/entrypoints/popup/`, `options/`, `welcome/` | React + Tailwind extension pages (welcome opens on install) |
@@ -176,7 +176,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    offscreen document a `start` command with the session config.
 3. The offscreen document opens the tab audio with `getUserMedia`, plays it back (capturing mutes
    the tab), and runs it through the AudioWorklet: downmix, windowed-sinc resample to 16 kHz mono,
-   20 ms frames stamped with the epoch time they are heard.
+   20 ms frames stamped with the epoch time they are heard. It answers `start` once the capture is
+   open, then loads the engines, reporting progress and any failure (with its code, pack buttons
+   or missing models) as `session-status` events, so a stop never waits for a load.
 4. The segmenter cuts speech segments (pre-roll, hangover, max length). The ASR session streams
    partial and final results, each with its own language. Finals are translated in order with
    recent lines as context; a segment already in the target language isn't translated.
@@ -185,7 +187,12 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    two rows per line, growing text filled so it never jumps, finished text balanced or paged and
    held for a reading time. The offscreen document also reports what the session is doing
    (`SessionActivity`) to the popup and a short status to the overlay's chip.
-6. Stop closes the offscreen document; the overlay's port disconnects and it removes itself.
+6. Stop closes the offscreen document; the overlay's port disconnects and it removes itself. A
+   stop (or a start in another tab) cuts short a start under way, and status writes are checked
+   against the session id, so a late report can't bring a stopped session back.
+7. A navigation in the tab drops the overlay; the service worker puts it back when the page has
+   loaded. If it can't (no access to another site without a click), or another site has no
+   video, the session stops with code `navigated`.
 
 ### 6. Adding an engine
 
@@ -199,13 +206,17 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    An engine that only finds out at load that it can't run here throws `EngineUnavailableError`
    (`src/engines/errors.ts`); the session then tries its entry in `RUNTIME_FALLBACKS`.
 5. List what it downloads in `info.models`: id, label, size and the exact files (`source`: a
-   Hugging Face repo at a pinned commit, with each file's byte size), one entry per `backend`
-   when the weights differ by backend. The options page, welcome page and popup show and manage
-   those; the service worker downloads them into the Cache API (`src/models/store.ts`) only when
-   the person clicks Download. `load()` must never download: read the files with
+   Hugging Face repo at a pinned commit, with each file's byte size and its hash on the Hub,
+   `sha256:` for Git LFS files and `git-sha1:` for the others, checked after download), one entry
+   per `backend` when the weights differ by backend. The options page, welcome page and popup show
+   and manage those; the service worker downloads them into the Cache API (`src/models/store.ts`)
+   only when the person clicks Download. `load()` must never download: read the files with
    `modelFileCache(source)` / `readFile` (`src/models/hub.ts`) and throw
    `ModelError(message, ids, true)` when they aren't there.
 6. Load progress goes through `LoadOptions.onProgress`; the popup and the overlay's chip show it.
+   Honour `LoadOptions.signal`: a stop aborts it, and any wait (downloads, Chrome packs) should end
+   with it. A part of the engine that stops for good while running reports an
+   `EngineUnavailableError` to `onError`; the popup lists it.
 7. Report failures with the errors in `src/engines/errors.ts`: `ModelError` (code `model`),
    `CompanionError` (`companion`), `EngineActionRequiredError` (`setup`, Chrome packs),
    `UnsupportedLanguageError` (a language it can't handle at all). Keep `SessionActivity` honest:
