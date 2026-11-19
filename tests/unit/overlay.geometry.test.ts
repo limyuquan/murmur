@@ -7,6 +7,7 @@ import {
   rectChanged,
 } from '@/overlay/geometry';
 import { pickBest, scoreVideo } from '@/overlay/pickVideo';
+import { adapterFor, liftToClear } from '@/overlay/sites';
 
 const box = { left: 100, top: 50, width: 800, height: 600 };
 const wide = { width: 1920, height: 1080 };
@@ -73,6 +74,7 @@ describe('captionLayout', () => {
     const picture = { left: 100, top: 125, width: 800, height: 450 };
     expect(captionLayout(picture, viewport, { fontScale: 1 })).toEqual({
       box: picture,
+      picture,
       fontPx: 20,
       marginPx: 23,
     });
@@ -163,5 +165,38 @@ describe('picking the video', () => {
       ),
     ).toBe(0);
     expect(pickBest([], viewport)).toBe(-1);
+  });
+});
+
+describe('liftToClear', () => {
+  const subs = { top: 400, bottom: 460 };
+
+  it('moves subtitles above an obstacle that covers them, with a gap', () => {
+    expect(liftToClear(subs, [{ top: 440, bottom: 480 }], 8)).toBe(28);
+  });
+
+  it('ignores obstacles above the subtitles, or below with room to spare', () => {
+    expect(liftToClear(subs, [{ top: 100, bottom: 200 }], 8)).toBe(0);
+    expect(liftToClear(subs, [{ top: 500, bottom: 540 }], 8)).toBe(0);
+  });
+
+  it('clears the highest of several obstacles', () => {
+    const lift = liftToClear(
+      subs,
+      [
+        { top: 450, bottom: 480 },
+        { top: 420, bottom: 450 },
+      ],
+      0,
+    );
+    expect(lift).toBe(40);
+  });
+});
+
+describe('adapterFor', () => {
+  it('matches a host and its subdomains only', () => {
+    expect(adapterFor('www.youtube.com')?.player).toBeTruthy();
+    expect(adapterFor('example.com')).toBeNull();
+    expect(adapterFor('notyoutube.com')).toBeNull();
   });
 });

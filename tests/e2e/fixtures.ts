@@ -36,6 +36,8 @@ export interface EarshotHelpers {
   start(page: Page, source?: 'tab' | 'tone'): Promise<number>;
   stop(): Promise<void>;
   status(): Promise<SessionStatus>;
+  /** Dragged subtitle positions, per site. */
+  positions(): Promise<Record<string, { x: number; y: number }>>;
 }
 
 interface Fixtures {
@@ -109,6 +111,12 @@ export const test = base.extend<Fixtures>({
         return serviceWorker.evaluate(async () => {
           const s = await (globalThis as unknown as SwGlobal).chrome.storage.session.get('session');
           return (s.session ?? { state: 'idle' }) as SessionStatus;
+        });
+      },
+      async positions() {
+        return serviceWorker.evaluate(async () => {
+          const s = await (globalThis as unknown as SwGlobal).chrome.storage.local.get('positions');
+          return (s.positions ?? {}) as Record<string, { x: number; y: number }>;
         });
       },
     };

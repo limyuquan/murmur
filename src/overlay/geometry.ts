@@ -72,6 +72,8 @@ export function pictureRect(box: Rect, video: Size, fit: ObjectFit): Rect {
 export interface CaptionLayout {
   /** The overlay's box in viewport coordinates: the visible part of the picture. */
   box: Rect;
+  /** The whole picture, visible or not. */
+  picture: Rect;
   /** Font size of the main (translation) line, px. The original line is ~70% of it. */
   fontPx: number;
   /** Gap between the captions and the box's bottom (or top) edge, px. */
@@ -100,7 +102,7 @@ export function captionLayout(
   const base = picture.height * 0.045 * options.fontScale;
   const fontPx = Math.round(Math.min(64, Math.max(14, base)));
   const marginPx = Math.round(Math.max(8, Math.min(48, picture.height * 0.05)));
-  return { box, fontPx, marginPx };
+  return { box, picture, fontPx, marginPx };
 }
 
 /** True when two rects differ by more than `epsilon` px on any edge. */

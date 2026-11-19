@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Player fixture</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; background: #f4f4f4; }
+      main { padding: 24px; }
+      /* A player container with its own control bar, like most web players. */
+      .player { position: relative; width: 960px; height: 540px; background: #000; }
+      .player video { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .player:fullscreen { width: 100vw; height: 100vh; }
+      .controls {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 48px;
+        background: linear-gradient(transparent, rgb(0 0 0 / 0.6));
+      }
+      .small { width: 320px; height: 180px; }
+      .actions { margin-top: 12px; display: flex; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="player" id="player">
+        <video id="video" src="clip.webm" muted autoplay loop playsinline></video>
+        <div class="controls"></div>
+      </div>
+      <div class="actions">
+        <button id="fs-player" type="button" onclick="document.getElementById('player').requestFullscreen()">Player full screen</button>
+        <button id="fs-video" type="button" onclick="document.getElementById('video').requestFullscreen()">Video full screen</button>
+        <button id="small" type="button" onclick="document.getElementById('player').classList.toggle('small')">Small player</button>
+      </div>
+    </main>
+  </body>
+</html>

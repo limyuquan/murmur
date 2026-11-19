@@ -1,21 +1,42 @@
 /**
  * What the overlay shows, pure: cues in, caption blocks out.
  *
- * - The newest `maxCues` segments are shown, oldest on top.
- * - A segment stays while anything in it may still change, then for a reading time after it is
- *   done: max(minHoldMs, characters ÷ charsPerSecond), capped at maxHoldMs.
+ * - One block per speech segment, at most two blocks, newest at the bottom (roll-up). The older
+ *   block leaves when the two would need more than three translation rows, unless it hasn't been
+ *   on screen long enough to read; its original line goes first when space is short.
+ * - Each line is at most two rows (see linebreak.ts). Growing text fills rows greedily and shows
+ *   its last two, so words never move as more arrive. Finished text is balanced into two rows, or
+ *   paged, each page held for its reading time.
+ * - A segment stays while anything in it may still change, then for the reading time of what's
+ *   left to read, plus a short linger.
  * - Lines that may change are marked `final: false` (dimmed); `showPartials: false` hides them.
+ * - A line's language is tagged when it differs from the language mostly spoken lately.
  */
-import type { Cue } from '@/pipeline/types';
-import type { CaptionDisplay } from '@/settings/settings';
+import { primaryLanguage } from '@/pipeline/language';
+import type { Cue, CueText } from '@/pipeline/types';
+import type { CaptionDisplay, OriginalPlacement } from '@/settings/settings';
+import {
+  balancedLines,
+  type FitOptions,
+  MIN_DISPLAY_MS,
+  normalizeSpace,
+  paginate,
+  readingMs,
+  tailLines,
+} from './linebreak';
 
 export interface CaptionLine {
   /** `original`: what was said (smaller). `main`: the translation, or the original when it's
    * already in the target language or only originals are shown. */
   role: 'original' | 'main';
-  text: string;
+  /** Rows to draw, at most two. */
+  rows: string[];
   lang: string;
   final: boolean;
+  /** The language to mark this line with, or null. */
+  tag: string | null;
+  /** Bumped each time finished text is replaced by different finished text. */
+  revision: number;
 }
 
 export interface CaptionBlock {
@@ -23,66 +44,174 @@ export interface CaptionBlock {
   lines: CaptionLine[];
 }
 
-export interface CaptionOptions {
-  maxCues: number;
-  minHoldMs: number;
-  maxHoldMs: number;
-  charsPerSecond: number;
+/** How lines are fitted, per role, without the language (set per line). */
+export type RoleFit = Omit<FitOptions, 'lang'>;
+
+export interface ViewOptions {
+  display: CaptionDisplay;
+  showPartials: boolean;
+  originalPlacement: OriginalPlacement;
+  languageTags: boolean;
+  /** Draw the original line in `both` mode (off on small players). */
+  showOriginal: boolean;
+  fit: { main: RoleFit; original: RoleFit };
+  /** Changes whenever `fit` measures differently (font, size), so cached pages are redone. */
+  fitKey?: string;
 }
 
-export const DEFAULT_CAPTION_OPTIONS: CaptionOptions = {
-  maxCues: 2,
-  minHoldMs: 1500,
-  maxHoldMs: 8000,
-  charsPerSecond: 15,
+export interface CaptionOptions {
+  maxCues: number;
+  /** Translation rows the visible blocks may use together before the older one must go. */
+  maxMainRows: number;
+  /** Rows of any kind before the older block's original line is dropped. */
+  maxRows: number;
+}
+
+export const DEFAULT_CAPTION_OPTIONS: CaptionOptions = { maxCues: 2, maxMainRows: 3, maxRows: 4 };
+
+export const DEFAULT_VIEW: ViewOptions = {
+  display: 'both',
+  showPartials: true,
+  originalPlacement: 'above',
+  languageTags: true,
+  showOriginal: true,
+  fit: { main: { maxUnits: 42 }, original: { maxUnits: 42 } },
 };
+
+/** One text of a cue (source or translation) as tracked over time. */
+interface Track {
+  text: string;
+  lang: string;
+  final: boolean;
+  /** When the current text became final, or null while it may change. */
+  finalAt: number | null;
+  /** Last text shown as final, to notice revisions. */
+  lastFinal: string | null;
+  revision: number;
+}
 
 interface Entry {
   cue: Cue;
-  /** When the cue stopped changing, or null while it may still change. */
+  source: Track;
+  translation: Track | null;
+  /** When nothing in the cue could change any more, or null. */
   doneAt: number | null;
+  /** Pages of the main line for the last fit, with the reading time of each. */
+  pages: { key: string; pages: string[][]; times: number[] } | null;
 }
+
+/**
+ * Extra time a finished line stays when nothing replaces it. Under pressure (a newer block needs
+ * the rows) a line gives way as soon as its reading time is up.
+ */
+export const LINGER_MS = 800;
+
+/** Languages of recent finished lines, for the "mostly spoken" language. */
+const LANGUAGE_WINDOW = 12;
+const MIN_LINES_FOR_DOMINANT = 2;
 
 export class CaptionStore {
   private entries = new Map<string, Entry>();
+  private recentLanguages = new Map<string, { lang: string; weight: number }>();
+  private view: ViewOptions = DEFAULT_VIEW;
 
   constructor(private readonly options: CaptionOptions = DEFAULT_CAPTION_OPTIONS) {}
 
   apply(cue: Cue, now: number): void {
-    const done = isDone(cue);
     const prev = this.entries.get(cue.id);
-    this.entries.set(cue.id, { cue, doneAt: done ? (prev?.doneAt ?? now) : null });
+    const source = track(prev?.source ?? null, cue.source, now) as Track;
+    const translation = track(prev?.translation ?? null, cue.translation, now);
+    const done = isDone(cue);
+    this.entries.set(cue.id, {
+      cue,
+      source,
+      translation,
+      doneAt: done ? (prev?.doneAt ?? now) : null,
+      pages: prev?.pages ?? null,
+    });
+    if (cue.source.final && cue.source.text.trim()) {
+      const lang = primaryLanguage(cue.source.language);
+      if (lang && lang !== 'und') {
+        this.recentLanguages.delete(cue.id);
+        this.recentLanguages.set(cue.id, { lang, weight: cue.source.text.length });
+        while (this.recentLanguages.size > LANGUAGE_WINDOW) {
+          const oldest = this.recentLanguages.keys().next().value as string;
+          this.recentLanguages.delete(oldest);
+        }
+      }
+    }
   }
 
   reset(): void {
     this.entries.clear();
+    this.recentLanguages.clear();
+  }
+
+  /** The language most of the recent finished lines were in, or null while unclear. */
+  dominantLanguage(): string | null {
+    if (this.recentLanguages.size < MIN_LINES_FOR_DOMINANT) return null;
+    const totals = new Map<string, number>();
+    for (const { lang, weight } of this.recentLanguages.values()) {
+      totals.set(lang, (totals.get(lang) ?? 0) + weight);
+    }
+    let best: string | null = null;
+    let bestWeight = 0;
+    for (const [lang, weight] of totals) {
+      if (weight > bestWeight) {
+        best = lang;
+        bestWeight = weight;
+      }
+    }
+    return best;
   }
 
   /** Blocks to draw at `now`, oldest first. Also forgets cues that have expired. */
-  visible(now: number, display: CaptionDisplay, showPartials: boolean): CaptionBlock[] {
+  visible(now: number, view: ViewOptions = this.view): CaptionBlock[] {
+    this.view = view;
     for (const [id, e] of this.entries) {
-      if (e.doneAt !== null && now >= e.doneAt + this.holdMs(e.cue)) this.entries.delete(id);
+      const at = this.expiresAt(e);
+      if (at !== null && now >= at) this.entries.delete(id);
     }
-    const shown = [...this.entries.values()]
+    const dominant = view.languageTags ? this.dominantLanguage() : null;
+    const recent = [...this.entries.values()]
       .sort((a, b) => a.cue.seq - b.cue.seq)
       .slice(-this.options.maxCues);
-    const blocks: CaptionBlock[] = [];
-    for (const { cue } of shown) {
-      const lines = linesFor(cue, display).filter(
-        (l) => l.text.trim() !== '' && (showPartials || l.final),
-      );
-      if (lines.length > 0) blocks.push({ id: cue.id, lines });
+    const built = recent
+      .map((e) => ({ entry: e, lines: this.linesOf(e, now, view, dominant) }))
+      .filter((b) => b.lines.length > 0);
+
+    // Room for the older block? Newest is always shown.
+    if (built.length === 2) {
+      const [older, newer] = built as [(typeof built)[0], (typeof built)[0]];
+      const mainRows = rowsOf(older.lines, 'main') + rowsOf(newer.lines, 'main');
+      if (mainRows > this.options.maxMainRows && this.wasRead(older.entry, now)) {
+        built.shift();
+      } else if (
+        rowsOf(older.lines) + rowsOf(newer.lines) > this.options.maxRows &&
+        older.lines.some((l) => l.role === 'main')
+      ) {
+        older.lines = older.lines.filter((l) => l.role === 'main');
+      }
     }
-    return blocks;
+    return built.map((b) => ({ id: b.entry.cue.id, lines: b.lines }));
   }
 
-  /** The next time (ms) something expires, or null when nothing is waiting to expire. */
-  nextExpiry(): number | null {
+  /** The next time (ms) the picture changes on its own (page turn or expiry), or null. */
+  nextChange(now: number): number | null {
     let next: number | null = null;
+    const consider = (t: number | null) => {
+      if (t !== null && t > now && (next === null || t < next)) next = t;
+    };
     for (const e of this.entries.values()) {
-      if (e.doneAt === null) continue;
-      const at = e.doneAt + this.holdMs(e.cue);
-      if (next === null || at < next) next = at;
+      consider(this.expiresAt(e));
+      const main = this.mainTrack(e, this.view);
+      if (main?.finalAt != null && e.pages) {
+        let t = main.finalAt;
+        for (const ms of e.pages.times.slice(0, -1)) {
+          t += ms;
+          consider(t);
+        }
+      }
     }
     return next;
   }
@@ -91,11 +220,127 @@ export class CaptionStore {
     return this.entries.size;
   }
 
-  holdMs(cue: Cue): number {
-    const text = cue.translation?.text ?? cue.source.text;
-    const reading = (text.length / this.options.charsPerSecond) * 1000;
-    return Math.min(this.options.maxHoldMs, Math.max(this.options.minHoldMs, reading));
+  /** When `e` should leave the screen, or null while it may still change. */
+  expiresAt(e: Entry): number | null {
+    if (e.doneAt === null) return null;
+    const main = this.mainTrack(e, this.view);
+    const from = main?.finalAt ?? e.doneAt;
+    const reading = e.pages ? sum(e.pages.times) : readingMs(main?.text ?? e.cue.source.text);
+    return Math.max(e.doneAt + MIN_DISPLAY_MS, from + reading + LINGER_MS);
   }
+
+  /** The older block has been on screen long enough to read (or can't be read yet anyway). */
+  private wasRead(e: Entry, now: number): boolean {
+    const main = this.mainTrack(e, this.view);
+    if (!main || main.finalAt === null) return true;
+    const page = this.pageAt(e, main, now);
+    return now >= main.finalAt + readingMs(page.flat().join(' '));
+  }
+
+  /** The track drawn as the main line for `view`. */
+  private mainTrack(e: Entry, view: ViewOptions): Track | null {
+    if (view.display === 'original' || e.cue.untranslated === 'same-language') return e.source;
+    return e.translation;
+  }
+
+  private linesOf(
+    e: Entry,
+    now: number,
+    view: ViewOptions,
+    dominant: string | null,
+  ): CaptionLine[] {
+    const tagFor = (lang: string): string | null => {
+      const p = primaryLanguage(lang);
+      return dominant && p && p !== 'und' && p !== dominant ? lang : null;
+    };
+    const lines: CaptionLine[] = [];
+    const sourceTag = tagFor(e.source.lang);
+    const main = this.mainTrack(e, view);
+
+    if (main === e.source) {
+      lines.push(this.line('main', e.source, e, now, view, sourceTag));
+    } else {
+      const wantOriginal = view.display === 'both' && view.showOriginal;
+      if (main) lines.push(this.line('main', main, e, now, view, wantOriginal ? null : sourceTag));
+      if (wantOriginal) {
+        lines.push(this.line('original', e.source, e, now, view, sourceTag));
+      } else if (!main) {
+        // Translation only, not here yet: the original stands in, dimmed.
+        lines.push({ ...this.line('main', e.source, e, now, view, sourceTag), final: false });
+      }
+    }
+
+    const shown = lines.filter((l) => l.rows.length > 0 && (view.showPartials || l.final));
+    // A lone original whose translation was hidden as partial still carries the tag.
+    if (!shown.some((l) => l.role === 'original') && sourceTag) {
+      const first = shown[0];
+      if (first && first.tag === null) first.tag = sourceTag;
+    }
+    const order = view.originalPlacement === 'above' ? ['original', 'main'] : ['main', 'original'];
+    return shown.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role));
+  }
+
+  private line(
+    role: CaptionLine['role'],
+    t: Track,
+    e: Entry,
+    now: number,
+    view: ViewOptions,
+    tag: string | null,
+  ): CaptionLine {
+    const fit = { ...view.fit[role], lang: t.lang };
+    let rows: string[];
+    if (!t.final) {
+      rows = tailLines(t.text, fit);
+    } else if (role === 'main') {
+      rows = this.pageAt(e, t, now);
+    } else {
+      rows = balancedLines(t.text, fit) ?? paginate(t.text, fit).at(-1) ?? [];
+    }
+    return { role, rows, lang: t.lang, final: t.final, tag, revision: t.revision };
+  }
+
+  /** The page of the main line due at `now`, paging from when it became final. */
+  private pageAt(e: Entry, t: Track, now: number): string[] {
+    const fit = { ...this.view.fit.main, lang: t.lang };
+    const key = [t.text, fit.maxUnits, fit.maxWidth ?? '', t.lang, this.view.fitKey ?? ''].join(
+      '\u0000',
+    );
+    if (e.pages?.key !== key) {
+      const pages = paginate(t.text, fit);
+      e.pages = { key, pages, times: pages.map((p) => readingMs(p.join(' '))) };
+    }
+    const { pages, times } = e.pages;
+    let at = t.finalAt ?? now;
+    for (let i = 0; i < pages.length - 1; i++) {
+      at += times[i] as number;
+      if (now < at) return pages[i] as string[];
+    }
+    return pages.at(-1) ?? [];
+  }
+}
+
+function track(prev: Track | null, t: CueText | null, now: number): Track | null {
+  if (!t) return null;
+  const text = normalizeSpace(t.text);
+  const sameFinal = prev?.final && prev.text === text;
+  const revised = t.final && prev?.lastFinal != null && prev.lastFinal !== text;
+  return {
+    text,
+    lang: t.language,
+    final: t.final,
+    finalAt: t.final ? (sameFinal ? (prev?.finalAt ?? now) : now) : null,
+    lastFinal: t.final ? text : (prev?.lastFinal ?? null),
+    revision: (prev?.revision ?? 0) + (revised ? 1 : 0),
+  };
+}
+
+function rowsOf(lines: readonly CaptionLine[], role?: CaptionLine['role']): number {
+  return lines.reduce((n, l) => n + (role && l.role !== role ? 0 : l.rows.length), 0);
+}
+
+function sum(values: readonly number[]): number {
+  return values.reduce((a, b) => a + b, 0);
 }
 
 /** Nothing in the cue will change any more. */
@@ -111,25 +356,4 @@ export function isDone(cue: Cue): boolean {
     case null:
       return cue.translation === null || cue.translation.final;
   }
-}
-
-export function linesFor(cue: Cue, display: CaptionDisplay): CaptionLine[] {
-  const original: CaptionLine = {
-    role: 'original',
-    text: cue.source.text,
-    lang: cue.source.language,
-    final: cue.source.final,
-  };
-  const asMain = (l: CaptionLine): CaptionLine => ({ ...l, role: 'main' });
-  if (display === 'original' || cue.untranslated === 'same-language') return [asMain(original)];
-
-  const t = cue.translation;
-  const main: CaptionLine | null = t
-    ? { role: 'main', text: t.text, lang: t.language, final: t.final }
-    : null;
-  if (display === 'translation') {
-    // Until the translation arrives, the original stands in, dimmed.
-    return [main ?? { ...asMain(original), final: false }];
-  }
-  return main ? [original, main] : [original];
 }
