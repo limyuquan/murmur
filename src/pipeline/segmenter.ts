@@ -73,11 +73,17 @@ export interface SegmenterConfig {
   maxSegmentMs: number;
   /**
    * The forced cut goes at the least speech-like, then quietest, frame in the last this-many ms
-   * (0: a hard cut).
+   * before the maximum (0: a hard cut).
    */
   cutSearchMs: number;
   /** ...but never in a segment's first this-many ms. */
   cutMinHeadMs: number;
+  /**
+   * Audio that isn't live (lookahead) can wait: the cut is decided this many ms past the
+   * maximum, so the search also covers that stretch (a real pause there ends the segment first,
+   * and a gap just after the maximum beats a mid-word cut before it). 0: decide at the maximum.
+   */
+  cutAheadMs: number;
   /** Pause after which to ask whether the words so far end a sentence, ms. 0: never. */
   sentenceHangMs: number;
   /** Only for segments at least this long, ms. */
@@ -106,6 +112,7 @@ export const SENTENCE_SEGMENTER: Readonly<SegmenterConfig> = {
   maxSegmentMs: 6000,
   cutSearchMs: 1000,
   cutMinHeadMs: 1000,
+  cutAheadMs: 0,
   sentenceHangMs: 150,
   sentenceMinSegmentMs: 1000,
   sentenceRule: 'punct',
@@ -127,6 +134,7 @@ export const PAUSE_SEGMENTER: Readonly<SegmenterConfig> = {
   maxSegmentMs: 8000,
   cutSearchMs: 0,
   cutMinHeadMs: 0,
+  cutAheadMs: 0,
   sentenceHangMs: 0,
   sentenceMinSegmentMs: 0,
   sentenceRule: 'punct',
@@ -202,6 +210,7 @@ export class Segmenter {
     maxSegment: number;
     cutSearch: number;
     cutMinHead: number;
+    cutAhead: number;
     sentenceHang: number;
     sentenceMinSegment: number;
   };
@@ -238,6 +247,7 @@ export class Segmenter {
       maxSegment: n(c.maxSegmentMs),
       cutSearch: n(c.cutSearchMs),
       cutMinHead: n(c.cutMinHeadMs),
+      cutAhead: n(c.cutAheadMs),
       sentenceHang: n(c.sentenceHangMs),
       sentenceMinSegment: n(c.sentenceMinSegmentMs),
     };
@@ -395,7 +405,7 @@ export class Segmenter {
         events.push({ type: 'probe', segmentId: open.id, endSample });
       }
     }
-    if (length >= s.maxSegment) this.cut(open, frame, speech, events);
+    if (length >= s.maxSegment + s.cutAhead) this.cut(open, frame, speech, events);
   }
 
   /** Forced cut of a segment at its maximum length; carries on in a new one if still talking. */
@@ -425,7 +435,7 @@ export class Segmenter {
     const frameEnd = frame.startSample + frame.samples.length;
     const s = this.s;
     if (s.cutSearch <= 0) return frameEnd;
-    const from = Math.max(frameEnd - s.cutSearch, open.startSample + s.cutMinHead);
+    const from = Math.max(frameEnd - s.cutAhead - s.cutSearch, open.startSample + s.cutMinHead);
     const frames = open.frames;
     const window: { start: number; prob: number; db: number }[] = [];
     for (let i = frames.length - 1; i >= 0; i--) {

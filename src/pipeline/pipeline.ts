@@ -121,6 +121,12 @@ export const TRACK_SEGMENTER: SegmenterOptions = { strategy: 'pause', maxSegment
  */
 export const MODEL_VAD_SEGMENTER: SegmenterOptions = { minSpeechMs: 32 };
 
+/**
+ * Audio made ahead of time (lookahead) has its future at hand: a segment at its maximum is cut
+ * at the best gap up to this far past it (segmenter.ts `cutAheadMs`), not only before it.
+ */
+export const LOOKAHEAD_CUT_AHEAD_MS = 1500;
+
 /** A later line of a split segment: `<parent>.<n>`. */
 const SPLIT_LINE = /^(.+)\.(\d+)$/;
 
@@ -171,7 +177,10 @@ export class Pipeline {
       // The segmenter's own detector only sets the frame size: the stage scores every frame.
       this.segmenter =
         options.segmenter ??
-        new Segmenter(new EnergyVad({ frameSamples: model.frameSamples }), MODEL_VAD_SEGMENTER);
+        new Segmenter(new EnergyVad({ frameSamples: model.frameSamples }), {
+          ...MODEL_VAD_SEGMENTER,
+          ...(options.media ? { cutAheadMs: LOOKAHEAD_CUT_AHEAD_MS } : {}),
+        });
       this.vadStage = new VadStage(
         model,
         (samples, startSample, prob) => {
@@ -184,7 +193,14 @@ export class Pipeline {
     } else {
       this.segmenter =
         options.segmenter ??
-        new Segmenter(new EnergyVad(), this.ownSegments ? TRACK_SEGMENTER : {});
+        new Segmenter(
+          new EnergyVad(),
+          this.ownSegments
+            ? TRACK_SEGMENTER
+            : options.media
+              ? { cutAheadMs: LOOKAHEAD_CUT_AHEAD_MS }
+              : {},
+        );
       this.vadStage = null;
     }
     this.session = options.asr.createSession({

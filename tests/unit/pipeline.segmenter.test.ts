@@ -290,6 +290,29 @@ describe('Segmenter, sentence strategy (default)', () => {
     }
   });
 
+  it('with the audio ahead at hand (lookahead), cuts at a gap just past the maximum', () => {
+    // Talk from 0.5 s, a 100 ms gap at 6.6 s (too short to end the segment), more talk.
+    const audio = concat([
+      burst(0.5, 0),
+      burst(6.1, 0.3),
+      burst(0.1, 0),
+      burst(3, 0.3),
+      burst(1, 0),
+    ]);
+    const live = ends(drive(new Segmenter(new EnergyVad()), audio));
+    const events = drive(new Segmenter(new EnergyVad(), { cutAheadMs: 1000 }), audio);
+    const ahead = ends(events);
+    // Live: the cut is in the last second before the maximum, in the middle of the talk.
+    expect(live[0]?.endSample).toBeLessThan(ms(6500));
+    // Ahead: at the gap.
+    expect(ahead[0]?.endSample).toBeGreaterThanOrEqual(ms(6550));
+    expect(ahead[0]?.endSample).toBeLessThanOrEqual(ms(6750));
+    expect(ahead[0]?.reason).toBe('max-length');
+    // Nothing lost: the next segment starts at the cut.
+    expect(starts(events)[1]?.startSample).toBe(ahead[0]?.endSample);
+    audioSpans(events);
+  });
+
   it('never cuts in the first second, and cuts on the spot when the last second is even', () => {
     const audio = concat([burst(13, 0.3), burst(1, 0)]);
     const events = drive(new Segmenter(new EnergyVad(), { cutSearchMs: 0 }), audio);
