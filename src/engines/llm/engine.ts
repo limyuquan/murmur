@@ -52,6 +52,11 @@ const TEMPLATE_TOKENS = 32;
 export const DRAFT_INTERVAL_MS = 50;
 /** A cancelled generation that doesn't stop within this long means the worker hangs. */
 export const CANCEL_TIMEOUT_MS = 5000;
+/**
+ * Longest loading or warming up may go without any progress before the engine counts as stalled
+ * (a hung graphics driver): the worker is ended and loading falls back, ms.
+ */
+export const LOAD_STALL_MS = 120_000;
 
 /**
  * An answer the engine doesn't trust (the line should go to another translator). The message
@@ -84,6 +89,8 @@ export interface LlmEngineOptions {
   flags?: PromptFlags;
   draftIntervalMs?: number;
   cancelTimeoutMs?: number;
+  /** Default `LOAD_STALL_MS`. */
+  loadStallMs?: number;
 }
 
 /** One generation, for real-model checks (e2e builds log these). */
@@ -196,10 +203,26 @@ export class LlmTranslationEngine implements TranslationEngine {
       context: [],
     });
     try {
+      const stallMs = this.options.loadStallMs ?? LOAD_STALL_MS;
+      let stall: ReturnType<typeof setTimeout> | undefined;
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => reject(options.signal?.reason ?? new Error('Loading was cancelled.'));
         if (options.signal?.aborted) return onAbort();
         options.signal?.addEventListener('abort', onAbort, { once: true });
+        // No word from the worker for this long: stalled (any progress restarts the clock).
+        const armStall = () => {
+          clearTimeout(stall);
+          stall = setTimeout(
+            () =>
+              reject(
+                new EngineUnavailableError(
+                  `${this.info.label} stopped responding while loading (${Math.round(stallMs / 1000)} s).`,
+                ),
+              ),
+            stallMs,
+          );
+        };
+        armStall();
         worker.onerror = (e) =>
           reject(
             new EngineUnavailableError(e.message || `${this.info.label} stopped while loading.`),
@@ -207,6 +230,7 @@ export class LlmTranslationEngine implements TranslationEngine {
         worker.onmessage = (event) => {
           const m = event.data;
           if (m.type === 'progress') {
+            armStall();
             options.onProgress?.({
               stage: m.stage,
               fraction: m.fraction,
@@ -233,7 +257,7 @@ export class LlmTranslationEngine implements TranslationEngine {
           maxNumTokens: MAX_NUM_TOKENS,
           warmup,
         });
-      });
+      }).finally(() => clearTimeout(stall));
       worker.onmessage = (event) => this.onMessage(event.data);
       worker.onerror = (e) =>
         this.fail(new EngineUnavailableError(e.message || `${this.info.label} stopped.`));

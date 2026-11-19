@@ -282,6 +282,25 @@ describe('LLM translation engine', () => {
     expect(w.terminated).toBe(true);
   });
 
+  it('gives up on a load or warm-up that stalls, so loading falls back', async () => {
+    const w = new FakeWorker();
+    w.postMessage = (m) => {
+      w.sent.push(m);
+      // Progress, then nothing (a hung driver).
+      if (m.type === 'load')
+        queueMicrotask(() => w.emit({ type: 'progress', stage: 'compile', fraction: 0.5 }));
+    };
+    const e = new LlmTranslationEngine(GEMMA_E2B_INFO, GEMMA_E2B_ID, {
+      createWorker: () => w,
+      isDownloaded: async () => true,
+      wasmBase: 'chrome-extension://x/litert/',
+      loadStallMs: 30,
+    });
+    await expect(e.load()).rejects.toBeInstanceOf(EngineUnavailableError);
+    expect(w.terminated).toBe(true);
+    expect(e.state).toBe('error');
+  });
+
   it('streams drafts, then the cleaned final, with the line’s prompt', async () => {
     worker.answers = ['Translation: "Good morning, Camille"'];
     const records: GenerationRecord[] = [];
