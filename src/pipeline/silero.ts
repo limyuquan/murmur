@@ -6,7 +6,7 @@
  * The model takes 512 samples (32 ms at 16 kHz) at a time, plus the last 64 samples of the
  * previous frame as context, and carries a recurrent state from frame to frame: frames must come
  * in order, and `reset()` starts a new stream (after a gap). Calls are queued, so they may be
- * made without waiting. About 1 ms per frame on a desktop CPU, a few percent of one core.
+ * made without waiting. About 0.5 ms per frame in Chrome on a desktop CPU: under 2% of one core.
  *
  * The ONNX Runtime module is passed in (`SileroVad.create`), so this file runs in Node for tests;
  * `silero-load.ts` loads it in the extension, from its own files.

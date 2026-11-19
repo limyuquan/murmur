@@ -188,7 +188,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    or missing models) as `session-status` events, so a stop never waits for a load.
 4. A speech detector scores each 32 ms of audio: Silero VAD (`src/pipeline/silero.ts`, 2.3 MB,
    bundled in `src/assets/silero-vad/`, on ONNX Runtime's WebAssembly in the offscreen document,
-   about 1% of a core), which tells speech from music. It loads alongside the engines; if it
+   under 2% of a core), which tells speech from music. It loads alongside the engines; if it
    can't, or fails later, the loudness gate (`vad.ts`) takes over. Engines that listen to the
    track, and the demo engines, always get the loudness gate.
    The segmenter cuts speech segments from those scores (`src/pipeline/segmenter.ts`, every

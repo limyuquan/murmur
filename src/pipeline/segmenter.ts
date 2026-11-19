@@ -28,7 +28,9 @@
  * the same one (silero.ts, fed through `pushScored()` by vadstage.ts). With the energy gate
  * (vad.ts), speech over music or noise rarely shows a pause, so on such audio most segments end at
  * the 6 s cut: the model is what lets the pause and sentence rules act. The energy gate stays for
- * when the model can't load, and for engines that listen to the track.
+ * when the model can't load, and for engines that listen to the track. Measured in Chrome with
+ * Qwen3-ASR on chatter over music: final subtitles p50 3.8 s / p90 6.2 s after the speech with the
+ * energy gate, 3.0 / 5.0 s with Silero. Segments there still run 4 to 6 s: the talk rarely pauses.
  *
  * Shorter segments also keep most segments to one language, which matters for engines that pick
  * one language per segment. A cut where the language changes (a language-ID model on a sliding
