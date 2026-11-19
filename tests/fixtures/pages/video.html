@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Video fixture</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; }
+      main { padding: 40px; }
+      /* A 4:3 box around a 16:9 clip: the picture is letterboxed (60 px bars top and bottom). */
+      video { display: block; width: 640px; height: 480px; background: #000; object-fit: contain; }
+      .spacer { height: 1600px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <video id="player" src="clip.webm" muted autoplay loop playsinline></video>
+      <div class="spacer"></div>
+    </main>
+  </body>
+</html>
