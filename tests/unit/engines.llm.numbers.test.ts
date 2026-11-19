@@ -93,6 +93,50 @@ describe('numeralsToDigits: Korean', () => {
       expect(numeralsToDigits(text), text).toBe(text);
     }
   });
+
+  it('leaves numeral syllables inside words and before particles alone (review cases)', () => {
+    for (const text of [
+      '우리 세대는 달라요',
+      'MZ세대가 좋아하는 거',
+      '열대 지방에 살아요',
+      '열병에 걸렸어',
+      '한시도 쉬지 않았어',
+      '나이가 오십이 넘었어요',
+      '가격은 오십이에요',
+      '백이 넘는 사람이 왔어',
+      '천만에요',
+      '아니에요, 천만에요.',
+      '일만 했어요',
+      '요즘 일만 해',
+      '백일 잔치를 했어',
+      '삼십일 동안 기다렸어',
+      '십분 활용하세요',
+      '백화점에 가자',
+      '세 사람이 아니라 우리가',
+      '이십일 세기',
+      '오십보백보야',
+      '천만다행이다',
+      '사이좋게 지내',
+      '구십 년대 노래',
+    ]) {
+      expect(numeralsToDigits(text), text).toBe(text);
+    }
+  });
+
+  it('converts numbers in real sentences', () => {
+    expect(numeralsToDigits('이번 시즌에 이십삼 골을 넣었어요')).toBe(
+      '이번 시즌에 이십삼 골을 넣었어요',
+    );
+    expect(numeralsToDigits('오십이 명이 신청했어요')).toBe('52 명이 신청했어요');
+    expect(numeralsToDigits('이십오일에 만나')).toBe('25일에 만나');
+    expect(numeralsToDigits('오십대 남성이')).toBe('50대 남성이');
+    expect(numeralsToDigits('백오십에서 이백까지')).toBe('150에서 200까지');
+    expect(numeralsToDigits('삼십 일 동안')).toBe('30 일 동안');
+    expect(numeralsToDigits('한 시간 반 걸렸어')).toBe('1 시간 반 걸렸어');
+    expect(numeralsToDigits('오천 원짜리')).toBe('5000 원짜리');
+    expect(numeralsToDigits('천 명 넘게 왔대')).toBe('1000 명 넘게 왔대');
+    expect(numeralsToDigits('지금 이십 퍼센트야')).toBe('지금 20 퍼센트야');
+  });
 });
 
 describe('numeralsToDigits: Japanese and Chinese', () => {
@@ -106,6 +150,11 @@ describe('numeralsToDigits: Japanese and Chinese', () => {
     expect(numeralsToDigits('第十五位')).toBe('第15位');
     expect(numeralsToDigits('一月に')).toBe('1月に');
     expect(numeralsToDigits('他二十岁')).toBe('他20岁');
+    expect(numeralsToDigits('十个人')).toBe('10个人');
+    expect(numeralsToDigits('我等了十年')).toBe('我等了10年');
+    expect(numeralsToDigits('五月に行きます')).toBe('5月に行きます');
+    expect(numeralsToDigits('三百五十円です')).toBe('350円です');
+    expect(numeralsToDigits('这个要两百块')).toBe('这个要200块');
   });
 
   it('leaves words written with numerals alone', () => {
@@ -128,6 +177,23 @@ describe('numeralsToDigits: Japanese and Chinese', () => {
       '千葉に行く',
       '一百五',
       '万人に愛される',
+      '我用百度搜索',
+      '百度一下',
+      '百人一首',
+      '十人十色',
+      '五月蝿い',
+      '五月雨',
+      '一般来说',
+      '百分之百',
+      '千葉県',
+      '十二分に楽しんだ',
+      '三日坊主',
+      '二人三脚',
+      '六本木で',
+      '八百万の神',
+      '一石二鳥',
+      '他是一般人',
+      '百货商店',
     ]) {
       expect(numeralsToDigits(text), text).toBe(text);
     }

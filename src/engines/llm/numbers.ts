@@ -7,21 +7,25 @@
  * syllables are everyday words (일 "work", 이 "this", 사이 "between", 천사 "angel", 十分 "very",
  * 一样 "same"). A missed number costs what it did before; a wrong one changes the meaning.
  *
- * Korean (Sino-Korean numerals, standing alone after a non-Hangul character):
- * - two or more syllables with a unit (십 백 천 만 억 조), followed by a counter, a particle or
- *   the end of the word: 백오십에서 → 150에서, 십오위 → 15위, 이천이십사 년 → 2024 년;
+ * Korean (Sino-Korean numerals, at the start of a word):
+ * - two or more syllables with a unit (십 백 천 만 억 조) before a counter: 십오위 → 15위,
+ *   이천이십사 년 → 2024 년; standing alone (a particle or nothing after) only beside another
+ *   number: 백오십에서 이백 장 → 150에서 200 장. A run ending in 이 or 일 that reads two ways
+ *   (오십이 넘었어: 50 and the particle; 삼십일: 31 or 30 days) is left alone;
  * - one syllable (일, 삼, 백, ...) only before a counter after a space: 십 분 → 10 분, 삼 위 → 3 위.
  *   이 only before counters it can't mean "this" with (퍼센트, 개월, ...: not 이 위에 "on this").
- * Native Korean numbers (한, 두, 세, ..., 스물, 열두) only before a counter: 두 명 → 2 명,
- * 스무 살 → 20 살 (not 한 번 "once, a try", nor 네 번 "your turn").
+ * Native Korean numbers (한, 두, 세, ..., 스물, 열두) only before a counter after a space:
+ * 두 명 → 2 명, 스무 살 → 20 살 (not 세대 "generation", 열대 "tropics", nor 한 번 "once").
  *
  * Japanese and Chinese:
  * - two or more numerals with a unit (十 百 千 万 億), followed by a counter or by anything but
  *   a Han character: 三百で → 300で, 八十五歳 → 85歳 (not 八百屋, 五十嵐);
  * - one numeral only before a counter: 三人 → 3人, 两个 → 2个. 一 only before counters where
  *   it can't be idiomatic (月, 年, 円, ...), and never right after another Han character
- *   (唯一, 统一);
+ *   (唯一, 统一); 十 alone only before a few counters (十个, 十年), 百 and 千 alone never
+ *   (百度, 千葉);
  * - numerals without a unit only as a year: 二〇二四年 → 2024年.
+ * Words, names and idioms written with numerals (十人十色, 五月蝿い, 一般) are listed and left.
  * A numeral that a colloquial reading makes ambiguous (一百五: 150 in Chinese, 105 in Japanese)
  * is left alone.
  */
@@ -47,7 +51,7 @@ const KO_BIG: Record<string, number> = { 만: 1e4, 억: 1e8, 조: 1e12 };
  * First syllables of the particles and endings that may follow a number or its counter within
  * the word (원이면, 위를, 명도, 살까지), and that rarely start a longer word after a counter.
  */
-const KO_PARTICLE_STARTS = new Set([...'이가은는을를의에도만까부로으와과랑나쯤째씩였인짜밖예입']);
+const KO_PARTICLE_STARTS = new Set([...'이가은는을를의에도만까부로으와과랑나쯤째씩였인짜밖예입야']);
 
 /** Counters after Sino-Korean numbers. Longest first. */
 const KO_SINO_COUNTERS = [
@@ -103,9 +107,10 @@ const KO_NATIVE_COUNTERS = [
   '대',
 ];
 
-/** Words written with numeral syllables that usually aren't numbers. */
-const KO_NOT_NUMBERS = new Set(['천사', '이천', '사천', '오만', '이만', '백조']);
-
+/** Words written with numeral syllables that are numbers only right before a counter. */
+const KO_NOT_NUMBERS = new Set(['천사', '이천', '사천', '오만', '이만', '백조', '일만', '백일']);
+/** Text starting with these is never a number (천만에요 "you're welcome"). */
+const KO_NEVER = ['천만에'];
 const NATIVE_TENS: Record<string, number> = {
   열: 10,
   스물: 20,
@@ -181,30 +186,67 @@ function endsWord(rest: string): boolean {
   return !isHangul(rest[0]) || KO_PARTICLE_STARTS.has(rest[0] as string);
 }
 
+/** Before `i` is a word start: nothing, or something that is neither Hangul nor a letter or digit. */
+function wordStartAt(text: string, i: number): boolean {
+  const before = text[i - 1];
+  return !before || !/[\p{L}\p{N}]/u.test(before);
+}
+
+interface Found {
+  digits: string;
+  length: number;
+  /** Converted only if a neighbouring word is a number too (no counter after it). */
+  alone?: boolean;
+}
+
 function koreanToDigits(text: string): string {
-  let out = '';
+  // First pass: numbers before a counter, and numbers standing alone (converted in the second
+  // pass when a neighbouring word is a number too: 백오십에서 이백까지).
+  const found = new Map<number, Found>();
   let i = 0;
   while (i < text.length) {
-    const ch = text[i] as string;
-    const atWordStart = !isHangul(text[i - 1]);
-    if (atWordStart && isHangul(ch)) {
-      const converted = sinoAt(text, i) ?? nativeAt(text, i);
-      if (converted) {
-        out += converted.digits;
-        i += converted.length;
+    if (wordStartAt(text, i) && isHangul(text[i])) {
+      const hit = sinoAt(text, i) ?? nativeAt(text, i);
+      if (hit) {
+        found.set(i, hit);
+        i += hit.length;
         continue;
       }
     }
-    out += ch;
     i++;
   }
-  return out;
+  let out = '';
+  let last = 0;
+  for (const [at, hit] of found) {
+    if (hit.alone && !numericNeighbour(text, at, found)) continue;
+    out += text.slice(last, at) + hit.digits;
+    last = at + hit.length;
+  }
+  return out + text.slice(last);
+}
+
+/** The word before or after the one at `at` is a number (has digits, or a numeral was found). */
+function numericNeighbour(text: string, at: number, found: Map<number, Found>): boolean {
+  const end = text.slice(at).search(/\s|$/) + at;
+  const next = /^\s+/.exec(text.slice(end));
+  if (next) {
+    const start = end + next[0].length;
+    const word = text.slice(start).split(/\s/)[0] ?? '';
+    if (/\d/.test(word) || found.has(start)) return true;
+  }
+  const prev = /(\S+)\s+$/.exec(text.slice(0, at));
+  if (prev) {
+    const start = at - prev[0].length;
+    if (/\d/.test(prev[1] ?? '') || found.has(start)) return true;
+  }
+  return false;
 }
 
 const KO_NUMERAL = /[일이삼사오육칠팔구십백천만억조]/;
 
 /** A Sino-Korean numeral starting at `i`, as digits, with how much of the text it covers. */
-function sinoAt(text: string, i: number): { digits: string; length: number } | null {
+function sinoAt(text: string, i: number): Found | null {
+  if (KO_NEVER.some((w) => text.startsWith(w, i))) return null;
   let run = 0;
   while (KO_NUMERAL.test(text[i + run] ?? '')) run++;
   for (let n = run; n >= 1; n--) {
@@ -212,14 +254,19 @@ function sinoAt(text: string, i: number): { digits: string; length: number } | n
     const value = parseSinoKorean(word);
     if (value === null) continue;
     const rest = text.slice(i + n);
+    // 오십이: 52, or 50 and the particle 이; 삼십일: 31, or 30 and the day counter. Leave it.
+    if (n < run && /^[이일]/.test(rest) && parseSinoKorean(word + rest[0]) !== null) return null;
     const hasUnit = /[십백천만억조]/.test(word);
     if (n >= 2 && hasUnit) {
-      const counter = counterAt(rest.replace(/^ /, ''), KO_SINO_COUNTERS);
-      // 천사 "angel", 오만 "arrogance": numbers only before a counter (이만 원).
-      if (counter || (endsWord(rest) && !KO_NOT_NUMBERS.has(word))) {
+      if (counterAt(rest.replace(/^ /, ''), KO_SINO_COUNTERS)) {
         return { digits: String(value), length: n };
       }
-      continue;
+      // Standing alone (백오십에서): only beside another number, and not when it ends in 이
+      // or 일, which may be the particle or the day counter (오십이 넘었어, 오십이에요).
+      if (endsWord(rest) && !KO_NOT_NUMBERS.has(word) && !/[이일]$/.test(word)) {
+        return { digits: String(value), length: n, alone: true };
+      }
+      return null;
     }
     if (n === 1 && rest.startsWith(' ')) {
       const counter = counterAt(rest.slice(1), KO_SINO_COUNTERS);
@@ -227,12 +274,13 @@ function sinoAt(text: string, i: number): { digits: string; length: number } | n
         return { digits: String(value), length: 1 };
       }
     }
+    return null;
   }
   return null;
 }
 
-/** A native Korean number before a counter, as digits. */
-function nativeAt(text: string, i: number): { digits: string; length: number } | null {
+/** A native Korean number before a counter, after a space (두 명, not 세대), as digits. */
+function nativeAt(text: string, i: number): Found | null {
   const m = NATIVE_NUMBER.exec(text.slice(i));
   if (!m) return null;
   const [word, tens, ones, alone] = m;
@@ -240,8 +288,8 @@ function nativeAt(text: string, i: number): { digits: string; length: number } |
   if (tens === '스물' && !ones) return null;
   const total = (tens ? (NATIVE_TENS[tens] ?? 0) : 0) + (NATIVE_ONES[ones ?? alone ?? ''] ?? 0);
   const rest = text.slice(i + word.length);
-  const after = rest.startsWith(' ') ? rest.slice(1) : rest;
-  const counter = counterAt(after, KO_NATIVE_COUNTERS);
+  if (!rest.startsWith(' ')) return null;
+  const counter = counterAt(rest.slice(1), KO_NATIVE_COUNTERS);
   if (!counter) return null;
   // 한 번 ("once", "give it a try") and 네 번 ("your turn") say more than a number.
   if (counter === '번' && (word === '한' || word === '네')) return null;
@@ -341,19 +389,52 @@ const CJ_ONE_COUNTERS = new Set([
   '%',
   '％',
 ]);
-/** Numerals with what follows that usually aren't numbers. */
+/** The only counters a lone 十 converts before (十人十色, 十分 are words). 百 and 千 never do alone. */
+const CJ_TEN_COUNTERS = new Set([
+  '个',
+  '個',
+  '个月',
+  '年',
+  '歳',
+  '岁',
+  '円',
+  '元',
+  '块',
+  '分钟',
+  '秒',
+  '小时',
+  '%',
+  '％',
+]);
+/** Numerals with what follows that usually aren't numbers (words, names, idioms). */
 const CJ_NOT_NUMBERS = [
   '十分',
+  '十二分',
   '千万',
   '万一',
   '十八番',
   '二度と',
   '三日月',
+  '三日坊主',
   '二日酔',
   '五分五分',
   '八百屋',
   '八百長',
+  '八百万',
   '万人',
+  '百度',
+  '百人一首',
+  '十人十色',
+  '一般',
+  '五月蝿',
+  '五月雨',
+  '二人三脚',
+  '二枚目',
+  '三枚目',
+  '六本木',
+  '三人行',
+  '三点水',
+  '一石二',
 ];
 /** Han characters that may come right before a numeral (第三, 约五百). */
 const CJ_PREFIXES = new Set(['第', '約', '约', '毎', '每', '共', '近', '超']);
@@ -441,8 +522,8 @@ function hanNumber(word: string, before: string | undefined, after: string): str
     const value = parseHanNumeral(word);
     if (value === null) return null;
     if ([...word].length === 1) {
-      // 十, 百, 千 alone: only before a counter. 万, 億 alone: never (万人 "everyone").
-      return counter && !/[万萬億亿]/.test(word) ? String(value) : null;
+      // 十 alone: only before a few counters. 百, 千, 万, 億 alone: never (百度, 千葉, 万人).
+      return word === '十' && counter && CJ_TEN_COUNTERS.has(counter) ? String(value) : null;
     }
     return counter || !isHan(after[0]) ? String(value) : null;
   }
