@@ -6,6 +6,7 @@ import { QWEN3_ASR_INFO, QWEN3_ASR_SOURCE, qwen3Unavailable } from '@/engines/qw
 import { audioTokens, logMel } from '@/engines/qwen3asr/mel';
 import {
   ASR_TEXT,
+  endsInLoop,
   LANGUAGE,
   LANGUAGE_NAMES,
   LANGUAGE_TOKENS,
@@ -135,8 +136,28 @@ describe('Qwen3-ASR prompt', () => {
 
   it('caps the answer length by the audio length', () => {
     expect(maxAnswerTokens(1)).toBe(36);
+    expect(maxAnswerTokens(6)).toBe(96);
     expect(maxAnswerTokens(10)).toBe(144);
     expect(maxAnswerTokens(60)).toBe(256);
+  });
+
+  it('spots a decoding loop at the end of the text', () => {
+    const head = [LANGUAGE, 16134, ASR_TEXT];
+    const text = (ids: number[]) => [...head, ...ids];
+    const rep = (unit: number[], n: number) => Array.from({ length: n }, () => unit).flat();
+    // One token 8 times; 2–4 tokens 6 times; 5–16 tokens 4 times.
+    expect(endsInLoop(text([5, ...rep([7], 8)]), 3)).toBe(true);
+    expect(endsInLoop(text([5, ...rep([7], 7)]), 3)).toBe(false);
+    expect(endsInLoop(text(rep([7, 8, 9], 6)), 3)).toBe(true);
+    expect(endsInLoop(text(rep([7, 8, 9], 5)), 3)).toBe(false);
+    const long = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+    expect(endsInLoop(text([1, 2, ...rep(long, 4)]), 3)).toBe(true);
+    expect(endsInLoop(text([1, 2, ...rep(long, 3)]), 3)).toBe(false);
+    // Repeats people say ("네 네 네") and ordinary text are not loops.
+    expect(endsInLoop(text([1, 2, 3, ...rep([30], 3), 4]), 3)).toBe(false);
+    expect(endsInLoop(text(Array.from({ length: 80 }, (_, i) => 100 + i)), 3)).toBe(false);
+    // Only the text counts, not the header.
+    expect(endsInLoop([...rep([LANGUAGE], 8)], 8)).toBe(false);
   });
 });
 

@@ -102,6 +102,7 @@ async function decode(message: Extract<ToWorker, { type: 'decode' }>): Promise<D
     avgLogprob: out.avgLogprob,
     ids: out.ids,
     tokens: out.decoded,
+    looped: out.looped,
     ms: Math.round(performance.now() - started),
   };
 }

@@ -49,6 +49,8 @@ export interface DecodeRecord {
   ms: number;
   tokens: number;
   prefixTokens: number;
+  /** Stopped on a repetition loop. */
+  looped: boolean;
   language: string;
   noSpeechProb: number;
   avgLogprob: number;
@@ -185,6 +187,7 @@ export class Qwen3AsrEngine implements AsrEngine {
             ms: out.ms,
             tokens: out.tokens,
             prefixTokens: prefix?.length ?? 0,
+            looped: out.looped,
             language: out.language,
             noSpeechProb: out.noSpeechProb,
             avgLogprob: out.avgLogprob,

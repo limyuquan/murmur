@@ -69,14 +69,17 @@ export function filterDecode(stats: DecodeStats, opts = FILTER_DEFAULTS): Filter
  * without spaces, on characters.
  */
 export function collapseRepeats(text: string, keep = 2): string {
-  // A unit of 1–30 characters followed by the same unit (optionally after a separator) 2+ times.
-  const re = /(.{1,30}?)(?:[\s,、。.!?！？]*\1){2,}/gsu;
+  // A unit of 1–60 characters followed by the same unit (optionally after a separator) 2+ times.
+  const re = /(.{1,60}?)(?:[\s,、。.!?！？]*\1){2,}/gsu;
   let out = text;
   for (let i = 0; i < 3; i++) {
     const next = out.replace(re, (match: string, unit: string) => {
       if (unit.trim() === '') return match;
-      const sep = /\s/.test(match.slice(unit.length, unit.length + 1)) ? ' ' : '';
-      return Array.from({ length: keep }, () => unit).join(sep);
+      // Keep the copies apart the way the first two were (`no, no`, `Yeah. Yeah`, `네 네`).
+      const sep = /^[\s,、。.!?！？]*/u.exec(match.slice(unit.length))?.[0] ?? '';
+      return Array.from({ length: keep }, () => unit)
+        .join(sep)
+        .replace(/(\s)\s+/gu, '$1');
     });
     if (next === out) break;
     out = next;

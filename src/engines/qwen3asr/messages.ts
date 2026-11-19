@@ -31,6 +31,8 @@ export interface DecodeOutput {
   ids: number[];
   /** Tokens decoded (prefix not counted). */
   tokens: number;
+  /** Decoding stopped on a repetition loop. */
+  looped: boolean;
   ms: number;
 }
 

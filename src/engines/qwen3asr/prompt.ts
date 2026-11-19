@@ -169,3 +169,32 @@ export function rollbackPrefix(ids: readonly number[], rollback: number): number
 export function maxAnswerTokens(seconds: number): number {
   return Math.min(256, Math.ceil(24 + seconds * 12));
 }
+
+/**
+ * Copies of a run of tokens at the end of the text that make a decoding loop: greedy decoding
+ * that starts repeating itself never stops before the token cap. A single token 8 times, a run
+ * of 2–4 tokens 6 times, a longer one (up to 16) 4 times: more than people say in a row (and
+ * the guards cut any repeat to two copies anyway, whisper/filters.ts).
+ */
+const LOOP_COPIES = (unit: number) => (unit === 1 ? 8 : unit <= 4 ? 6 : 4);
+const LOOP_MAX_UNIT = 16;
+
+/** True when `ids[from..]` (the answer's text) ends in a decoding loop (`LOOP_COPIES`). */
+export function endsInLoop(ids: readonly number[], from = 0): boolean {
+  const n = ids.length - from;
+  for (let unit = 1; unit <= LOOP_MAX_UNIT; unit++) {
+    const copies = LOOP_COPIES(unit);
+    if (unit * copies > n) continue;
+    let same = true;
+    for (let i = 1; i < copies && same; i++) {
+      for (let j = 0; j < unit; j++) {
+        if (ids[ids.length - 1 - j] !== ids[ids.length - 1 - j - i * unit]) {
+          same = false;
+          break;
+        }
+      }
+    }
+    if (same) return true;
+  }
+  return false;
+}

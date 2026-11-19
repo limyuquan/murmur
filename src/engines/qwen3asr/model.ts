@@ -7,6 +7,8 @@
  * - Decoder: the same export's merged decoder (fused attention, per-layer KV), with every
  *   `MatMulNBits` re-quantized to 8 bits. Its `lm_head` is tied to the token embeddings, so the
  *   embedding rows are read straight from the 8-bit `lm_head` bytes (`.tied.json` gives where).
+ * - Decoding stops at the end token, at a cap that grows with the audio (`maxAnswerTokens`), or as
+ *   soon as the text repeats itself in a loop (`endsInLoop`).
  * - Language: at the step after `language`, the logits over each language name's first token
  *   give the segment's language (restricted to `allowed` when given) and ` None` the chance that
  *   there is no speech.
@@ -18,6 +20,7 @@ import {
   ASR_TEXT,
   AUDIO_OFFSET,
   EOS,
+  endsInLoop,
   LANGUAGE,
   LANGUAGE_TOKENS,
   maxAnswerTokens,
@@ -62,6 +65,8 @@ export interface Transcript {
   ids: number[];
   /** Tokens decoded (forced ones not counted). */
   decoded: number;
+  /** Decoding stopped because the text began repeating itself (`endsInLoop`). */
+  looped: boolean;
   ms: { mel: number; encoder: number; prefill: number; decode: number; total: number };
 }
 
@@ -151,6 +156,7 @@ export class Qwen3Asr {
     let sumLogprob = 0;
     let scored = 0;
     let decoded = 0;
+    let looped = false;
     try {
       while (answer.length < cap) {
         const row = await lastRow(logits);
@@ -177,6 +183,12 @@ export class Qwen3Asr {
         answer.push(next);
         decoded++;
         if (answer.length >= cap) break;
+        // A loop: stop now rather than at the cap (the guards trim the repeats).
+        const text = answer.indexOf(ASR_TEXT);
+        if (text >= 0 && decoded >= (opts.minTokens ?? 0) && endsInLoop(answer, text + 1)) {
+          looped = true;
+          break;
+        }
         disposeIfGpu(logits);
         logits = await this.run(this.embedRows([next]), 1);
       }
@@ -193,6 +205,7 @@ export class Qwen3Asr {
       avgLogprob: scored > 0 ? sumLogprob / scored : 0,
       ids: answer,
       decoded,
+      looped,
       ms: { mel: t1 - t0, encoder: t2 - t1, prefill: t3 - t2, decode: t4 - t3, total: t4 - t0 },
     };
   }

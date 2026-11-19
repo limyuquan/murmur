@@ -63,11 +63,25 @@ describe('Whisper hallucination guards', () => {
     expect(collapseRepeats('ありがとうありがとうありがとうありがとう')).toBe(
       'ありがとうありがとう',
     );
-    expect(collapseRepeats('I said no, no, no, no, no.')).toBe('I said no no.');
+    expect(collapseRepeats('I said no, no, no, no, no.')).toBe('I said no, no.');
     expect(collapseRepeats('a normal sentence with no loops')).toBe(
       'a normal sentence with no loops',
     );
     expect(filterDecode(speech('좋아요 좋아요 좋아요 좋아요')).text).toBe('좋아요 좋아요');
+  });
+
+  it('cuts the loops a decoder stopped on (Qwen3-ASR endsInLoop) to two copies', () => {
+    // What a loop stopped by the decoder looks like: real words, then 4+ copies of a phrase.
+    const phrase = '오늘 진짜 너무 재미있었고 다음에 또 같이 와서 놀아요 우리 모두 함께 그리고 또';
+    const looped = `그래서 우리가 ${Array.from({ length: 4 }, () => phrase).join(' ')}`;
+    expect(filterDecode(speech(looped)).text).toBe(`그래서 우리가 ${phrase} ${phrase}`);
+    expect(filterDecode(speech('아 진짜 아 진짜 아 진짜 아 진짜 아 진짜 아 진짜')).text).toBe(
+      '아 진짜 아 진짜',
+    );
+    expect(filterDecode(speech('ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ')).text).toBe('ㅋㅋ');
+    expect(
+      filterDecode(speech('Yeah. Yeah. Yeah. Yeah. Yeah. Yeah.', { language: 'en' })).text,
+    ).toBe('Yeah. Yeah.');
   });
 
   it('measures peak loudness', () => {
