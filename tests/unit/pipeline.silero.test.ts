@@ -171,7 +171,7 @@ describe('Segmenter on Silero probabilities', () => {
     const audio = talkOverMusic();
     const silero = ends(await segment('silero', audio));
     expect(silero.map((e) => e.reason)).toEqual(['silence', 'silence']);
-    // The first ends after the first clip's speech (3 s), not at the 6 s cut.
+    // The first ends after the first clip's speech (3 s), not at the 5 s cut.
     expect(silero[0]?.endSample).toBeGreaterThan(2.8 * RATE);
     expect(silero[0]?.endSample).toBeLessThan(3.4 * RATE);
 

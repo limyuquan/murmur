@@ -216,7 +216,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    parameter in one `SegmenterConfig`). By default a segment ends at a 250 ms pause once it is
    1 s long, already at a 150 ms pause when the words so far end a sentence (it asks the ASR
    session to decode up to the pause, `requestPartial`, and `sentence.ts` judges the text), and
-   at 6 s at the least speech-like moment of its last second (a gap between words), the rest
+   at 5 s at the least speech-like moment of its last second (a gap between words), the rest
    carrying over into the next segment. Engines that listen to the track get the older
    pause-only rule (`PAUSE_SEGMENTER`). The ASR session streams
    partial and final results, each with its own language. Finals are translated in order with

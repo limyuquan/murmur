@@ -14,7 +14,7 @@
  *   (shorter ones wait for a 1 s pause, so a lone word isn't cut off), or already at a 150 ms
  *   pause when the words so far end a sentence. For that it asks the ASR session for a decode up
  *   to the pause (a `probe` event) and is told the text (`transcript()`); sentence.ts decides. A
- *   segment that reaches 6 s is cut in its last second rather than on the spot, at the frame
+ *   segment that reaches 5 s is cut in its last second rather than on the spot, at the frame
  *   least likely to be speech (a gap between words), then the quietest; the audio after the cut
  *   carries over into the next segment. Nothing is lost and none is heard twice, so no text needs
  *   merging at the cut. A segment with under 250 ms of speech is dropped (a cough, a blip): its
@@ -27,10 +27,11 @@
  * The benchmark measured these rules with a speech detector (Silero VAD), and the pipeline uses
  * the same one (silero.ts, fed through `pushScored()` by vadstage.ts). With the energy gate
  * (vad.ts), speech over music or noise rarely shows a pause, so on such audio most segments end at
- * the 6 s cut: the model is what lets the pause and sentence rules act. The energy gate stays for
- * when the model can't load, and for engines that listen to the track. Measured in Chrome with
- * Qwen3-ASR on chatter over music: final subtitles p50 3.8 s / p90 6.2 s after the speech with the
- * energy gate, 3.0 / 5.0 s with Silero. Segments there still run 4 to 6 s: the talk rarely pauses.
+ * the maximum-length cut: the model is what lets the pause and sentence rules act. The energy gate
+ * stays for when the model can't load, and for engines that listen to the track. Measured in
+ * Chrome with Qwen3-ASR on chatter over music, with a 6 s maximum: final subtitles p50 3.8 s /
+ * p90 6.2 s after the speech with the energy gate, 3.0 / 5.0 s with Silero. Segments there still
+ * ran 4 to 6 s: the talk rarely pauses.
  *
  * Shorter segments also keep most segments to one language, which matters for engines that pick
  * one language per segment. A cut where the language changes (a language-ID model on a sliding
@@ -93,9 +94,11 @@ export interface SegmenterConfig {
 }
 
 /**
- * The default: `sent150_h250_max6` from the segmentation benchmark (real chatter, code-switching
- * and long-form speech with Qwen3-ASR): final subtitles p50 1.1 s / p90 4.3 s after the speech
- * on chatter (3.9 / 9.9 s with the pause strategy), nothing lost, the same accuracy.
+ * The default: `sent150_h250_max5` from the segmentation benchmark (real chatter, code-switching
+ * and long-form speech with Qwen3-ASR): final text p50 0.9 s / p90 3.6 s after the speech on
+ * chatter (3.9 / 9.9 s with the pause strategy, 1.1 / 4.2 s with a 6 s maximum), nothing lost on
+ * code-switching, the same accuracy. A 4 s maximum was faster still but too short for whole
+ * sentences in long-form speech.
  */
 export const SENTENCE_SEGMENTER: Readonly<SegmenterConfig> = {
   strategy: 'sentence',
@@ -109,7 +112,7 @@ export const SENTENCE_SEGMENTER: Readonly<SegmenterConfig> = {
   hangoverMs: 250,
   minSegmentMs: 1000,
   longHangoverMs: 1000,
-  maxSegmentMs: 6000,
+  maxSegmentMs: 5000,
   cutSearchMs: 1000,
   cutMinHeadMs: 1000,
   cutAheadMs: 0,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LOOKAHEAD_CUT_AHEAD_MS } from '@/pipeline/pipeline';
 import { type SegmentEvent, Segmenter } from '@/pipeline/segmenter';
 import { EnergyVad, rmsDb } from '@/pipeline/vad';
 import { burst, concat, sine } from './helpers';
@@ -193,12 +194,19 @@ describe('Segmenter, sentence strategy (default)', () => {
     const c = new Segmenter(new EnergyVad()).config;
     expect(c).toMatchObject({
       strategy: 'sentence',
+      threshold: 0.5,
+      negThreshold: 0.35,
+      preRollMs: 100,
+      tailPadMs: 100,
       hangoverMs: 250,
       minSegmentMs: 1000,
       longHangoverMs: 1000,
-      maxSegmentMs: 6000,
+      maxSegmentMs: 5000,
       cutSearchMs: 1000,
+      cutMinHeadMs: 1000,
+      cutAheadMs: 0,
       sentenceHangMs: 150,
+      sentenceMinSegmentMs: 1000,
       sentenceRule: 'punct',
       minSpeechSpanMs: 250,
     });
@@ -256,30 +264,36 @@ describe('Segmenter, sentence strategy (default)', () => {
     expect(seg.flush()).toEqual([]);
   });
 
-  it('cuts continuous speech at 6 s at the quietest moment of the last second', () => {
-    // 20 s of talk with no pause; a 100 ms dip at 5.40 s and at 10.70 s.
+  it('cuts continuous speech at 5 s at the quietest moment of the last second', () => {
+    // 20 s of talk with no pause; a 100 ms dip at 4.40 s and at 8.70 s.
     const audio = concat([
-      burst(5.4, 0.3),
+      burst(4.4, 0.3),
       burst(0.1, 0.004),
-      burst(5.2, 0.3),
+      burst(4.2, 0.3),
       burst(0.1, 0.004),
-      burst(9.2, 0.3),
+      burst(11.2, 0.3),
       burst(1, 0),
     ]);
     const events = drive(new Segmenter(new EnergyVad()), audio);
     const e = ends(events);
-    expect(e.map((x) => x.reason)).toEqual(['max-length', 'max-length', 'max-length', 'silence']);
-    expect(e[3]?.endSample).toBe(ms(20_100));
-    // In the dips, not at 6 s.
-    expect(e[0]?.endSample).toBeGreaterThanOrEqual(ms(5400));
-    expect(e[0]?.endSample).toBeLessThan(ms(5500));
-    expect(e[1]?.endSample).toBeGreaterThanOrEqual(ms(10700));
-    expect(e[1]?.endSample).toBeLessThan(ms(10800));
-    // Every segment at most 6 s, each starting where the last one was cut.
+    expect(e.map((x) => x.reason)).toEqual([
+      'max-length',
+      'max-length',
+      'max-length',
+      'max-length',
+      'silence',
+    ]);
+    expect(e[4]?.endSample).toBe(ms(20_100));
+    // In the dips, not at 5 s.
+    expect(e[0]?.endSample).toBeGreaterThanOrEqual(ms(4400));
+    expect(e[0]?.endSample).toBeLessThan(ms(4500));
+    expect(e[1]?.endSample).toBeGreaterThanOrEqual(ms(8700));
+    expect(e[1]?.endSample).toBeLessThan(ms(8800));
+    // Every segment at most 5 s, each starting where the last one was cut.
     const s = starts(events);
     for (let i = 0; i < e.length; i++) {
       const start = s[i]?.startSample ?? 0;
-      expect((e[i]?.endSample ?? 0) - start).toBeLessThanOrEqual(ms(6000));
+      expect((e[i]?.endSample ?? 0) - start).toBeLessThanOrEqual(ms(5000));
       if (i > 0) expect(start).toBe(e[i - 1]?.endSample);
     }
     // No audio lost: each segment's audio runs from its start, through the carried-over part.
@@ -291,10 +305,10 @@ describe('Segmenter, sentence strategy (default)', () => {
   });
 
   it('with the audio ahead at hand (lookahead), cuts at a gap just past the maximum', () => {
-    // Talk from 0.5 s, a 100 ms gap at 6.6 s (too short to end the segment), more talk.
+    // Talk from 0.5 s, a 100 ms gap at 5.6 s (too short to end the segment), more talk.
     const audio = concat([
       burst(0.5, 0),
-      burst(6.1, 0.3),
+      burst(5.1, 0.3),
       burst(0.1, 0),
       burst(3, 0.3),
       burst(1, 0),
@@ -303,25 +317,48 @@ describe('Segmenter, sentence strategy (default)', () => {
     const events = drive(new Segmenter(new EnergyVad(), { cutAheadMs: 1000 }), audio);
     const ahead = ends(events);
     // Live: the cut is in the last second before the maximum, in the middle of the talk.
-    expect(live[0]?.endSample).toBeLessThan(ms(6500));
+    expect(live[0]?.endSample).toBeLessThan(ms(5500));
     // Ahead: at the gap.
-    expect(ahead[0]?.endSample).toBeGreaterThanOrEqual(ms(6550));
-    expect(ahead[0]?.endSample).toBeLessThanOrEqual(ms(6750));
+    expect(ahead[0]?.endSample).toBeGreaterThanOrEqual(ms(5550));
+    expect(ahead[0]?.endSample).toBeLessThanOrEqual(ms(5750));
     expect(ahead[0]?.reason).toBe('max-length');
     // Nothing lost: the next segment starts at the cut.
     expect(starts(events)[1]?.startSample).toBe(ahead[0]?.endSample);
     audioSpans(events);
   });
 
+  it('with lookahead, decides the cut 1.5 s past the 5 s maximum', () => {
+    // Talk from 0.5 s (the segment opens at 0.4 s, so its maximum is at 5.4 s and the cut is
+    // decided at 6.9 s), then a 100 ms gap at 7.2 s: too late to be the cut.
+    const audio = concat([
+      burst(0.5, 0),
+      burst(6.7, 0.3),
+      burst(0.1, 0),
+      burst(3, 0.3),
+      burst(1, 0),
+    ]);
+    const events = drive(
+      new Segmenter(new EnergyVad(), { cutAheadMs: LOOKAHEAD_CUT_AHEAD_MS }),
+      audio,
+    );
+    const first = ends(events)[0];
+    expect(first?.reason).toBe('max-length');
+    expect(first?.endSample).toBeGreaterThanOrEqual(ms(4400));
+    expect(first?.endSample).toBeLessThanOrEqual(ms(6900));
+    // Nothing lost: the next segment starts at the cut.
+    expect(starts(events)[1]?.startSample).toBe(first?.endSample);
+    audioSpans(events);
+  });
+
   it('never cuts in the first second, and cuts on the spot when the last second is even', () => {
     const audio = concat([burst(13, 0.3), burst(1, 0)]);
     const events = drive(new Segmenter(new EnergyVad(), { cutSearchMs: 0 }), audio);
-    expect(ends(events).map((e) => e.endSample)).toEqual([ms(6000), ms(12000), ms(13100)]);
+    expect(ends(events).map((e) => e.endSample)).toEqual([ms(5000), ms(10000), ms(13100)]);
     const searched = ends(drive(new Segmenter(new EnergyVad()), audio));
     for (const e of searched.slice(0, -1)) {
       const prev = searched[searched.indexOf(e) - 1]?.endSample ?? 0;
-      expect(e.endSample - prev).toBeGreaterThanOrEqual(ms(5000));
-      expect(e.endSample - prev).toBeLessThanOrEqual(ms(6000));
+      expect(e.endSample - prev).toBeGreaterThanOrEqual(ms(4000));
+      expect(e.endSample - prev).toBeLessThanOrEqual(ms(5000));
     }
   });
 
@@ -471,29 +508,29 @@ describe('Segmenter on scored frames (a model detector)', () => {
   const near = (t: number, from: number) => t >= from && t < from + 0.1;
 
   it('cuts at the gap between words, even where the music is louder than a soft syllable', () => {
-    const events = scored(7, (t) =>
-      near(t, 5.4)
+    const events = scored(6, (t) =>
+      near(t, 4.4)
         ? { prob: 0.1, amp: 0.3 } // a beat of music between two words
-        : near(t, 5.7)
+        : near(t, 4.7)
           ? { prob: 0.92, amp: 0.004 } // a soft syllable
           : { prob: 0.99, amp: 0.3 },
     );
     const cut = firstCut(events);
-    expect(cut).toBeGreaterThanOrEqual(5400 - frameMs);
-    expect(cut).toBeLessThan(5500);
+    expect(cut).toBeGreaterThanOrEqual(4400 - frameMs);
+    expect(cut).toBeLessThan(4500);
   });
 
   it('cuts at the quietest moment when every frame of the last second is speech', () => {
-    const events = scored(7, (t) =>
-      near(t, 5.2)
+    const events = scored(6, (t) =>
+      near(t, 4.2)
         ? { prob: 0.6, amp: 0.3 } // less sure, but still speech
-        : near(t, 5.7)
+        : near(t, 4.7)
           ? { prob: 0.9, amp: 0.004 }
           : { prob: 0.99, amp: 0.3 },
     );
     const cut = firstCut(events);
-    expect(cut).toBeGreaterThanOrEqual(5700 - frameMs);
-    expect(cut).toBeLessThan(5800);
+    expect(cut).toBeGreaterThanOrEqual(4700 - frameMs);
+    expect(cut).toBeLessThan(4800);
   });
 
   it('ends at a pause in the probabilities, whatever the level', () => {
