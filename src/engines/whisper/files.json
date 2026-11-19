@@ -1,0 +1,37 @@
+{
+  "whisper-base": {
+    "repo": "onnx-community/whisper-base",
+    "revision": "27a07b4b52b3a4c5886134bb4320e93e1a4bbc7c",
+    "shared": [
+      ["config.json", 2243],
+      ["generation_config.json", 3832],
+      ["preprocessor_config.json", 339],
+      ["tokenizer.json", 2480466],
+      ["tokenizer_config.json", 282682]
+    ],
+    "webgpu": [
+      ["onnx/encoder_model.onnx", 82468078],
+      ["onnx/decoder_model_merged_q4.onnx", 123602419]
+    ],
+    "wasm": [
+      ["onnx/encoder_model_quantized.onnx", 23201314],
+      ["onnx/decoder_model_merged_quantized.onnx", 53693315]
+    ]
+  },
+  "whisper-large-v3-turbo": {
+    "repo": "onnx-community/whisper-large-v3-turbo",
+    "revision": "360ebcde2559d60bb474678be3c1de9ef347d01a",
+    "shared": [
+      ["config.json", 1332],
+      ["generation_config.json", 3897],
+      ["preprocessor_config.json", 340],
+      ["tokenizer.json", 2480617],
+      ["tokenizer_config.json", 282843]
+    ],
+    "webgpu": [
+      ["onnx/encoder_model_fp16.onnx", 1274342603],
+      ["onnx/decoder_model_merged_q4.onnx", 334147222]
+    ],
+    "wasm": null
+  }
+}

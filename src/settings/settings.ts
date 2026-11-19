@@ -41,8 +41,17 @@ export interface OverlaySettings {
 export interface Settings {
   /** Language subtitles are translated into. */
   targetLanguage: LanguageTag;
-  /** `auto` detects the language of every segment; a tag only hints the engine. */
-  sourceLanguage: 'auto' | LanguageTag;
+  /**
+   * Languages the person expects to hear, in the order chosen (primary tags). Chrome's speech
+   * recognition runs one recognizer for each of the first `MAX_SPOKEN_FOR_CHROME`; translation
+   * packs are checked for each. Empty: the browser's languages (`spokenLanguages()`).
+   */
+  spokenLanguages: LanguageTag[];
+  /**
+   * Only these languages are spoken: engines that detect languages pick among them. Off (the
+   * default), they detect any language for each line.
+   */
+  onlySpoken: boolean;
   profile: ProfileChoice;
   /** Engines for `profile: 'custom'`. */
   custom: { asr: string; translation: string };
@@ -53,7 +62,8 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: 'en',
-  sourceLanguage: 'auto',
+  spokenLanguages: [],
+  onlySpoken: false,
   profile: 'balanced',
   custom: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID },
   translatePartials: false,
@@ -69,6 +79,28 @@ export const DEFAULT_SETTINGS: Settings = {
     avoidControls: true,
   },
 };
+
+/** Chrome's speech recognition runs at most this many recognizers (engines/chrome/webspeech.ts). */
+export const MAX_SPOKEN_FOR_CHROME = 4;
+/** Most spoken languages kept. */
+const MAX_SPOKEN = 12;
+
+/**
+ * The languages a session listens for: the chosen ones, or else the browser's own (its language
+ * list, as primary tags among `offered`), or English.
+ */
+export function spokenLanguages(
+  settings: Pick<Settings, 'spokenLanguages'>,
+  browserLanguages: readonly string[] = globalThis.navigator?.languages ?? [],
+  offered?: readonly string[],
+): LanguageTag[] {
+  if (settings.spokenLanguages.length > 0) return [...settings.spokenLanguages];
+  const primary = browserLanguages
+    .map((l) => l.split('-')[0]?.toLowerCase() ?? '')
+    .filter((l) => l && (!offered || offered.includes(l)));
+  const unique = [...new Set(primary)].slice(0, MAX_SPOKEN_FOR_CHROME);
+  return unique.length > 0 ? unique : ['en'];
+}
 
 /** Sizes offered as quick choices (popup), as `fontScale`. */
 export const SIZE_PRESETS = [
@@ -92,8 +124,10 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
   const d = base;
   return {
     targetLanguage: isTag(s.targetLanguage) ? s.targetLanguage : d.targetLanguage,
-    sourceLanguage:
-      s.sourceLanguage === 'auto' || isTag(s.sourceLanguage) ? s.sourceLanguage : d.sourceLanguage,
+    spokenLanguages: Array.isArray(s.spokenLanguages)
+      ? [...new Set(s.spokenLanguages.filter(isTag))].slice(0, MAX_SPOKEN)
+      : d.spokenLanguages,
+    onlySpoken: bool(s.onlySpoken, d.onlySpoken),
     profile: oneOf(s.profile, ['light', 'balanced', 'best', 'custom'] as const, d.profile),
     custom: {
       asr: typeof c.asr === 'string' && c.asr ? c.asr : d.custom.asr,

@@ -63,6 +63,24 @@ describe('ActivityTracker', () => {
     expect(t.snapshot(0).behind).toBe(true);
   });
 
+  it('falls behind when the speech engine is slower than real time or says so', () => {
+    const t = new ActivityTracker(0);
+    const health = { behind: false, backlogMs: 0, droppedPartials: 0, droppedSegments: 0 };
+    t.onHealth({ ...health, rtf: 0.4 });
+    expect(t.snapshot(0)).toMatchObject({ behind: false, rtf: 0.4 });
+    t.onHealth({ ...health, rtf: 1.3, backlogMs: 5000 });
+    expect(t.snapshot(0)).toMatchObject({ behind: true, rtf: 1.3, backlogMs: 5000 });
+    t.onHealth({ ...health, rtf: null, behind: true });
+    expect(t.snapshot(0).behind).toBe(true);
+  });
+
+  it('lists languages an engine refused, once heard', () => {
+    const t = new ActivityTracker(0);
+    t.onUnsupported('xx-YY');
+    t.onCue(cue('a', 1, { source: { text: 'a', language: 'xx', final: true } }), 0);
+    expect(t.snapshot(0).unsupported).toEqual(['xx']);
+  });
+
   it('tracks silence', () => {
     const t = new ActivityTracker(1000);
     t.onFrame(quiet, 2000);

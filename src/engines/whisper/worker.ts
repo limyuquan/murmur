@@ -9,8 +9,10 @@
  * `<|transcribe|>` and `<|notimestamps|>`, and applies Whisper's token suppression itself.
  * transformers.js 4.3.2 has no Whisper language detection of its own (it defaults to English).
  *
- * No remote code: ONNX Runtime's WebAssembly files ship in the extension (`wasmPaths`); only the
- * model weights come from Hugging Face, cached in the Cache API.
+ * No remote code: ONNX Runtime's WebAssembly files ship in the extension (`wasmPaths`). No
+ * downloads either: the weights were downloaded when the person asked (models/store.ts), and the
+ * worker reads them from the model cache (`modelFileCache`) with remote loading turned off. A
+ * missing file fails the load instead of fetching it.
  */
 import {
   AutoProcessor,
@@ -25,11 +27,17 @@ import {
 // ONNX Runtime's WebAssembly build, emitted into the extension by Vite: never the CDN default.
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
+import { modelFileCache } from '@/models/hub';
 import type { DecodeOutput, FromWorker, ToWorker, WhisperDevice } from './messages';
 
 env.allowLocalModels = false;
+// The library's network goes nowhere: every file comes from the model cache, and one missing from
+// it answers 404 (a required file then fails the load, an optional one is skipped). Remote
+// loading stays "on" only because transformers.js won't start with remote and local both off.
 env.allowRemoteModels = true;
-env.useBrowserCache = true;
+env.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+env.useBrowserCache = false;
+env.useCustomCache = true;
 // The runtime's files are the extension's own: no need to cache them, and the cache path imports
 // the runtime from a blob: URL, which the extension's script policy rightly refuses.
 env.useWasmCache = false;
@@ -86,6 +94,10 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
     onnx.wasm.numThreads = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 2) - 2));
   }
   const started = performance.now();
+  const first = message.devices[0];
+  if (!first) throw new Error('No way to run Whisper here (needs WebGPU or WebAssembly).');
+  // Every variant includes the processor's and tokenizer's files.
+  env.customCache = modelFileCache(first.source);
   const files = new Map<string, { loaded: number; total: number }>();
   const progress_callback = (info: ProgressInfo) => {
     if (info.status === 'progress') {
@@ -96,9 +108,10 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
         loadedBytes += f.loaded;
         total += f.total;
       }
+      // Reading the model from disk into memory.
       post({
         type: 'progress',
-        stage: 'download',
+        stage: 'compile',
         fraction: total > 0 ? loadedBytes / total : null,
         file: info.file,
       });
@@ -111,8 +124,10 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
   ]);
 
   let lastError: unknown = null;
-  for (const { device, dtype } of message.devices) {
+  for (const { device, dtype, source } of message.devices) {
     if (device === 'webgpu' && !(await hasWebGpu())) continue;
+    env.customCache = modelFileCache(source);
+    files.clear();
     try {
       const model = (await WhisperForConditionalGeneration.from_pretrained(message.repo, {
         ...options,

@@ -7,7 +7,13 @@
 import { type CaptureHandle, startCapture } from '@/capture/graph';
 import { type AudioSource, tabAudioSource, toneSource } from '@/capture/sources';
 import { createBuiltinRegistry } from '@/engines/builtin';
-import { isActionRequired } from '@/engines/errors';
+import {
+  isActionRequired,
+  isCompanionError,
+  isModelError,
+  isUnavailable,
+  isUnsupportedLanguage,
+} from '@/engines/errors';
 import { ENGINE_FACTORIES } from '@/engines/factories';
 import { detectHardware } from '@/engines/hardware';
 import { loadWithFallback } from '@/engines/loading';
@@ -124,6 +130,7 @@ export class OffscreenHost {
         targetLanguage: config.targetLanguage,
         sourceLanguage: config.sourceLanguage,
         spokenLanguages: config.spokenLanguages ?? [],
+        onlySpoken: config.onlySpoken ?? false,
       };
       const hardware = await detectHardware();
       const loading = (label: string, p: LoadProgress | null) =>
@@ -167,6 +174,7 @@ export class OffscreenHost {
         targetLanguage: config.targetLanguage,
         sourceLanguage: config.sourceLanguage,
         spokenLanguages: config.spokenLanguages ?? [],
+        onlySpoken: config.onlySpoken ?? false,
         translatePartials: config.translatePartials,
         track: running.capture.track,
         onCue: (cue) => {
@@ -188,6 +196,10 @@ export class OffscreenHost {
             }
             return;
           }
+          if (isUnsupportedLanguage(err)) {
+            running.activity.onUnsupported(err.language);
+            return;
+          }
           console.error(LOG_PREFIX, 'pipeline', err);
         },
       });
@@ -199,7 +211,7 @@ export class OffscreenHost {
       }, ACTIVITY_MS);
     } catch (err) {
       if (!this.isCurrent(running)) return;
-      const { message, code } = describeError(err);
+      const { message, code, missingModels } = describeError(err);
       console.error(LOG_PREFIX, 'session failed', err);
       this.report({
         state: 'error',
@@ -207,6 +219,7 @@ export class OffscreenHost {
         sessionId: config.sessionId,
         message,
         code,
+        ...(missingModels ? { missingModels } : {}),
         ...(isActionRequired(err) ? { setup: err.actions } : {}),
       });
       await this.teardown(running);
@@ -286,10 +299,24 @@ function loadingDetail(label: string, p: LoadProgress | null): string {
   }
 }
 
-function describeError(err: unknown): { message: string; code: SessionErrorCode } {
+export function describeError(err: unknown): {
+  message: string;
+  code: SessionErrorCode;
+  missingModels?: string[];
+} {
   if (isActionRequired(err)) {
     return { message: `Chrome needs to download first: ${err.message}.`, code: 'setup' };
   }
+  if (isModelError(err)) {
+    return {
+      message: err.message,
+      code: 'model',
+      ...(err.missing ? { missingModels: err.models } : {}),
+    };
+  }
+  if (isCompanionError(err)) return { message: err.message, code: 'companion' };
+  // Nothing in the profile's fallback chain can run here.
+  if (isUnavailable(err)) return { message: err.message, code: 'model' };
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
     return {
       message:

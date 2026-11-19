@@ -4,9 +4,11 @@ import {
   applyPatch,
   DEFAULT_SETTINGS,
   loadSettings,
+  MAX_SPOKEN_FOR_CHROME,
   mergeSettings,
   SETTINGS_KEY,
   saveSettings,
+  spokenLanguages,
   watchSettings,
 } from '@/settings/settings';
 
@@ -20,13 +22,15 @@ describe('mergeSettings', () => {
   it('keeps valid values and replaces invalid ones', () => {
     const s = mergeSettings({
       targetLanguage: 'pt-BR',
-      sourceLanguage: 'not a tag!',
+      spokenLanguages: ['fr', 'not a tag!', 'fr', 3, 'de'],
+      onlySpoken: 'no',
       profile: 'turbo',
       translatePartials: 'yes',
       overlay: { display: 'original', fontScale: 9, backgroundOpacity: -1, position: 'side' },
     });
     expect(s.targetLanguage).toBe('pt-BR');
-    expect(s.sourceLanguage).toBe('auto');
+    expect(s.spokenLanguages).toEqual(['fr', 'de']);
+    expect(s.onlySpoken).toBe(false);
     expect(s.profile).toBe(DEFAULT_SETTINGS.profile);
     expect(s.translatePartials).toBe(false);
     expect(s.overlay).toEqual({
@@ -41,6 +45,19 @@ describe('mergeSettings', () => {
     const s = applyPatch(DEFAULT_SETTINGS, { overlay: { position: 'top' }, custom: { asr: 'x' } });
     expect(s.overlay).toEqual({ ...DEFAULT_SETTINGS.overlay, position: 'top' });
     expect(s.custom).toEqual({ ...DEFAULT_SETTINGS.custom, asr: 'x' });
+  });
+});
+
+describe('spokenLanguages', () => {
+  it('uses the chosen languages, else the browser’s offered ones, else English', () => {
+    expect(spokenLanguages({ spokenLanguages: ['ja', 'de'] }, ['fr-FR'])).toEqual(['ja', 'de']);
+    expect(
+      spokenLanguages({ spokenLanguages: [] }, ['fr-CA', 'fr', 'en-GB', 'xx'], ['fr', 'en']),
+    ).toEqual(['fr', 'en']);
+    expect(spokenLanguages({ spokenLanguages: [] }, ['xx'], ['fr'])).toEqual(['en']);
+    expect(spokenLanguages({ spokenLanguages: [] }, ['de', 'es', 'fr', 'it', 'nl']).length).toBe(
+      MAX_SPOKEN_FOR_CHROME,
+    );
   });
 });
 

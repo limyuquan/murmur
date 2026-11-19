@@ -50,10 +50,10 @@ import {
   unusedFrom,
 } from './arbiter';
 import { CHROME_WEBSPEECH_INFO } from './info';
-import { missingSetup, speechAction, waitForDownloads } from './setup';
+import { MAX_RECOGNIZERS, missingSetup, speechAction, waitForDownloads } from './setup';
 
 /** More recognizers cost CPU in Chrome's speech service and add wrong-language noise. */
-export const MAX_RECOGNIZERS = 4;
+export { MAX_RECOGNIZERS };
 
 /** What the e2e build records about each segment's choice (for tuning the arbiter). */
 export interface ArbitrationRecord {

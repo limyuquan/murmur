@@ -1,14 +1,17 @@
 /**
  * The Whisper models Murmur runs in the browser (transformers.js, WebGPU with a WebAssembly
- * fallback), and their static engine info. Weights come from Hugging Face at a pinned revision
- * the first time the engine loads, and stay in the Cache API (`transformers-cache`).
+ * fallback), and their static engine info. Weights come from Hugging Face at a pinned revision,
+ * downloaded when the person asks (models/store.ts), one set per backend: the WebGPU and
+ * WebAssembly builds use different weight formats.
  *
  * Measured with transformers.js 4.3.2 on Chrome 157, RTX 3070 (12 s clips, warm): base on WebGPU
  * (fp32 encoder, q4 decoder) real-time factor 0.06–0.09, on WebAssembly q8 with 6 threads 0.5–0.6;
  * large-v3-turbo on WebGPU (fp16 encoder, q4 decoder) 0.10–0.15. The first WebGPU decode compiles
  * shaders (up to ~26 s for base), so the engine warms up while loading.
  */
-import type { AsrEngineInfo } from '../types';
+import type { ModelSource } from '@/models/hub';
+import type { AsrEngineInfo, EngineModel } from '../types';
+import FILES from './files.json';
 
 export type WhisperId = 'whisper-base' | 'whisper-large-v3-turbo';
 
@@ -23,32 +26,189 @@ export interface WhisperModel {
   repo: string;
   /** Hugging Face commit, so every install gets the same files. */
   revision: string;
-  webgpu: { dtype: WhisperDtype; downloadMB: number } | null;
-  wasm: { dtype: WhisperDtype; downloadMB: number } | null;
+  /** Weight formats and download, per backend; null where it doesn't run. */
+  webgpu: WhisperVariant | null;
+  wasm: WhisperVariant | null;
 }
 
+export interface WhisperVariant {
+  dtype: WhisperDtype;
+  /** The files transformers.js reads for this dtype (files.json, sizes from the Hub). */
+  source: ModelSource;
+  downloadMB: number;
+}
+
+type FileList = [string, number][];
+
+function variant(id: WhisperId, backend: 'webgpu' | 'wasm', dtype: WhisperDtype) {
+  const entry = FILES[id] as { repo: string; revision: string; shared: FileList } & Record<
+    'webgpu' | 'wasm',
+    FileList | null
+  >;
+  const own = entry[backend];
+  if (!own) return null;
+  const files = [...entry.shared, ...own].map(([path, bytes]) => ({ path, bytes }));
+  const bytes = files.reduce((n, f) => n + f.bytes, 0);
+  return {
+    dtype,
+    source: { repo: entry.repo, revision: entry.revision, files },
+    downloadMB: Math.round(bytes / 1e6),
+  } satisfies WhisperVariant;
+}
+
+const model = (id: WhisperId, webgpu: WhisperDtype, wasm: WhisperDtype | null): WhisperModel => ({
+  id,
+  repo: FILES[id].repo,
+  revision: FILES[id].revision,
+  webgpu: variant(id, 'webgpu', webgpu),
+  wasm: wasm ? variant(id, 'wasm', wasm) : null,
+});
+
 export const WHISPER_MODELS: Record<WhisperId, WhisperModel> = {
-  'whisper-base': {
-    id: 'whisper-base',
-    repo: 'onnx-community/whisper-base',
-    revision: '27a07b4b52b3a4c5886134bb4320e93e1a4bbc7c',
-    webgpu: { dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' }, downloadMB: 210 },
-    wasm: { dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' }, downloadMB: 80 },
-  },
-  'whisper-large-v3-turbo': {
-    id: 'whisper-large-v3-turbo',
-    repo: 'onnx-community/whisper-large-v3-turbo',
-    revision: '360ebcde2559d60bb474678be3c1de9ef347d01a',
-    webgpu: { dtype: { encoder_model: 'fp16', decoder_model_merged: 'q4' }, downloadMB: 1610 },
-    // About 10× slower than real time on a CPU: not offered without WebGPU.
-    wasm: null,
-  },
+  'whisper-base': model(
+    'whisper-base',
+    { encoder_model: 'fp32', decoder_model_merged: 'q4' },
+    { encoder_model: 'q8', decoder_model_merged: 'q8' },
+  ),
+  // About 10× slower than real time on a CPU: not offered without WebGPU.
+  'whisper-large-v3-turbo': model(
+    'whisper-large-v3-turbo',
+    { encoder_model: 'fp16', decoder_model_merged: 'q4' },
+    null,
+  ),
 };
+
+/** The model's downloads, one per backend it runs on. */
+function engineModels(m: WhisperModel, label: string): EngineModel[] {
+  const out: EngineModel[] = [];
+  if (m.webgpu) {
+    out.push({
+      id: `${m.id}-webgpu`,
+      label: `${label}, for the graphics card`,
+      sizeMB: m.webgpu.downloadMB,
+      backend: 'webgpu',
+      source: m.webgpu.source,
+    });
+  }
+  if (m.wasm) {
+    out.push({
+      id: `${m.id}-wasm`,
+      label: `${label}, for the processor`,
+      sizeMB: m.wasm.downloadMB,
+      backend: 'wasm',
+      source: m.wasm.source,
+    });
+  }
+  return out;
+}
+
+/** Languages Whisper transcribes (its language tokens, as BCP-47 primary tags). */
+export const WHISPER_LANGUAGES = [
+  'af',
+  'am',
+  'ar',
+  'as',
+  'az',
+  'ba',
+  'be',
+  'bg',
+  'bn',
+  'bo',
+  'br',
+  'bs',
+  'ca',
+  'cs',
+  'cy',
+  'da',
+  'de',
+  'el',
+  'en',
+  'es',
+  'et',
+  'eu',
+  'fa',
+  'fi',
+  'fo',
+  'fr',
+  'gl',
+  'gu',
+  'ha',
+  'haw',
+  'he',
+  'hi',
+  'hr',
+  'ht',
+  'hu',
+  'hy',
+  'id',
+  'is',
+  'it',
+  'ja',
+  'jv',
+  'ka',
+  'kk',
+  'km',
+  'kn',
+  'ko',
+  'la',
+  'lb',
+  'ln',
+  'lo',
+  'lt',
+  'lv',
+  'mg',
+  'mi',
+  'mk',
+  'ml',
+  'mn',
+  'mr',
+  'ms',
+  'mt',
+  'my',
+  'ne',
+  'nl',
+  'nn',
+  'no',
+  'oc',
+  'pa',
+  'pl',
+  'ps',
+  'pt',
+  'ro',
+  'ru',
+  'sa',
+  'sd',
+  'si',
+  'sk',
+  'sl',
+  'sn',
+  'so',
+  'sq',
+  'sr',
+  'su',
+  'sv',
+  'sw',
+  'ta',
+  'te',
+  'tg',
+  'th',
+  'tk',
+  'tl',
+  'tr',
+  'tt',
+  'uk',
+  'ur',
+  'uz',
+  'vi',
+  'yi',
+  'yo',
+  'zh',
+] as const;
 
 const COMMON = {
   kind: 'asr',
   runtime: 'browser',
-  languages: 'any',
+  languages: WHISPER_LANGUAGES,
   streaming: true,
   detectsLanguage: true,
   // Detects one language per segment; segments are short, so a switch lands on a boundary.
@@ -63,7 +223,11 @@ export const WHISPER_BASE_INFO: AsrEngineInfo = {
   label: 'Whisper base',
   description:
     'Small and quick. Runs on most computers, on the graphics card or the processor. Less accurate.',
-  requirements: { backends: ['webgpu', 'wasm'], downloadMB: 210 },
+  requirements: {
+    backends: ['webgpu', 'wasm'],
+    downloadMB: WHISPER_MODELS['whisper-base'].wasm?.downloadMB ?? 0,
+  },
+  models: engineModels(WHISPER_MODELS['whisper-base'], 'Whisper base'),
 };
 
 export const WHISPER_TURBO_INFO: AsrEngineInfo = {
@@ -76,6 +240,9 @@ export const WHISPER_TURBO_INFO: AsrEngineInfo = {
     shaderF16: true,
     minGpuBufferMB: 1024,
     minDeviceMemoryGB: 8,
-    downloadMB: 1610,
+    downloadMB: WHISPER_MODELS['whisper-large-v3-turbo'].webgpu?.downloadMB ?? 0,
   },
+  // Large v3 also knows Cantonese.
+  languages: [...WHISPER_LANGUAGES, 'yue'],
+  models: engineModels(WHISPER_MODELS['whisper-large-v3-turbo'], 'Whisper large v3 turbo'),
 };

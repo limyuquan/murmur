@@ -14,7 +14,11 @@
  * blocks: on Chrome 157 its availability went back to `downloadable` after browser restarts in
  * automated profiles, and lines translate fine from the speech engine's language without it.
  */
-import { EngineActionRequiredError, EngineUnavailableError } from '../errors';
+import {
+  EngineActionRequiredError,
+  EngineUnavailableError,
+  UnsupportedLanguageError,
+} from '../errors';
 import type {
   EngineState,
   LanguageTag,
@@ -159,7 +163,10 @@ export class ChromeTranslatorEngine implements TranslationEngine {
     if (state === 'downloadable') throw new EngineActionRequiredError([action]);
     if (state === 'downloading') throw new Error(`${action.label}: still downloading.`);
     if (state === 'unavailable') {
-      throw new Error(`Chrome can't translate ${sourceLanguage} to ${targetLanguage}.`);
+      throw new UnsupportedLanguageError(
+        sourceLanguage,
+        `Chrome can't translate ${sourceLanguage} to ${targetLanguage}.`,
+      );
     }
     return api.create({ sourceLanguage, targetLanguage });
   }

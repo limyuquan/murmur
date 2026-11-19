@@ -42,6 +42,8 @@ export interface PipelineOptions {
   contextLines?: number;
   /** Languages the person expects to hear (empty: not said). */
   spokenLanguages?: readonly LanguageTag[];
+  /** Nothing but `spokenLanguages` is spoken. */
+  onlySpoken?: boolean;
   /** The captured audio as a live track, for engines that listen to it. */
   track?: MediaStreamTrack | null;
   onCue(cue: Cue): void;
@@ -79,6 +81,7 @@ export class Pipeline {
       sampleRate: PIPELINE_SAMPLE_RATE,
       languageHint: options.sourceLanguage,
       spokenLanguages: options.spokenLanguages ?? [],
+      onlySpoken: options.onlySpoken ?? false,
       track: options.track ?? null,
       currentSample: () => this.position,
       onResult: (result) => this.onAsrResult(result),

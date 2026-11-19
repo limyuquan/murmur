@@ -14,6 +14,8 @@ export interface ActivityOptions {
   behindMs?: number;
   /** Finished lines waiting for translation at once that count as falling behind. */
   maxBacklog?: number;
+  /** Speech engine real-time factor above which it counts as falling behind. */
+  maxRtf?: number;
   /** RMS level that counts as sound. */
   soundLevel?: number;
 }
@@ -33,9 +35,12 @@ export class ActivityTracker {
   private readonly cues = new Map<string, Seen>();
   private readonly delays: number[] = [];
   private lastSound: number | null = null;
-  private engineBehind = false;
+  private health: AsrHealth | null = null;
+  /** Languages an engine said it can't handle at all (primary tags). */
+  private readonly refused = new Set<string>();
   private readonly behindMs: number;
   private readonly maxBacklog: number;
+  private readonly maxRtf: number;
   private readonly soundLevel: number;
 
   constructor(
@@ -44,6 +49,7 @@ export class ActivityTracker {
   ) {
     this.behindMs = options.behindMs ?? 6000;
     this.maxBacklog = options.maxBacklog ?? 3;
+    this.maxRtf = options.maxRtf ?? 1;
     this.soundLevel = options.soundLevel ?? 0.003;
   }
 
@@ -53,9 +59,15 @@ export class ActivityTracker {
     if (Math.sqrt(sum / Math.max(1, samples.length)) >= this.soundLevel) this.lastSound = now;
   }
 
-  /** The speech engine's own report: it is skipping work to keep up. */
+  /** The speech engine's own report: its backlog, speed, and whether it is skipping work. */
   onHealth(health: AsrHealth): void {
-    this.engineBehind = health.behind;
+    this.health = health;
+  }
+
+  /** An engine can't handle `language` at all (not a missing download). */
+  onUnsupported(language: string): void {
+    const p = primaryLanguage(language);
+    if (p && p !== UNKNOWN_LANGUAGE) this.refused.add(p);
   }
 
   onCue(cue: Cue, now: number): void {
@@ -99,13 +111,17 @@ export class ActivityTracker {
     }
     const languages = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([l]) => l);
     const supports = this.options.supports;
-    const unsupported = supports ? languages.filter((l) => !supports(l)) : [];
+    const unsupported = languages.filter(
+      (l) => this.refused.has(l) || (supports ? !supports(l) : false),
+    );
 
     const delayMs = this.delays.length > 0 ? median(this.delays) : null;
+    const rtf = this.health?.rtf ?? null;
     const behind =
       (delayMs !== null && delayMs > this.behindMs) ||
       backlog >= this.maxBacklog ||
-      this.engineBehind;
+      (rtf !== null && rtf > this.maxRtf) ||
+      (this.health?.behind ?? false);
 
     return {
       stage,
@@ -113,6 +129,9 @@ export class ActivityTracker {
       unsupported,
       delayMs,
       behind,
+      rtf,
+      backlogMs: this.health?.backlogMs ?? 0,
+      queue: backlog,
       silentMs: Math.max(0, now - (this.lastSound ?? this.startedAt)),
       soundEver: this.lastSound !== null,
     };
@@ -126,6 +145,8 @@ export function activityChanged(a: SessionActivity | undefined, b: SessionActivi
     JSON.stringify({
       ...x,
       delayMs: x.delayMs === null ? null : Math.round(x.delayMs / 500),
+      rtf: x.rtf === null ? null : Math.round(x.rtf * 10),
+      backlogMs: Math.round(x.backlogMs / 1000),
       // Silence matters to the popup in steps: none, a few seconds, long.
       silentMs: x.silentMs < 3000 ? 0 : x.silentMs < 8000 ? 1 : 2,
     });

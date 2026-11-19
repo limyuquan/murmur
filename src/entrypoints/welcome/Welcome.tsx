@@ -12,7 +12,15 @@ import type { Settings } from '@/settings/settings';
 import { Icon, type IconName, Logo, ProgressBar } from '@/ui/components';
 import { useHardware, useModels, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
-import { ModelList, ProfileCards, type ProfileModels, profileModels } from '@/ui/models';
+import {
+  ChromePacks,
+  ModelList,
+  ProfileCards,
+  type ProfileModels,
+  packsForSettings,
+  profileModels,
+} from '@/ui/models';
+import { SpokenLanguages } from '@/ui/spoken';
 
 const STEPS = [
   { id: 'intro', label: 'Welcome' },
@@ -29,7 +37,6 @@ const EMPTY: ProfileModels = {
   missingMB: 0,
   ready: false,
   downloading: null,
-  simulated: false,
 };
 
 export function Welcome({ initial }: { initial: Settings }) {
@@ -65,6 +72,7 @@ export function Welcome({ initial }: { initial: Settings }) {
   const modelsOf = (p: ProfileId | 'custom') =>
     hardware ? profileModels(p, settings, registry, hardware, view) : EMPTY;
   const selected = modelsOf(settings.profile);
+  const packs = hardware ? packsForSettings(settings, registry, hardware) : [];
   const profileLabel = settings.profile === 'custom' ? 'Custom' : PROFILES[settings.profile].label;
 
   let body: ReactNode;
@@ -81,8 +89,14 @@ export function Welcome({ initial }: { initial: Settings }) {
       );
       break;
     case 'language':
-      title = 'What language do you want subtitles in?';
-      body = <LanguageStep settings={settings} update={update} />;
+      title = 'Your languages';
+      body = (
+        <LanguageStep
+          settings={settings}
+          update={update}
+          chromeSpeech={packs.some((p) => p.kind === 'speech-pack')}
+        />
+      );
       next = (
         <button type="button" className="btn btn-primary btn-lg" onClick={() => go('model')}>
           Continue <Icon name="arrow" />
@@ -117,19 +131,41 @@ export function Welcome({ initial }: { initial: Settings }) {
       );
       break;
     case 'download': {
-      title = selected.ready ? 'Models are ready' : `Download the ${profileLabel} models`;
       const ids = selected.models.map((m) => m.id);
+      const packList = packs.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-[var(--color-muted)]">
+            {ids.length > 0
+              ? 'Chrome also needs a language pack for each of your languages. It downloads each one after a click and keeps it.'
+              : 'Light uses Chrome’s own speech recognition and translation. Chrome downloads a pack for each language after a click, and keeps it.'}
+          </p>
+          <div className="card px-4 py-1">
+            <ChromePacks actions={packs} />
+          </div>
+        </div>
+      );
+      if (ids.length === 0) {
+        title = 'Chrome’s language packs';
+        body = (
+          <div className="grid gap-4">
+            {packList || (
+              <p className="text-[var(--color-muted)]">Nothing to download for these models.</p>
+            )}
+          </div>
+        );
+        next = (
+          <button type="button" className="btn btn-primary btn-lg" onClick={() => go('done')}>
+            Continue <Icon name="arrow" />
+          </button>
+        );
+        break;
+      }
+      title = selected.ready ? 'Models are ready' : `Download the ${profileLabel} models`;
       body = (
         <div className="grid gap-4">
-          {selected.simulated && (
-            <p className="notice text-[13px]">
-              Preview: real models aren’t included in this version yet, so this download is
-              simulated and nothing is fetched. Subtitles use the demo engines for now.
-            </p>
-          )}
           <p className="text-[var(--color-muted)]">
-            {formatSize(selected.totalMB)} in all, downloaded once and kept on this computer. You
-            can close this page: the download carries on.
+            {formatSize(selected.totalMB)} in all, from Hugging Face, downloaded once and kept on
+            this computer. You can close this page: the download carries on.
             {view?.storage.availableMB != null &&
               ` ${formatSize(view.storage.availableMB)} is free for Murmur.`}
           </p>
@@ -144,6 +180,7 @@ export function Welcome({ initial }: { initial: Settings }) {
               <ModelList view={view} actions={actions} filter={ids} />
             </div>
           )}
+          {packList}
         </div>
       );
       next = selected.ready ? (
@@ -299,13 +336,15 @@ function SampleFrame() {
 function LanguageStep({
   settings,
   update,
+  chromeSpeech,
 }: {
   settings: Settings;
   update: ReturnType<typeof useSettings>[1];
+  chromeSpeech: boolean;
 }) {
   const languages = useMemo(languageOptions, []);
   return (
-    <div className="grid max-w-[420px] gap-3">
+    <div className="grid max-w-[560px] gap-3">
       <label htmlFor="welcome-target" className="font-medium">
         Translate into
       </label>
@@ -322,9 +361,9 @@ function LanguageStep({
         ))}
       </select>
       <p className="text-[13px] text-[var(--color-muted)]">
-        The spoken language is detected for each line, so videos that mix languages work too. Lines
-        already in this language are shown as they are.
+        Lines already in this language are shown as they are.
       </p>
+      <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
     </div>
   );
 }

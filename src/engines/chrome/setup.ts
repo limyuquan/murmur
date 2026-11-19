@@ -23,6 +23,7 @@ import {
   translatorApi,
   translatorLanguage,
 } from './api';
+import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './info';
 
 /** Plain language name ("Korean"), for labels. */
 export function languageName(tag: LanguageTag): string {
@@ -200,4 +201,32 @@ function leastReady(states: readonly Availability[]): Availability {
 function list(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? '';
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/** Chrome's speech recognition runs one recognizer per language, at most this many. */
+export const MAX_RECOGNIZERS = 4;
+
+/**
+ * The language packs a session with these engines and languages needs, one action per pack (for
+ * the model manager's list): a speech pack per spoken language (the first `MAX_RECOGNIZERS`) with
+ * Chrome's speech recognition, a translation pack per spoken language into the target with
+ * Chrome's translator.
+ */
+export function packsFor(options: {
+  asr: string;
+  translation: string;
+  spoken: readonly LanguageTag[];
+  target: LanguageTag;
+}): SetupAction[] {
+  const out: SetupAction[] = [];
+  if (options.asr === CHROME_WEBSPEECH_ID) {
+    for (const l of options.spoken.slice(0, MAX_RECOGNIZERS)) out.push(speechAction([l]));
+  }
+  if (options.translation === CHROME_TRANSLATOR_ID) {
+    const target = translatorLanguage(options.target);
+    for (const l of options.spoken) {
+      if (translatorLanguage(l) !== target) out.push(translationAction(l, options.target));
+    }
+  }
+  return out;
 }

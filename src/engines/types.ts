@@ -11,6 +11,7 @@
  * Heavy engines should do their work in a dedicated Worker (one per model, so unloading one frees
  * its memory) and implement these interfaces as a thin proxy in the offscreen document.
  */
+import type { ModelSource } from '@/models/hub';
 import type { HardwareInfo } from './hardware';
 
 /** BCP-47 language tag ("en", "ja", "pt-BR"), or `UNKNOWN_LANGUAGE`. */
@@ -52,13 +53,22 @@ export interface HardwareRequirements {
 
 /**
  * A model an engine downloads before it can run. Listed so the options page can show sizes and
- * manage downloads; engines that share a model list the same `id`, and it is stored once.
+ * manage downloads; engines that share a model list the same `id`, and it is stored once. The
+ * engine never downloads it itself: `load()` fails with `ModelMissingError` (errors.ts) until the
+ * person has downloaded it.
  */
 export interface EngineModel {
   id: string;
-  /** Plain name for the model manager ("Speech recognition, small"). */
+  /** Plain name for the model manager ("Whisper base, for the graphics card"). */
   label: string;
   sizeMB: number;
+  /**
+   * The backend this download is for, when an engine has one per backend (weights in different
+   * formats): the catalog offers the one this device runs (WebGPU first).
+   */
+  backend?: 'webgpu' | 'wasm';
+  /** The exact files. */
+  source: ModelSource;
 }
 
 /** Static description of an engine: readable without loading it (settings, popup). */
@@ -159,12 +169,17 @@ export interface SessionLanguages {
   sourceLanguage: LanguageTag | null;
   /** Languages the person expects to hear (empty: not said). */
   spokenLanguages: readonly LanguageTag[];
+  /** Nothing but `spokenLanguages` is spoken. */
+  onlySpoken?: boolean;
 }
 
 export interface Engine<I extends EngineInfo> {
   readonly info: I;
   readonly state: EngineState;
-  /** Downloads (if needed) and initialises the model. Idempotent once `ready`. */
+  /**
+   * Initialises the model. Idempotent once `ready`. Never downloads a model the person hasn't
+   * downloaded (`ModelError`); Chrome language packs need a click (`EngineActionRequiredError`).
+   */
   load(options?: LoadOptions): Promise<void>;
   /** Frees the model. The engine can be loaded again later. */
   unload(): Promise<void>;
@@ -192,9 +207,11 @@ export interface AsrSessionOptions {
   languageHint: LanguageTag | null;
   /**
    * Languages the person expects to hear, when they said (empty or absent: any). Engines that
-   * can't detect languages listen for these; detecting engines may limit detection to them.
+   * can't detect languages listen for these.
    */
   spokenLanguages?: readonly LanguageTag[];
+  /** Nothing else is spoken: detecting engines pick among `spokenLanguages` only. */
+  onlySpoken?: boolean;
   /** The live audio, for engines with `audioInput: 'track'`. */
   track?: MediaStreamTrack | null;
   /** Index of the newest captured sample, so track engines can place their results in time. */
@@ -215,6 +232,11 @@ export interface AsrHealth {
   droppedPartials: number;
   /** Segments given up on (sent as empty finals) because the backlog grew too long. */
   droppedSegments: number;
+  /**
+   * Real-time factor of recent decodes: seconds of work per second of audio (median of the last
+   * few finished lines), when the engine measures it. Over 1, it is slower than the speech.
+   */
+  rtf: number | null;
 }
 
 /**

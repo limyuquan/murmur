@@ -8,6 +8,7 @@ import { type Settings, SIZE_PRESETS } from '@/settings/settings';
 import { Dot, Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
 import { useSettings } from '@/ui/hooks';
 import { listNames } from '@/ui/languages';
+import { SetupButtons } from '@/ui/setup';
 import { describeStatus, type FixAction, isOn } from './status';
 
 function openOptions(section?: string): void {
@@ -103,6 +104,12 @@ export function Popup({
     : describeStatus(view);
   const activity =
     view.status.state === 'running' && view.thisTab ? view.status.activity : undefined;
+  // Downloads only a click can start (Chrome language packs), asked for by the session.
+  const setup =
+    view.thisTab && (view.status.state === 'running' || view.status.state === 'error')
+      ? (view.status.setup ?? [])
+      : [];
+  const failedForSetup = view.status.state === 'error' && setup.length > 0;
   const languages = activity?.languages ?? [];
   const sizePreset = SIZE_PRESETS.find(
     (p) => Math.abs(p.scale - settings.overlay.fontScale) < 0.01,
@@ -161,6 +168,20 @@ export function Popup({
           >
             Heard: {listNames(languages)}
           </p>
+        )}
+        {setup.length > 0 && (
+          <div className="mt-3 ml-[18px]">
+            <SetupButtons
+              key={setup.map((a) => a.id).join('|')}
+              actions={setup}
+              // The session stopped for these: start it again once they're in.
+              onAllDone={
+                failedForSetup
+                  ? () => void run(() => call('start', { tabId: view.tabId }))
+                  : undefined
+              }
+            />
+          </div>
         )}
         {'action' in status && status.action && (
           <div className="mt-3 ml-[18px]">

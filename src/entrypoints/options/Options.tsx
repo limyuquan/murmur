@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
-import { PROFILES, type ProfileId, recommendProfile } from '@/engines/profiles';
+import { CHROME_WEBSPEECH_ID } from '@/engines/chrome/info';
+import { PROFILES, type ProfileId, recommendProfile, resolveEngines } from '@/engines/profiles';
 import { formatSize } from '@/models/types';
 import { SubtitlePreview } from '@/overlay/preview';
 import { clearPositions, loadPositions, watchPositions } from '@/settings/positions';
@@ -11,13 +12,16 @@ import { Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
 import { useHardware, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
+  ChromePacks,
   engineFits,
   HardwareSummary,
   ModelList,
   ProfileCards,
   type ProfileModels,
+  packsForSettings,
   profileModels,
 } from '@/ui/models';
+import { SpokenLanguages } from '@/ui/spoken';
 
 const SECTIONS = [
   { id: 'models', label: 'Models' },
@@ -138,7 +142,10 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
     hardware ? profileModels(p, settings, registry, hardware, view) : null;
   const selected = modelsOf(settings.profile);
   const suggested = hardware ? recommendProfile(hardware) : null;
-  const simulated = view?.models.some((m) => m.info.simulated) ?? false;
+  const packs = useMemo(
+    () => (hardware ? packsForSettings(settings, registry, hardware) : []),
+    [settings, registry, hardware],
+  );
   const selectedLabel = settings.profile === 'custom' ? 'Custom' : PROFILES[settings.profile].label;
 
   return (
@@ -147,13 +154,6 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
       title="Models"
       intro="Murmur turns speech into text and translates it on this computer. Larger models make fewer mistakes, but need a faster device and a bigger one-time download."
     >
-      {simulated && (
-        <p className="notice text-[13px]" data-testid="simulated-notice">
-          Preview: real models aren’t included in this version yet. Downloads here are simulated
-          (nothing is fetched), and subtitles use the demo engines.
-        </p>
-      )}
-
       <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
         <ProfileCards
           value={settings.profile}
@@ -166,7 +166,6 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
               missingMB: 0,
               ready: false,
               downloading: null,
-              simulated: false,
             }
           }
         />
@@ -254,9 +253,22 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
         </div>
       )}
 
+      {packs.length > 0 && (
+        <div className="card p-4" data-testid="chrome-packs">
+          <h3 className="font-semibold">Chrome language packs</h3>
+          <p className="mt-0.5 text-[13px] text-[var(--color-muted)]">
+            {selectedLabel} uses Chrome’s own speech recognition or translation. Chrome downloads
+            and keeps a pack for each language, after a click.
+          </p>
+          <div className="mt-1">
+            <ChromePacks actions={packs} />
+          </div>
+        </div>
+      )}
+
       <div className="card p-4" id="downloads">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="font-semibold">Downloaded models</h3>
+          <h3 className="font-semibold">Models from Murmur</h3>
           {view && (
             <p className="text-[13px] text-[var(--color-muted)]" data-testid="disk-usage">
               {formatSize(view.storage.modelsMB)} used
@@ -271,9 +283,15 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
           </p>
         )}
         {view ? (
-          <div className="mt-1">
-            <ModelList view={view} actions={actions} />
-          </div>
+          view.models.length > 0 ? (
+            <div className="mt-1">
+              <ModelList view={view} actions={actions} />
+            </div>
+          ) : (
+            <p className="mt-3 text-[var(--color-muted)]">
+              None of the model sizes needs a download from Murmur on this device.
+            </p>
+          )
         ) : (
           <p className="mt-3 text-[var(--color-muted)]">Loading…</p>
         )}
@@ -284,7 +302,8 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
               className="btn btn-sm btn-quiet"
               onClick={() => {
                 for (const m of view.models)
-                  if (m.status.state === 'ready') actions.remove(m.info.id);
+                  if (m.status.state === 'ready' || m.status.state === 'partial')
+                    actions.remove(m.info.id);
               }}
             >
               <Icon name="trash" size={14} /> Delete all
@@ -345,6 +364,12 @@ function CustomEngines({
 
 function LanguagesSection({ settings, update }: { settings: Settings; update: Update }) {
   const languages = useMemo(languageOptions, []);
+  const registry = useMemo(createBuiltinRegistry, []);
+  const hardware = useHardware();
+  const chromeSpeech =
+    hardware !== null &&
+    resolveEngines(settings.profile, settings.custom, registry, hardware).asr ===
+      CHROME_WEBSPEECH_ID;
   return (
     <Section
       id="languages"
@@ -366,25 +391,7 @@ function LanguagesSection({ settings, update }: { settings: Settings; update: Up
             ))}
           </select>
         </Row>
-        <Row
-          label="Spoken language"
-          hint="Detecting works for most videos. Pick one only if detection gets it wrong."
-          htmlFor="source"
-        >
-          <select
-            id="source"
-            className="input"
-            value={settings.sourceLanguage}
-            onChange={(e) => update({ sourceLanguage: e.target.value })}
-          >
-            <option value="auto">Detect for each line</option>
-            {languages.map((l) => (
-              <option key={l.tag} value={l.tag}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </Row>
+        <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
       </div>
     </Section>
   );

@@ -1,5 +1,6 @@
 /** Profile picker and model manager, shared by the options page and the welcome page. */
 import type { ReactNode } from 'react';
+import { packsFor } from '@/engines/chrome/setup';
 import { checkRequirements, type HardwareInfo } from '@/engines/hardware';
 import {
   PROFILE_ORDER,
@@ -7,13 +8,17 @@ import {
   type ProfileChoice,
   type ProfileId,
   recommendProfile,
+  resolveEngines,
 } from '@/engines/profiles';
 import type { EngineRegistry } from '@/engines/registry';
+import type { SetupAction } from '@/engines/types';
 import { modelsFor, totalMB } from '@/models/catalog';
 import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/models/types';
 import type { Settings } from '@/settings/settings';
 import { Icon, Meter, ProgressBar } from './components';
 import type { ModelActions } from './hooks';
+import { PackRow, usePacks } from './setup';
+import { chosenSpoken } from './spoken';
 
 interface ProfileCopy {
   /** Who it's for. */
@@ -26,22 +31,23 @@ interface ProfileCopy {
 
 export const PROFILE_COPY: Record<ProfileId, ProfileCopy> = {
   light: {
-    suits: 'Any laptop. No graphics card needed.',
+    suits: 'Most computers. No graphics card needed.',
     accuracy: { level: 1, text: 'Fair' },
-    runsOn: 'In the browser, on the processor',
-    tradeoff: 'Smallest download. More mistakes with fast speech, music and names.',
+    runsOn: 'Chrome’s own speech recognition and translation, on this computer',
+    tradeoff:
+      'Nothing to download from Murmur: Chrome downloads a small pack for each language. More mistakes with fast speech, music and names.',
   },
   balanced: {
-    suits: 'Recent laptops with a graphics chip, including Apple Silicon.',
+    suits: 'Recent computers with a graphics chip, including Apple Silicon.',
     accuracy: { level: 2, text: 'Good' },
-    runsOn: 'In the browser, on the graphics chip',
+    runsOn: 'Whisper on the graphics chip; Chrome’s translation',
     tradeoff: 'Good for most videos. Needs WebGPU.',
   },
   best: {
     suits: 'Desktop graphics cards, or with the companion app.',
     accuracy: { level: 3, text: 'Best' },
-    runsOn: 'Graphics card, or the companion app',
-    tradeoff: 'Copes best with music and noise. Largest download; uses the most power.',
+    runsOn: 'Whisper on the graphics card; Chrome’s translation',
+    tradeoff: 'For now the same models as Balanced. Larger ones come with the companion app.',
   },
 };
 
@@ -54,7 +60,6 @@ export interface ProfileModels {
   ready: boolean;
   /** 0–1 while any of its models is downloading, else null. */
   downloading: number | null;
-  simulated: boolean;
 }
 
 /** Download state of what `profile` needs. */
@@ -77,6 +82,7 @@ export function profileModels(
       received += s.receivedMB;
     } else if (s?.state === 'queued') busy = true;
     else if (s?.state === 'ready') received += models[i]?.sizeMB ?? 0;
+    else if (s?.state === 'partial') received += s.receivedMB;
   }
   const total = totalMB(models);
   return {
@@ -85,7 +91,6 @@ export function profileModels(
     missingMB: totalMB(missing),
     ready: view !== null && missing.length === 0,
     downloading: busy && total > 0 ? received / total : null,
-    simulated: models.some((m) => m.simulated),
   };
 }
 
@@ -155,7 +160,11 @@ export function ProfileCards({
                       <Meter level={copy.accuracy.level} text={copy.accuracy.text} />
                     </dd>
                     <dt className="text-[var(--color-muted)]">Download</dt>
-                    <dd>{formatSize(models.totalMB)}</dd>
+                    <dd>
+                      {models.totalMB > 0
+                        ? formatSize(models.totalMB)
+                        : 'Chrome’s language packs only'}
+                    </dd>
                     <dt className="text-[var(--color-muted)]">Runs</dt>
                     <dd>{copy.runsOn}</dd>
                   </dl>
@@ -291,6 +300,33 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
       );
       break;
     }
+    case 'partial':
+      state = (
+        <span className="text-[var(--color-muted)]">
+          Stopped at {formatSize(status.receivedMB)} of {formatSize(info.sizeMB)}
+        </span>
+      );
+      action = (
+        <span className="flex gap-2">
+          <button
+            type="button"
+            className="btn btn-sm btn-quiet"
+            onClick={() => actions.remove(info.id)}
+            aria-label={`Delete the part of ${info.label} downloaded so far`}
+          >
+            <Icon name="trash" size={14} /> Delete
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => actions.download([info.id])}
+            aria-label={`Resume downloading ${info.label}`}
+          >
+            <Icon name="download" size={14} /> Resume
+          </button>
+        </span>
+      );
+      break;
     case 'error':
       state = <span className="text-[var(--color-danger)]">{status.message}</span>;
       action = (
@@ -325,7 +361,7 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
         <span className="block font-medium">{info.label}</span>
         <span className="block text-[12px] text-[var(--color-muted)]">
           {formatSize(info.sizeMB)}
-          {profiles.length > 0 && ` · ${profiles.map((p) => PROFILES[p].label).join(', ')}`}
+          {profiles.length > 0 ? ` · ${profiles.map((p) => PROFILES[p].label).join(', ')}` : ''}
           {info.runtime === 'companion' && ' · companion app'}
         </span>
       </span>
@@ -373,4 +409,37 @@ export function engineFits(
   hw: HardwareInfo | null,
 ): boolean {
   return hw === null || checkRequirements(req, hw).ok;
+}
+
+/** Chrome's language packs a choice of engines and languages needs, with their status. */
+export function ChromePacks({
+  actions,
+  compact,
+}: {
+  actions: readonly SetupAction[];
+  compact?: boolean;
+}) {
+  const [states, run] = usePacks(actions);
+  return (
+    <ul className="divide-y divide-[var(--color-line)]" aria-label="Chrome language packs">
+      {actions.map((a) => (
+        <PackRow key={a.id} action={a} state={states[a.id]} run={run} compact={compact ?? false} />
+      ))}
+    </ul>
+  );
+}
+
+/** Chrome packs `settings` needs on this device (its profile's engines, its languages). */
+export function packsForSettings(
+  settings: Settings,
+  registry: EngineRegistry,
+  hardware: HardwareInfo,
+): SetupAction[] {
+  const engines = resolveEngines(settings.profile, settings.custom, registry, hardware);
+  return packsFor({
+    asr: engines.asr,
+    translation: engines.translation,
+    spoken: chosenSpoken(settings),
+    target: settings.targetLanguage,
+  });
 }

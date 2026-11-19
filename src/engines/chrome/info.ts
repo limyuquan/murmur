@@ -46,6 +46,55 @@ export const CHROME_WEBSPEECH_INFO: AsrEngineInfo = {
   homepage: 'https://developer.chrome.com/docs/web-platform/web-speech-on-device',
 };
 
+/**
+ * Languages Chrome's on-device translator offers (Chrome's Translator API documentation, Chrome
+ * 138+), as it names them: `iw` stays Hebrew's old code in some builds, so both are listed.
+ * Whether a pair is ready is checked per pair at run time; a pair Chrome reports `unavailable`
+ * marks its language unsupported for the session.
+ */
+export const CHROME_TRANSLATOR_LANGUAGES = [
+  'ar',
+  'bg',
+  'bn',
+  'cs',
+  'da',
+  'de',
+  'el',
+  'en',
+  'es',
+  'fi',
+  'fr',
+  'he',
+  'hi',
+  'hr',
+  'hu',
+  'id',
+  'it',
+  'iw',
+  'ja',
+  'kn',
+  'ko',
+  'lt',
+  'mr',
+  'nl',
+  'no',
+  'pl',
+  'pt',
+  'ro',
+  'ru',
+  'sk',
+  'sl',
+  'sv',
+  'ta',
+  'te',
+  'th',
+  'tr',
+  'uk',
+  'vi',
+  'zh',
+  'zh-Hant',
+] as const;
+
 export const CHROME_TRANSLATOR_INFO: TranslationEngineInfo = {
   kind: 'translation',
   id: CHROME_TRANSLATOR_ID,
@@ -55,8 +104,8 @@ export const CHROME_TRANSLATOR_INFO: TranslationEngineInfo = {
   runtime: 'chrome',
   requirements: { backends: ['none'] },
   inputs: ['text'],
-  sources: 'any',
-  targets: 'any',
+  sources: CHROME_TRANSLATOR_LANGUAGES,
+  targets: CHROME_TRANSLATOR_LANGUAGES,
   streaming: false,
   usesContext: false,
   homepage: 'https://developer.chrome.com/docs/ai/translator-api',

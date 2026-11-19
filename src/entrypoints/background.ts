@@ -12,11 +12,11 @@ import {
 } from '@/background/session';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { isOffscreenEvent, isRequest, type Response } from '@/messaging/protocol';
-import { loadSettings, saveSettings } from '@/settings/settings';
+import { loadSettings, saveSettings, spokenLanguages } from '@/settings/settings';
 import { COMMANDS } from '@/shared/commands';
 import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
-import { defaultTarget } from '@/ui/languages';
+import { defaultTarget, LANGUAGES } from '@/ui/languages';
 
 /** Wires every listener synchronously, so Chrome can wake the worker for any of them. */
 export default defineBackground(() => {
@@ -28,8 +28,12 @@ export default defineBackground(() => {
   // builds, where a surprise tab would get in the tests' way.
   browser.runtime.onInstalled.addListener(({ reason }) => {
     if (reason !== 'install') return;
-    // Start with the browser's language as the target, when it's offered.
-    void saveSettings({ targetLanguage: defaultTarget() }).finally(() => {
+    // Start with the browser's language as the target, when it's offered, and its languages as
+    // the ones spoken.
+    void saveSettings({
+      targetLanguage: defaultTarget(),
+      spokenLanguages: spokenLanguages({ spokenLanguages: [] }, navigator.languages, LANGUAGES),
+    }).finally(() => {
       if (!IS_E2E) void browser.tabs.create({ url: browser.runtime.getURL('/welcome.html') });
     });
   });

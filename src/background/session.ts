@@ -14,8 +14,6 @@ import {
   hasOffscreenDocument,
   mintTabStreamId,
 } from '@/capture/offscreen';
-import { createBuiltinRegistry } from '@/engines/builtin';
-import { detectHardware, type HardwareInfo } from '@/engines/hardware';
 import { type ResolvedEngines, resolveEngines } from '@/engines/profiles';
 import type {
   ActiveSessionStatus,
@@ -26,21 +24,17 @@ import type {
   SessionErrorCode,
   SessionStatus,
 } from '@/messaging/protocol';
-import { loadSettings, type Settings } from '@/settings/settings';
+import { modelsFor } from '@/models/catalog';
+import { loadSettings, type Settings, spokenLanguages } from '@/settings/settings';
 import { LOG_PREFIX } from '@/shared/ids';
+import { LANGUAGES } from '@/ui/languages';
 import { showBadge } from './badge';
+import { deviceHardware, registry } from './engines';
+import { modelStore } from './models';
 
 const SESSION_KEY = 'session';
 const OVERLAY_SCRIPT = '/overlay.js';
 
-export const registry = createBuiltinRegistry();
-let hardware: Promise<HardwareInfo> | null = null;
-
-/** This device's hardware, detected once per worker. */
-export function deviceHardware(): Promise<HardwareInfo> {
-  hardware ??= detectHardware();
-  return hardware;
-}
 /** Serialises start/stop so they never interleave. */
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -93,6 +87,30 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
     try {
       const settings = await loadSettings();
       const engines = options.engines ?? (await plannedEngines(settings));
+      const spoken = spokenLanguages(settings, navigator.languages, LANGUAGES);
+      if (!options.engines) {
+        // Models download only when the person asks: say so before capturing anything.
+        const needed = modelsFor(
+          settings.profile,
+          settings.custom,
+          registry,
+          await deviceHardware(),
+        );
+        const downloaded = await modelStore.downloaded(needed);
+        const missing = needed.filter((m) => !downloaded.has(m.id));
+        if (missing.length > 0) {
+          const names = missing.map((m) => m.label).join(' and ');
+          await setStatus({
+            state: 'error',
+            tabId,
+            sessionId,
+            code: 'model',
+            message: `${names} ${missing.length > 1 ? 'aren’t' : 'isn’t'} downloaded yet. Download in Settings, under Models.`,
+            missingModels: missing.map((m) => m.id),
+          });
+          return getStatus();
+        }
+      }
       await ensureOffscreenDocument();
       await injectOverlay(tabId);
       // Mint last: the ID is single-use and expires within seconds.
@@ -107,8 +125,11 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
         asrEngine: engines.asr,
         translationEngine: engines.translation,
         targetLanguage: settings.targetLanguage,
-        sourceLanguage: settings.sourceLanguage === 'auto' ? null : settings.sourceLanguage,
+        // One language and nothing else: say so to the engines as the source language.
+        sourceLanguage: settings.onlySpoken && spoken.length === 1 ? (spoken[0] ?? null) : null,
         translatePartials: settings.translatePartials,
+        spokenLanguages: spoken,
+        onlySpoken: settings.onlySpoken,
       };
       const reply = await sendToOffscreen({ target: 'offscreen', type: 'start', config });
       if (!reply.ok) throw new Error(reply.error.message);

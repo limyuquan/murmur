@@ -1,4 +1,5 @@
 /** Messages between the Whisper engine (offscreen document) and its worker. */
+import type { ModelSource } from '@/models/hub';
 import type { WhisperDtype } from './info';
 
 export type WhisperDevice = 'webgpu' | 'wasm';
@@ -8,8 +9,11 @@ export type ToWorker =
       type: 'load';
       repo: string;
       revision: string;
-      /** Tried in order; the first that loads and warms up wins. */
-      devices: { device: WhisperDevice; dtype: WhisperDtype }[];
+      /**
+       * Tried in order; the first that loads and warms up wins. Each one's files are already in
+       * the model cache: the worker never downloads.
+       */
+      devices: { device: WhisperDevice; dtype: WhisperDtype; source: ModelSource }[];
     }
   | {
       type: 'decode';

@@ -7,7 +7,9 @@
  * behind partials), and passes every decode through the hallucination guards (filters.ts). Every
  * result carries the language Whisper detected for that segment.
  */
+import { isComplete } from '@/models/hub';
 import { primaryLanguage } from '@/pipeline/language';
+import { ModelError } from '../errors';
 import type {
   AsrEngine,
   AsrEngineInfo,
@@ -55,18 +57,21 @@ export class WhisperAsrEngine implements AsrEngine {
 
   private async start(options: LoadOptions): Promise<void> {
     this.status = 'loading';
+    let devices: Extract<ToWorker, { type: 'load' }>['devices'];
+    try {
+      devices = await this.downloadedDevices(options);
+    } catch (err) {
+      this.status = 'error';
+      throw err;
+    }
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     this.worker = worker;
-    const devices: Extract<ToWorker, { type: 'load' }>['devices'] = [];
-    const gpu = options.hardware?.webgpu.available ?? true;
-    if (this.model.webgpu && gpu)
-      devices.push({ device: 'webgpu', dtype: this.model.webgpu.dtype });
-    if (this.model.wasm) devices.push({ device: 'wasm', dtype: this.model.wasm.dtype });
     try {
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => reject(options.signal?.reason ?? new Error('Loading was cancelled.'));
         options.signal?.addEventListener('abort', onAbort, { once: true });
-        worker.onerror = (e) => reject(new Error(e.message || 'The speech model worker failed.'));
+        worker.onerror = (e) =>
+          reject(new ModelError(e.message || `${this.info.label} stopped while loading.`));
         worker.onmessage = (event: MessageEvent<FromWorker>) => {
           const m = event.data;
           if (m.type === 'progress') {
@@ -80,7 +85,12 @@ export class WhisperAsrEngine implements AsrEngine {
             console.debug('[murmur]', this.info.id, 'ready on', m.device, m);
             resolve();
           } else if (m.type === 'error' && m.id === null) {
-            reject(new Error(`Couldn't load ${this.info.label}: ${m.message}`));
+            reject(
+              new ModelError(
+                `Couldn't load ${this.info.label}: ${m.message}`,
+                devices.map((d) => `${this.model.id}-${d.device}`),
+              ),
+            );
           }
         };
         worker.postMessage({
@@ -100,6 +110,34 @@ export class WhisperAsrEngine implements AsrEngine {
       this.status = 'error';
       throw err;
     }
+  }
+
+  /**
+   * The backends to try, in order, among those whose model is downloaded: WebGPU first when the
+   * device has it, then WebAssembly. Never downloads; nothing downloaded is a `ModelError`.
+   */
+  private async downloadedDevices(
+    options: LoadOptions,
+  ): Promise<Extract<ToWorker, { type: 'load' }>['devices']> {
+    const gpu = options.hardware?.webgpu.available ?? true;
+    const candidates = [
+      ...(this.model.webgpu && gpu ? [{ device: 'webgpu' as const, ...this.model.webgpu }] : []),
+      ...(this.model.wasm ? [{ device: 'wasm' as const, ...this.model.wasm }] : []),
+    ];
+    const devices: Extract<ToWorker, { type: 'load' }>['devices'] = [];
+    for (const c of candidates) {
+      if (await isComplete(c.source)) {
+        devices.push({ device: c.device, dtype: c.dtype, source: c.source });
+      }
+    }
+    if (devices.length === 0) {
+      throw new ModelError(
+        `${this.info.label} isn’t downloaded yet. Download it in Settings, under Models.`,
+        candidates.map((c) => `${this.model.id}-${c.device}`),
+        true,
+      );
+    }
+    return devices;
   }
 
   async unload(): Promise<void> {
@@ -165,6 +203,8 @@ class WhisperSession implements AsrSession {
   private closed = false;
   private idle: (() => void) | null = null;
   private reported: AsrHealth | null = null;
+  /** Decode ms per audio ms of the last few finals. */
+  private readonly factors: number[] = [];
 
   constructor(
     private readonly engine: WhisperAsrEngine,
@@ -172,7 +212,8 @@ class WhisperSession implements AsrSession {
     schedulerOptions: SchedulerOptions,
   ) {
     this.scheduler = new DecodeScheduler({ sampleRate: options.sampleRate, ...schedulerOptions });
-    this.languages = whisperLanguages(options.spokenLanguages);
+    // Any language unless the person said only theirs are spoken.
+    this.languages = options.onlySpoken ? whisperLanguages(options.spokenLanguages) : null;
   }
 
   startSegment(segmentId: string, startSample: number): void {
@@ -237,6 +278,7 @@ class WhisperSession implements AsrSession {
           peakDb: peak,
         });
         const final = job.kind === 'final';
+        if (final) this.measure(out.ms, job.endSample - job.startSample);
         if (!final && filtered.dropped) return;
         const result: AsrResult = {
           segmentId: job.segmentId,
@@ -276,14 +318,29 @@ class WhisperSession implements AsrSession {
     this.segments.delete(id);
   }
 
+  /** Records one final decode's real-time factor (short lines are dominated by fixed costs). */
+  private measure(decodeMs: number, samples: number): void {
+    const audioMs = (samples / this.options.sampleRate) * 1000;
+    if (audioMs < 1000) return;
+    this.factors.push(decodeMs / audioMs);
+    if (this.factors.length > RTF_WINDOW) this.factors.shift();
+  }
+
+  private rtf(): number | null {
+    if (this.factors.length === 0) return null;
+    const sorted = [...this.factors].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)] ?? null;
+  }
+
   private report(): void {
-    const health = this.scheduler.health();
+    const health = { ...this.scheduler.health(), rtf: this.rtf() };
     const last = this.reported;
     if (
       last &&
       last.behind === health.behind &&
       last.droppedSegments === health.droppedSegments &&
-      Math.abs(last.backlogMs - health.backlogMs) < 1000
+      Math.abs(last.backlogMs - health.backlogMs) < 1000 &&
+      Math.abs((last.rtf ?? 0) - (health.rtf ?? 0)) < 0.1
     ) {
       return;
     }
@@ -291,6 +348,9 @@ class WhisperSession implements AsrSession {
     this.options.onHealth?.(health);
   }
 }
+
+/** Finals the real-time factor is the median of. */
+const RTF_WINDOW = 5;
 
 function emptyFinal(segmentId: string, startSample: number, endSample: number): AsrResult {
   return { segmentId, final: true, text: '', language: null, startSample, endSample };

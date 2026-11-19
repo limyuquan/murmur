@@ -151,6 +151,7 @@ export class DecodeScheduler {
       backlogMs: Math.round((backlog / this.rate) * 1000),
       droppedPartials: this.droppedPartials,
       droppedSegments: this.droppedSegments,
+      rtf: null,
     };
   }
 

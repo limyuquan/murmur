@@ -34,8 +34,18 @@ export interface SessionActivity {
   unsupported: LanguageTag[];
   /** Typical delay from speech to its finished subtitle lately, ms; null before the first. */
   delayMs: number | null;
-  /** Subtitles are falling further behind the speech than the engines can make up. */
+  /**
+   * Subtitles are falling further behind the speech than the engines can make up: the delay is
+   * long, lines queue for translation, the speech engine is slower than real time, or it says
+   * it is skipping work.
+   */
   behind: boolean;
+  /** The speech engine's real-time factor lately (seconds of work per second of speech). */
+  rtf: number | null;
+  /** Speech heard but not yet recognized, ms. */
+  backlogMs: number;
+  /** Finished lines waiting for their translation. */
+  queue: number;
   /** How long the tab has been silent, ms. */
   silentMs: number;
   /** Any sound at all since the session started. */
@@ -97,6 +107,8 @@ export type SessionStatus =
       code?: SessionErrorCode;
       /** With code `setup`: the downloads to start, one click each. */
       setup?: SetupAction[];
+      /** With code `model`: models that aren't downloaded (`EngineModel.id`). */
+      missingModels?: string[];
     };
 
 export type ActiveSessionStatus = Exclude<SessionStatus, { state: 'idle' }>;
@@ -113,7 +125,7 @@ export interface TabView {
   engines: { asr: string; translation: string; notes: string[] };
   profile: ProfileChoice;
   /** The profile's models: all downloaded, or how much is left to download. */
-  models: { ready: boolean; missingMB: number; simulated: boolean };
+  models: { ready: boolean; missingMB: number };
   /** The tab's site (positions are kept per site), when Murmur can see its address. */
   site: string | null;
 }
@@ -166,11 +178,13 @@ export interface SessionConfig {
   sourceLanguage: string | null;
   translatePartials: boolean;
   /**
-   * Languages the person expects to hear. Engines that can't detect languages (Chrome's speech
-   * recognition) listen for these; others may limit detection to them. Absent: engines choose
-   * (Chrome speech: the languages whose packs are downloaded).
+   * Languages the person expects to hear. Chrome's speech recognition listens for these (the
+   * first 4); translation packs are checked for each. Absent: engines choose (Chrome speech: the
+   * languages whose packs are downloaded).
    */
   spokenLanguages?: string[];
+  /** Only `spokenLanguages` are spoken: engines that detect languages pick among them. */
+  onlySpoken?: boolean;
 }
 
 export type OffscreenCommand =

@@ -9,7 +9,7 @@ function view(status: SessionStatus, patch: Partial<TabView> = {}): TabView {
     thisTab: status.state !== 'idle' && status.tabId === 1,
     engines: { asr: 'Demo', translation: 'Demo', notes: [] },
     profile: 'balanced',
-    models: { ready: true, missingMB: 0, simulated: false },
+    models: { ready: true, missingMB: 0 },
     site: 'example.com',
     ...patch,
   };
@@ -21,6 +21,9 @@ const activity = (patch: Partial<SessionActivity> = {}): SessionActivity => ({
   unsupported: [],
   delayMs: 2400,
   behind: false,
+  rtf: null,
+  backlogMs: 0,
+  queue: 0,
   silentMs: 0,
   soundEver: true,
   ...patch,
@@ -40,7 +43,7 @@ describe('describeStatus', () => {
   it('is off, and offers the download when models are missing', () => {
     expect(describeStatus(view({ state: 'idle' }))).toEqual({ tone: 'off', title: 'Off' });
     const missing = describeStatus(
-      view({ state: 'idle' }, { models: { ready: false, missingMB: 2400, simulated: false } }),
+      view({ state: 'idle' }, { models: { ready: false, missingMB: 2400 } }),
     );
     expect(missing.detail).toContain('2.4 GB');
     expect(missing.action).toMatchObject({ kind: 'settings', section: 'models' });
@@ -84,6 +87,31 @@ describe('describeStatus', () => {
     expect(light.action).toBeUndefined();
   });
 
+  it('says why it falls behind: speed, translation queue or speech backlog', () => {
+    const slow = describeStatus(view(running(activity({ behind: true, rtf: 1.42 }))));
+    expect(slow.detail).toMatch(/^Speech recognition takes 1\.4 s for each second of speech/);
+    const queued = describeStatus(view(running(activity({ behind: true, queue: 4 }))));
+    expect(queued.detail).toMatch(/^4 lines are waiting for their translation\./);
+    const backlog = describeStatus(
+      view(running(activity({ behind: true, backlogMs: 6200, delayMs: null }))),
+    );
+    expect(backlog.detail).toBe('6 s of speech is waiting for speech recognition.');
+  });
+
+  it('asks for language packs a running session met', () => {
+    const status = running(activity());
+    const withSetup = {
+      ...status,
+      setup: [
+        { id: 'translation:de>en', kind: 'translation-pack', label: 'x', languages: ['de', 'en'] },
+      ],
+    } as SessionStatus;
+    expect(describeStatus(view(withSetup))).toMatchObject({
+      tone: 'warn',
+      title: 'Some lines need a download',
+    });
+  });
+
   it('names languages the models lack', () => {
     const s = describeStatus(view(running(activity({ unsupported: ['de'] }))));
     expect(s.title).toMatch(/^Can't translate /);
@@ -99,7 +127,26 @@ describe('describeStatus', () => {
     expect(err('page').action).toBeUndefined();
     expect(err('busy').action).toMatchObject({ kind: 'retry' });
     expect(err('companion').action).toMatchObject({ kind: 'profile', profile: 'balanced' });
-    expect(err('model').action).toMatchObject({ kind: 'settings' });
+    expect(err('model')).toMatchObject({
+      title: 'A model didn’t load',
+      action: { kind: 'settings', label: 'Models' },
+    });
+    expect(err('setup')).toMatchObject({ tone: 'warn' });
+    expect(err('setup').action).toBeUndefined();
+    const missing = describeStatus(
+      view({
+        state: 'error',
+        tabId: 1,
+        sessionId: 's',
+        message: 'Whisper base isn’t downloaded yet.',
+        code: 'model',
+        missingModels: ['whisper-base-wasm'],
+      }),
+    );
+    expect(missing).toMatchObject({
+      title: 'The model isn’t downloaded',
+      action: { kind: 'settings', label: 'Download', section: 'models' },
+    });
     expect(err('anything')).toMatchObject({ tone: 'error', detail: 'm' });
   });
 });
