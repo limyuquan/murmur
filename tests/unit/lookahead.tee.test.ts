@@ -225,6 +225,27 @@ describe('Relay', () => {
     expect(got.length).toBe(6);
   });
 
+  it('lets go of SourceBuffers the page stopped appending to, and hands them on no more', () => {
+    let now = 0;
+    const relay = new Relay(undefined, undefined, () => now);
+    relay.onEvent({ t: 'sb', sb: 'old', ms: 'm1', mime: 'audio/mp4', kind: 'audio' });
+    relay.onEvent({
+      t: 'append',
+      sb: 'old',
+      bytes: new ArrayBuffer(10),
+      tso: 0,
+      aws: 0,
+      awe: null,
+      sequence: false,
+    });
+    now += 10 * 60_000;
+    relay.onEvent({ t: 'sb', sb: 'new', ms: 'm2', mime: 'audio/mp4', kind: 'audio' });
+    const wires: TeeWire[] = [];
+    relay.attach((w) => wires.push(w));
+    expect(wires.filter((w) => w.t === 'sb').map((w) => (w as { sb: string }).sb)).toEqual(['new']);
+    expect(wires.some((w) => w.t === 'append')).toBe(false);
+  });
+
   it('drops everything and switches the tee off when lookahead is turned off', () => {
     const relay = new Relay();
     const posted: unknown[] = [];

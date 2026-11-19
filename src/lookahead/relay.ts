@@ -58,7 +58,15 @@ interface Buffer {
   mime: string;
   kind: TrackKind;
   init: Uint8Array | null;
+  /** When the page last appended to it (or made it). */
+  seenAt: number;
 }
+
+/**
+ * A SourceBuffer the page hasn't appended to for this long is let go and not handed on (players
+ * that drop a MediaSource by changing `src` never remove its buffers), ms.
+ */
+export const STALE_BUFFER_MS = 5 * 60_000;
 
 type HeldEntry =
   | { event: Exclude<TeeEvent, { t: 'append' | 'buffered' }> }
@@ -84,6 +92,7 @@ export class Relay implements TeeRelayApi {
   constructor(
     private readonly fetcher: typeof fetch = (...args) => fetch(...args),
     private readonly holdBytes = HOLD_BYTES,
+    private readonly now: () => number = Date.now,
   ) {}
 
   /** The kill switch, or lookahead turned off for this site: the tee passes through, all dropped. */
@@ -109,11 +118,13 @@ export class Relay implements TeeRelayApi {
         if (this.urls.size > MAX_URLS) this.urls.delete(this.urls.keys().next().value as string);
         return;
       case 'sb':
+        this.prune();
         this.buffers.set(event.sb, {
           ms: event.ms,
           mime: event.mime,
           kind: event.kind,
           init: null,
+          seenAt: this.now(),
         });
         this.forward(event);
         return;
@@ -141,6 +152,7 @@ export class Relay implements TeeRelayApi {
       case 'append': {
         const b = this.buffers.get(event.sb);
         if (!b) return;
+        b.seenAt = this.now();
         const init = initSegmentOf(new Uint8Array(event.bytes), b.mime);
         if (init) b.init = init;
         this.hold({ append: event, size: event.bytes.byteLength });
@@ -155,6 +167,7 @@ export class Relay implements TeeRelayApi {
   attach(sink: (wire: TeeWire) => void): () => void {
     if (this.disabled) return () => {};
     this.sink = sink;
+    this.prune();
     // What the page set up, each buffer's init, then what was held, in order. The first held
     // append of each buffer may start mid-segment: the demuxer looks for a segment start there.
     for (const [sb, b] of this.buffers) {
@@ -226,6 +239,23 @@ export class Relay implements TeeRelayApi {
     // Streamed, and no further than needed when the server ignores Range: this runs in the
     // page's renderer.
     return rangeBody(response, start, end);
+  }
+
+  /** Lets go of SourceBuffers the page stopped using (and what was held for them). */
+  private prune(): void {
+    const now = this.now();
+    for (const [sb, b] of this.buffers) {
+      if (now - b.seenAt <= STALE_BUFFER_MS) continue;
+      this.buffers.delete(sb);
+      this.workerBuffered.delete(b.ms);
+    }
+    if (this.held.some((e) => 'append' in e && !this.buffers.has(e.append.sb))) {
+      this.held = this.held.filter((e) => {
+        if (!('append' in e) || this.buffers.has(e.append.sb)) return true;
+        this.heldBytes -= e.size;
+        return false;
+      });
+    }
   }
 
   private forward(event: Exclude<TeeEvent, { t: 'append' | 'buffered' }>): void {

@@ -2,6 +2,7 @@
  * The offscreen lookahead host with stand-in ports: playhead reports on its own clock, bounded
  * warnings, and what a new overlay is told.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { toBase64 } from '@/lookahead/bytes';
 import { KEPT_CUES, LookaheadHost, type LookaheadPort } from '@/lookahead/host';
@@ -12,12 +13,20 @@ import type { Cue } from '@/pipeline/types';
 function setup() {
   let now = 5_000_000;
   const posted: OverlayMessage[] = [];
+  const decoded: number[] = [];
   const host = new LookaheadHost({
     post: (m) => posted.push(m),
     createPipeline: () => null,
     setLivePaused: () => {},
     measureLag: false,
     now: () => now,
+    // Counts frames given to a decoder (none decoded for real here).
+    createDecoder: () => ({
+      configure: () => {},
+      decode: (chunk) => decoded.push(chunk.timestamp),
+      flush: async () => {},
+      close: () => {},
+    }),
   });
   const port: LookaheadPort & { got: OverlayMessage[] } = {
     got: [],
@@ -29,6 +38,7 @@ function setup() {
     host,
     port,
     posted,
+    decoded,
     advance: (ms: number) => {
       now += ms;
     },
@@ -138,6 +148,47 @@ describe('LookaheadHost', () => {
     const covered = (x: number) => spans.some(([s, e]) => x >= s && x < e);
     expect(covered(1.2)).toBe(true);
     expect(covered(KEPT_CUES - 100 + 0.2)).toBe(false);
+    await t.host.stop();
+  });
+
+  it('decodes a SourceBuffer’s audio only once a video plays its MediaSource', async () => {
+    const t = setup();
+    const url = 'https://example.com/';
+    const bytes = new Uint8Array(
+      readFileSync(new URL('./fixtures/lookahead/aac-frag.mp4', import.meta.url)),
+    );
+    t.host.onTee(t.port, url, { t: 'sb', sb: 's1', ms: 'ms1', mime: 'audio/mp4', kind: 'audio' });
+    const append = {
+      t: 'append' as const,
+      sb: 's1',
+      bytes: toBase64(bytes),
+      tso: 0,
+      aws: 0,
+      awe: null,
+      sequence: false,
+    };
+    t.host.onTee(t.port, url, append);
+    // A live stream gets no timeline: nothing is decoded.
+    t.host.onPlayhead(t.port, url, report({ timeline: null, key: null }));
+    expect(t.decoded).toEqual([]);
+    // A video plays it: what was held is decoded, then what comes.
+    t.host.onPlayhead(t.port, url, report({ timeline: 'ms1' }));
+    const first = t.decoded.length;
+    expect(first).toBeGreaterThan(100);
+    t.host.onTee(t.port, url, append);
+    expect(t.decoded.length).toBeGreaterThan(first);
+    await t.host.stop();
+  });
+
+  it('lets go of SourceBuffers nothing has used for minutes', async () => {
+    const t = setup();
+    const url = 'https://example.com/';
+    t.host.onTee(t.port, url, { t: 'sb', sb: 's1', ms: 'old', mime: 'audio/mp4', kind: 'audio' });
+    t.host.onTee(t.port, url, { t: 'sb', sb: 's2', ms: 'ms1', mime: 'audio/mp4', kind: 'audio' });
+    t.host.onPlayhead(t.port, url, report({ timeline: 'ms1' }));
+    t.advance(6 * 60_000);
+    (t.host as unknown as { tick(): void }).tick();
+    expect(t.host.snapshot().buffers.map((b) => b.sb)).toEqual(['s2']);
     await t.host.stop();
   });
 });

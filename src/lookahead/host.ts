@@ -63,13 +63,33 @@ export interface LookaheadDeps {
   now?(): number;
 }
 
+type AppendWire = Extract<TeeWire, { t: 'append' }>;
+
 interface Buffer {
   ms: string;
   mime: string;
   appends: number;
   mirror: SourceBufferMirror;
   runs: AudioRuns;
+  /**
+   * A video plays its MediaSource (a report named it): only then is its audio decoded. Until
+   * then appends are held, undecoded (a live stream, which gets no timeline, is never decoded).
+   */
+  active: boolean;
+  held: AppendWire[];
+  heldBytes: number;
+  /** Held appends were let go: the first one kept starts mid-stream. */
+  heldCut: boolean;
+  /** The latest init segment seen while held (base64), to start decoding with. */
+  init: string | null;
+  /** When it was last appended to, or its MediaSource last played (`now()`). */
+  seenAt: number;
 }
+
+/** Undecoded appends held per SourceBuffer until a video plays it, at most (base64 chars). */
+const HELD_CHARS = 8 * 1024 * 1024;
+/** A SourceBuffer, or progressive source, not appended to or played for this long is let go, ms. */
+const STALE_MS = 5 * 60_000;
 
 interface PortState {
   frameUrl: string;
@@ -101,7 +121,10 @@ export interface LookaheadSnapshot {
 export class LookaheadHost {
   private readonly buffers = new Map<string, Buffer>();
   private readonly pcm = new Map<string, PcmTimeline>();
-  private readonly progressive = new Map<string, { source: ProgressiveSource; runs: AudioRuns }>();
+  private readonly progressive = new Map<
+    string,
+    { source: ProgressiveSource; runs: AudioRuns; seenAt: number }
+  >();
   private readonly ports = new Map<LookaheadPort, PortState>();
   private readonly runner: LookaheadRunner;
   private readonly now: () => number;
@@ -195,6 +218,7 @@ export class LookaheadHost {
       report.paused &&
       this.now() - current.report.at < PLAYING_WINS_MS;
     if (!keep) this.retarget({ port, report });
+    if (!report.ad) this.activate(report.timeline);
     if (report.timeline.startsWith('p:')) this.feedProgressive(port, state, report);
   }
 
@@ -278,6 +302,7 @@ export class LookaheadHost {
 
   private tick(): void {
     this.evict();
+    this.prune();
     const lag = this.calibrator?.attempt(this.now(), (timeline) => this.pcm.get(timeline));
     if (lag != null) this.deps.post({ type: 'lookahead', lagS: lag });
     this.runner.kick();
@@ -308,21 +333,28 @@ export class LookaheadHost {
             runs.end();
           },
         });
-        this.buffers.set(wire.sb, { ms: wire.ms, mime: wire.mime, appends: 0, mirror, runs });
+        this.buffers.set(wire.sb, {
+          ms: wire.ms,
+          mime: wire.mime,
+          appends: 0,
+          mirror,
+          runs,
+          active: this.playing(wire.ms),
+          held: [],
+          heldBytes: 0,
+          heldCut: false,
+          init: null,
+          seenAt: this.now(),
+        });
         return;
       }
       case 'append': {
         const b = this.buffers.get(wire.sb);
         if (!b || b.mirror.kind === 'video') return;
         b.appends++;
-        b.mirror.append({
-          bytes: fromBase64(wire.bytes),
-          timestampOffset: wire.tso,
-          appendWindowStart: wire.aws,
-          appendWindowEnd: wire.awe ?? Number.POSITIVE_INFINITY,
-          sequence: wire.sequence,
-          ...(wire.resync ? { resync: true } : {}),
-        });
+        b.seenAt = this.now();
+        if (b.active) this.feed(b, wire);
+        else this.hold(b, wire);
         return;
       }
       case 'remove': {
@@ -419,6 +451,73 @@ export class LookaheadHost {
     for (const [k, cues] of this.kept) if (cues.size === 0) this.kept.delete(k);
   }
 
+  private feed(b: Buffer, wire: AppendWire): void {
+    b.mirror.append({
+      bytes: fromBase64(wire.bytes),
+      timestampOffset: wire.tso,
+      appendWindowStart: wire.aws,
+      appendWindowEnd: wire.awe ?? Number.POSITIVE_INFINITY,
+      sequence: wire.sequence,
+      ...(wire.resync ? { resync: true } : {}),
+    });
+  }
+
+  /** Keeps an append, undecoded, until a video plays its MediaSource (the latest only). */
+  private hold(b: Buffer, wire: AppendWire): void {
+    // An init segment starts the append (MSE inits are small): kept apart, to start with.
+    const head = fromBase64(wire.bytes.slice(0, 64));
+    if (startsInit(head, b.mime) && wire.bytes.length <= 1024 * 1024) b.init = wire.bytes;
+    b.held.push(wire);
+    b.heldBytes += wire.bytes.length;
+    while (b.heldBytes > HELD_CHARS && b.held.length > 1) {
+      const old = b.held.shift() as AppendWire;
+      b.heldBytes -= old.bytes.length;
+      b.heldCut = true;
+    }
+  }
+
+  /** Whether a report names `ms` as what a video plays (not an ad). */
+  private playing(ms: string): boolean {
+    for (const state of this.ports.values()) {
+      if (state.report?.timeline === ms && !state.report.ad) return true;
+    }
+    return false;
+  }
+
+  /** A video plays `ms`: decode its SourceBuffers' audio, what was held first. */
+  private activate(ms: string): void {
+    for (const b of this.buffers.values()) {
+      if (b.ms !== ms) continue;
+      b.seenAt = this.now();
+      if (b.active) continue;
+      b.active = true;
+      const held = b.held;
+      b.held = [];
+      b.heldBytes = 0;
+      const first = held[0];
+      const startsWithInit = first !== undefined && first.bytes === b.init;
+      if (b.init && !startsWithInit) {
+        this.feed(b, {
+          t: 'append',
+          sb: '',
+          bytes: b.init,
+          tso: 0,
+          aws: 0,
+          awe: null,
+          sequence: false,
+          resync: true,
+        });
+      }
+      held.forEach((wire, i) => {
+        this.feed(
+          b,
+          i === 0 && (b.heldCut || b.init) && !startsWithInit ? { ...wire, resync: true } : wire,
+        );
+      });
+      b.init = null;
+    }
+  }
+
   private write(timeline: string, start: number, samples: Float32Array): void {
     let pcm = this.pcm.get(timeline);
     if (!pcm) {
@@ -467,7 +566,7 @@ export class LookaheadHost {
       const reader = sameOrigin(url, state.frameUrl)
         ? page
         : fallbackReader(page, fetchReader(url, this.deps.fetch));
-      entry = { source: new ProgressiveSource(reader, runs), runs };
+      entry = { source: new ProgressiveSource(reader, runs), runs, seenAt: this.now() };
       this.progressive.set(timeline, entry);
     }
     const source = entry.source;
@@ -494,6 +593,30 @@ export class LookaheadHost {
           port.postMessage({ type: 'fetch', id, url, start, end });
         }),
     };
+  }
+
+  /**
+   * Lets go of SourceBuffers and progressive sources nothing has used for `STALE_MS` (players
+   * that drop a MediaSource by changing `src` never remove its buffers): their decoders, demuxer
+   * state and held bytes.
+   */
+  private prune(): void {
+    const now = this.now();
+    const target = this.target?.report.timeline;
+    for (const [sb, b] of this.buffers) {
+      if (b.ms === target) b.seenAt = now;
+      else if (now - b.seenAt > STALE_MS) {
+        b.runs.end();
+        this.buffers.delete(sb);
+      }
+    }
+    for (const [timeline, p] of this.progressive) {
+      if (timeline === target) p.seenAt = now;
+      else if (now - p.seenAt > STALE_MS) {
+        p.runs.end();
+        this.progressive.delete(timeline);
+      }
+    }
   }
 
   /** Keeps decoded audio under the cap: other timelines first, then far from the playhead. */
@@ -534,4 +657,14 @@ function sameOrigin(url: string, frameUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Whether `head` (an append's first bytes) starts with an init segment. */
+function startsInit(head: Uint8Array, mime: string): boolean {
+  if (/webm|matroska/i.test(mime)) {
+    return head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+  }
+  // An init starts with `ftyp` or `moov` (fragments with `styp`, `moof`, `sidx`...).
+  const type = String.fromCharCode(...head.subarray(4, 8));
+  return type === 'ftyp' || type === 'moov';
 }

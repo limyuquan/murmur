@@ -54,6 +54,11 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
 
 ## Offscreen: from bytes to cues
 
+- A SourceBuffer's appends are held undecoded (the latest 8 MB or so, its init segment apart)
+  until a playhead report names its MediaSource as what a video plays (not an ad); only then
+  are they demuxed and decoded. A live stream, which gets no timeline, is never decoded.
+  SourceBuffers and progressive sources unused for 5 minutes are let go (here and in the relay),
+  since players that drop a MediaSource by changing `src` never remove its buffers.
 - `mirror.ts` mirrors one SourceBuffer: demuxes (`fmp4.ts`, `webm.ts`: streaming, any slice
   sizes, resync after skipped bytes), adds the append's `timestampOffset`, drops frames outside
   the append window, skips `sequence` mode, and marks jumps (> 50 ms).
