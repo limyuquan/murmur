@@ -8,15 +8,19 @@
  * awake while a download stalls. If the worker stops anyway, the whole parts already written stay,
  * and the next download resumes from there.
  */
+
+import { matchesHash } from './digest';
 import {
   cacheKey,
   fileUrl,
   MODEL_CACHE,
+  type ModelFile,
   type ModelSource,
   PART_BYTES,
   partCount,
   partKey,
   partRange,
+  pendingPartKey,
   storedBytes,
   storedPart,
 } from './hub';
@@ -29,6 +33,11 @@ export interface StoreDeps {
   partBytes?: number;
   /** Least time between progress reports, ms. */
   progressMs?: number;
+  /**
+   * Check each file against its pinned hash once all of it arrived. Off for the e2e stand-in for
+   * Hugging Face, whose files are a pattern.
+   */
+  verify?: boolean;
 }
 
 export class CacheModelStore implements ModelStore {
@@ -75,12 +84,13 @@ export class CacheModelStore implements ModelStore {
       const url = fileUrl(source, file.path);
       const key = cacheKey(source, file.path);
       const parts = partCount(file.bytes, this.partBytes);
+      let fetched = false;
       for (let i = 0; i < parts; i++) {
         const [start, end] = partRange(file.bytes, i, this.partBytes);
         if ((await storedPart(cache, key, i, end - start)) !== null) continue;
         const before = received;
         try {
-          await this.fetchPart(cache, url, key, file.path, i, parts, start, end, signal, (n) => {
+          await this.fetchPart(cache, url, key, file, i, parts, start, end, signal, (n) => {
             received = before + n;
             report();
           });
@@ -88,7 +98,20 @@ export class CacheModelStore implements ModelStore {
           received = before;
           throw err;
         }
+        fetched = true;
         report(true);
+      }
+      // Checked once, when its last part arrives.
+      if (fetched && this.deps.verify && file.hash) {
+        signal.throwIfAborted();
+        if (!(await matchesHash(file.hash, file.bytes, () => readParts(cache, key, parts)))) {
+          for (let i = 0; i < parts; i++) await cache.delete(partKey(key, i));
+          received -= file.bytes;
+          report(true);
+          throw new Error(
+            `${file.path.split('/').pop()} didn’t arrive intact. Download again to fetch it anew.`,
+          );
+        }
       }
     }
     report(true);
@@ -98,7 +121,7 @@ export class CacheModelStore implements ModelStore {
     cache: Cache,
     url: string,
     keyUrl: string,
-    path: string,
+    file: ModelFile,
     index: number,
     parts: number,
     start: number,
@@ -106,7 +129,7 @@ export class CacheModelStore implements ModelStore {
     signal: AbortSignal,
     onBytes: (n: number) => void,
   ): Promise<void> {
-    const name = path.split('/').pop() ?? path;
+    const name = file.path.split('/').pop() ?? file.path;
     let res: Response;
     try {
       res = await this.deps.fetch(url, {
@@ -125,6 +148,13 @@ export class CacheModelStore implements ModelStore {
       await res.body?.cancel().catch(() => {});
       throw new Error(`Downloading ${name} failed (HTTP ${res.status}).`);
     }
+    // A part must be the bytes asked for, of a file the size the list says (when the server
+    // says which bytes it sent).
+    const range = res.status === 206 ? res.headers.get('content-range') : null;
+    if (range !== null && !rangeMatches(range, start, end, file.bytes)) {
+      await res.body.cancel().catch(() => {});
+      throw new Error(`Downloading ${name} failed: the server sent other bytes (${range}).`);
+    }
     const expected = end - start;
     let count = 0;
     const counter = new TransformStream<Uint8Array, Uint8Array>({
@@ -135,8 +165,9 @@ export class CacheModelStore implements ModelStore {
       },
     });
     const key = partKey(keyUrl, index);
+    const pending = pendingPartKey(keyUrl, index);
     await cache.put(
-      key,
+      pending,
       new Response(res.body.pipeThrough(counter, { signal }), {
         headers: {
           'content-length': String(expected),
@@ -145,10 +176,15 @@ export class CacheModelStore implements ModelStore {
       }),
     );
     if (count !== expected) {
-      await cache.delete(key);
+      await cache.delete(pending);
       signal.throwIfAborted();
       throw new Error(`Downloading ${name} stopped early. Try again to resume.`);
     }
+    // Whole: only now under its real key.
+    const whole = await cache.match(pending);
+    if (!whole) throw new Error(`Downloading ${name} failed: the part wasn't kept.`);
+    await cache.put(key, whole);
+    await cache.delete(pending);
   }
 
   async remove(model: ModelInfo, keep: readonly ModelInfo[]): Promise<void> {
@@ -161,6 +197,7 @@ export class CacheModelStore implements ModelStore {
       if (kept.has(url)) continue;
       for (let i = 0; i < partCount(file.bytes, this.partBytes); i++) {
         await cache.delete(partKey(url, i));
+        await cache.delete(pendingPartKey(url, i));
       }
     }
   }
@@ -199,5 +236,28 @@ export class CacheModelStore implements ModelStore {
       if ((await storedBytes(c, source, file, this.partBytes)) !== file.bytes) return false;
     }
     return true;
+  }
+}
+
+/** Whether `Content-Range` says bytes [start, end) of a `size`-byte file. */
+export function rangeMatches(header: string, start: number, end: number, size: number): boolean {
+  const m = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(header.trim());
+  if (!m) return false;
+  return (
+    Number(m[1]) === start && Number(m[2]) === end - 1 && (m[3] === '*' || Number(m[3]) === size)
+  );
+}
+
+/** The parts of a stored file, in order, as chunks. */
+async function* readParts(cache: Cache, key: string, parts: number): AsyncIterable<Uint8Array> {
+  for (let i = 0; i < parts; i++) {
+    const res = await cache.match(partKey(key, i));
+    if (!res?.body) throw new Error('A part of the file went missing.');
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield value;
+    }
   }
 }

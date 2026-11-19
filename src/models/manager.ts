@@ -96,7 +96,10 @@ export class ModelManager {
     const info = known.find((m) => m.id === id);
     if (info) {
       const downloaded = await this.deps.store.downloaded(known);
-      const keep = known.filter((m) => m.id !== id && downloaded.has(m.id));
+      // Files another model has, or is downloading, stay (configs and tokenizers are shared).
+      const keep = known.filter(
+        (m) => m.id !== id && (downloaded.has(m.id) || this.jobs.has(m.id)),
+      );
       await this.deps.store.remove(info, keep);
     }
     if (this.progress[id]) this.finish(id);

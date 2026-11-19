@@ -5,9 +5,10 @@
  * never fetches anything.
  *
  * Each file is stored in parts of `PART_BYTES` (`<cacheKey>?part=<n>`), each fetched with an HTTP
- * Range request and written as it streams in. A part is in the cache only once all of it
- * arrived, so a download that stops (cancelled, network gone, worker stopped) resumes from the
- * first missing part. Reading joins the parts' blobs, which stay on disk until read.
+ * Range request and written as it streams in (under a pending key, moved once all of it arrived).
+ * A part is in the cache only once whole, so a download that stops (cancelled, network gone,
+ * worker stopped) resumes from the first missing part. A file whose parts are all in is checked
+ * against its pinned hash. Reading joins the parts' blobs, which stay on disk until read.
  */
 import { IS_E2E } from '@/shared/e2e';
 
@@ -15,6 +16,11 @@ export interface ModelFile {
   /** Path in the repo: `onnx/encoder_model.onnx`. */
   path: string;
   bytes: number;
+  /**
+   * The file's hash on the Hub at the pinned revision, checked once it is downloaded:
+   * `sha256:<hex>` (Git LFS files) or `git-sha1:<hex>` (files kept in Git). See digest.ts.
+   */
+  hash?: string;
 }
 
 export interface ModelSource {
@@ -25,7 +31,7 @@ export interface ModelSource {
   files: readonly ModelFile[];
 }
 
-const HUGGING_FACE = 'https://huggingface.co';
+export const HUGGING_FACE = 'https://huggingface.co';
 
 /**
  * Where model files are downloaded from. e2e builds use the fixture server's stand-in
@@ -67,6 +73,15 @@ export function partRange(bytes: number, index: number, partBytes = PART_BYTES):
 
 export function partKey(url: string, index: number): string {
   return `${url}?part=${index}`;
+}
+
+/**
+ * Where a part is written while it downloads. It moves to `partKey` only once all of it arrived
+ * (and the bytes counted), so a part under its real key is always whole, even if the worker
+ * stopped halfway through writing.
+ */
+export function pendingPartKey(url: string, index: number): string {
+  return `${partKey(url, index)}&pending`;
 }
 
 /** The part's length as stored, or null when it isn't (fully) there. */

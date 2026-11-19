@@ -38,7 +38,8 @@ export interface WhisperVariant {
   downloadMB: number;
 }
 
-type FileList = [string, number][];
+/** `[path, bytes, hash]` (hash: `sha256:` or `git-sha1:`, see models/digest.ts). */
+type FileList = [string, number, string?][];
 
 function variant(id: WhisperId, backend: 'webgpu' | 'wasm', dtype: WhisperDtype) {
   const entry = FILES[id] as { repo: string; revision: string; shared: FileList } & Record<
@@ -47,7 +48,11 @@ function variant(id: WhisperId, backend: 'webgpu' | 'wasm', dtype: WhisperDtype)
   >;
   const own = entry[backend];
   if (!own) return null;
-  const files = [...entry.shared, ...own].map(([path, bytes]) => ({ path, bytes }));
+  const files = [...entry.shared, ...own].map(([path, bytes, hash]) => ({
+    path,
+    bytes,
+    ...(hash ? { hash } : {}),
+  }));
   const bytes = files.reduce((n, f) => n + f.bytes, 0);
   return {
     dtype,

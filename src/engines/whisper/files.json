@@ -3,34 +3,58 @@
     "repo": "onnx-community/whisper-base",
     "revision": "27a07b4b52b3a4c5886134bb4320e93e1a4bbc7c",
     "shared": [
-      ["config.json", 2243],
-      ["generation_config.json", 3832],
-      ["preprocessor_config.json", 339],
-      ["tokenizer.json", 2480466],
-      ["tokenizer_config.json", 282682]
+      ["config.json", 2243, "git-sha1:ce7faf5d5e56e82d4800e55f524582a525639ff7"],
+      ["generation_config.json", 3832, "git-sha1:a57cdbf036979f80bb7ff092a0fee6256a81d329"],
+      ["preprocessor_config.json", 339, "git-sha1:91876762a536a746d268353c5cba57286e76b058"],
+      ["tokenizer.json", 2480466, "git-sha1:1e95340ff836fad1b5932e800fb7b8c5e6d78a74"],
+      ["tokenizer_config.json", 282682, "git-sha1:25be523be5ac50a7671a77f55acba082459d6314"]
     ],
     "webgpu": [
-      ["onnx/encoder_model.onnx", 82468078],
-      ["onnx/decoder_model_merged_q4.onnx", 123602419]
+      [
+        "onnx/encoder_model.onnx",
+        82468078,
+        "sha256:a9f3b752833b49e880dec91ee5b6d936112be7c3ea07c221024ba493439f46fe"
+      ],
+      [
+        "onnx/decoder_model_merged_q4.onnx",
+        123602419,
+        "sha256:09f83b71ceedc97dab1d90b914715dc532a646a147abda11d83c64867b7c319c"
+      ]
     ],
     "wasm": [
-      ["onnx/encoder_model_quantized.onnx", 23201314],
-      ["onnx/decoder_model_merged_quantized.onnx", 53693315]
+      [
+        "onnx/encoder_model_quantized.onnx",
+        23201314,
+        "sha256:5862993336bf33acd23736071aae2b32261d3b1b2f37780194460d4ef974dd46"
+      ],
+      [
+        "onnx/decoder_model_merged_quantized.onnx",
+        53693315,
+        "sha256:fa3ef9902734ce5ae6f9ef2bdb2ba9a6c4b5785b09f4f420ce036573dc9d090b"
+      ]
     ]
   },
   "whisper-large-v3-turbo": {
     "repo": "onnx-community/whisper-large-v3-turbo",
     "revision": "360ebcde2559d60bb474678be3c1de9ef347d01a",
     "shared": [
-      ["config.json", 1332],
-      ["generation_config.json", 3897],
-      ["preprocessor_config.json", 340],
-      ["tokenizer.json", 2480617],
-      ["tokenizer_config.json", 282843]
+      ["config.json", 1332, "git-sha1:075c98fd4c7f1fe14efa6004a965b3b06103fb3a"],
+      ["generation_config.json", 3897, "git-sha1:570eaecb3faa7055f6c8365a7193c2e8704bc2f3"],
+      ["preprocessor_config.json", 340, "git-sha1:931c77a740890c46365c7ae0c9d350ba3cca908f"],
+      ["tokenizer.json", 2480617, "git-sha1:3a5e2ba63acdcac9a19ba56cf9bd27f185bfff61"],
+      ["tokenizer_config.json", 282843, "git-sha1:06ffdc8308eae6bb7bd1fdd81e94b0a881a539ab"]
     ],
     "webgpu": [
-      ["onnx/encoder_model_fp16.onnx", 1274342603],
-      ["onnx/decoder_model_merged_q4.onnx", 334147222]
+      [
+        "onnx/encoder_model_fp16.onnx",
+        1274342603,
+        "sha256:fdadc70836e6b028fd5e580417c312208dad073d2d01e509e2d127c1373399d8"
+      ],
+      [
+        "onnx/decoder_model_merged_q4.onnx",
+        334147222,
+        "sha256:8b933ac24074a24a1635084d06a4ed37e387ef22d980f184a5fc27418e9ceeb8"
+      ]
     ],
     "wasm": null
   }

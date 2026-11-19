@@ -6,15 +6,18 @@ import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from '@/engines/whisper/info';
 import { allModels, knownModels, modelsFor, totalMB } from '@/models/catalog';
 import {
+  cacheKey,
   fileUrl,
   isComplete,
   type ModelSource,
   modelFileCache,
   parseFileUrl,
   partCount,
+  partKey,
+  pendingPartKey,
 } from '@/models/hub';
 import { ModelManager } from '@/models/manager';
-import { CacheModelStore } from '@/models/store';
+import { CacheModelStore, rangeMatches } from '@/models/store';
 import { DOWNLOADS_KEY, formatSize, type ModelInfo } from '@/models/types';
 
 const custom = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
@@ -222,6 +225,69 @@ describe('CacheModelStore', () => {
     expect(caches.cache.entries.size).toBe(0);
   });
 
+  it('refuses a part the server sent for other bytes, or of a file of another size', async () => {
+    const one = model('x', { ...SOURCE, files: [SOURCE.files[1] as never] });
+    const lying = (header: string) =>
+      (async () =>
+        new Response(bytes(10, 0), {
+          status: 206,
+          headers: { 'content-range': header },
+        })) as typeof fetch;
+    for (const header of ['bytes 10-19/25', 'bytes 0-9/999']) {
+      const caches = new FakeCaches();
+      const st = new CacheModelStore({ caches, fetch: lying(header), partBytes: PART });
+      await expect(st.download(one, () => {}, new AbortController().signal)).rejects.toThrow(
+        /other bytes/,
+      );
+      expect(caches.cache.entries.size).toBe(0);
+    }
+    expect(rangeMatches('bytes 0-9/25', 0, 10, 25)).toBe(true);
+    expect(rangeMatches('bytes 0-9/*', 0, 10, 25)).toBe(true);
+  });
+
+  it('never counts a part left half-written as downloaded', async () => {
+    const caches = new FakeCaches();
+    const key = cacheKey(SOURCE, 'onnx/model.onnx');
+    // The worker stopped while writing part 1: only its pending entry is there.
+    caches.cache.entries.set(pendingPartKey(key, 1), {
+      body: bytes(4, 0),
+      headers: [['content-length', '10']],
+    });
+    const s = server();
+    const st = store(caches, s);
+    expect(Math.round((await st.storedMB(A)) * 1e6)).toBe(0);
+    await st.download(A, () => {}, new AbortController().signal);
+    expect(await st.downloaded([A])).toEqual(new Set(['a']));
+    expect([...caches.cache.entries.keys()].some((k) => k.endsWith('&pending'))).toBe(false);
+  });
+
+  it('checks each file against its pinned hash, and drops one that doesn’t match', async () => {
+    const hashOf = async (data: Uint8Array<ArrayBuffer>) => {
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+      return `sha256:${Array.from(digest, (x) => x.toString(16).padStart(2, '0')).join('')}`;
+    };
+    const good = await hashOf(CONTENT.get('onnx/model.onnx') as Uint8Array<ArrayBuffer>);
+    const pinned = (hash: string): ModelInfo =>
+      model('a', {
+        ...SOURCE,
+        files: [SOURCE.files[0] as never, { path: 'onnx/model.onnx', bytes: 25, hash }],
+      });
+    const caches = new FakeCaches();
+    const verified = (fetch = server().fetch) =>
+      new CacheModelStore({ caches, fetch, partBytes: PART, progressMs: 0, verify: true });
+    await expect(
+      verified().download(
+        pinned(`sha256:${'0'.repeat(64)}`),
+        () => {},
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/didn’t arrive intact/);
+    // The bad file is gone (to fetch anew); the good one stays.
+    expect(Math.round((await verified().storedMB(pinned(good))) * 1e6)).toBe(7);
+    await verified().download(pinned(good), () => {}, new AbortController().signal);
+    expect(await verified().downloaded([pinned(good)])).toEqual(new Set(['a']));
+  });
+
   it('stops on abort', async () => {
     const st = store(new FakeCaches());
     const controller = new AbortController();
@@ -384,6 +450,22 @@ describe('ModelManager', () => {
     await manager.cancel('a');
     expect(pending.size).toBe(0);
     expect((await manager.view()).models[0]?.status.state).toBe('partial');
+  });
+
+  it('keeps the files a model being downloaded shares when another is deleted', async () => {
+    const { st, pending, real } = manualStore();
+    await real.download(A, () => {}, new AbortController().signal);
+    const manager = new ModelManager(deps(st));
+    await manager.download(['b']);
+    await expect.poll(() => pending.has('b')).toBe(true);
+    await manager.remove('a');
+    const caches = (real as unknown as { deps: { caches: FakeCaches } }).deps.caches;
+    const config = partKey(cacheKey(SOURCE, 'config.json'), 0);
+    expect(caches.cache.entries.has(config)).toBe(true);
+    pending.get('b')?.resolve();
+    await expect
+      .poll(async () => (await manager.view()).models.find((m) => m.info.id === 'b')?.status)
+      .toEqual({ state: 'ready' });
   });
 
   it('keeps the worker awake while downloading', async () => {
