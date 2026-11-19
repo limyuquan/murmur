@@ -89,22 +89,29 @@ export class Qwen3Asr {
     onProgress?: (fraction: number, file: string) => void,
   ): Promise<Qwen3Asr> {
     const f = QWEN3_FILES;
-    const bufs = new Map<string, Uint8Array>();
-    const paths = Object.values(f);
+    // One model at a time: the encoder's files are read, made into its session and dropped
+    // before the decoder's are read, so the two never sit in memory together (with ONNX
+    // Runtime's copy of one of them, on a machine that also loads a translation model).
+    const steps = Object.keys(f).length + 2;
     let done = 0;
-    for (const path of paths) {
-      bufs.set(path, await read(path));
-      onProgress?.(++done / (paths.length + 2), path);
-    }
-    const get = (p: string) => bufs.get(p) as Uint8Array;
-    const json = (p: string) => JSON.parse(new TextDecoder().decode(get(p)));
-    const tokenizer = new TokenDecoder(json(f.vocab), json(f.addedTokens));
-    const embedRows = tiedEmbedding(json(f.tied), get(f.decoderData));
-    const session = (model: string, data: string, gpuOutputs: string[] = []) =>
-      ort.InferenceSession.create(get(model), {
+    const read1 = async (path: string) => {
+      const data = await read(path);
+      onProgress?.(++done / steps, path);
+      return data;
+    };
+    const json = async (p: string) => JSON.parse(new TextDecoder().decode(await read1(p)));
+    const tokenizer = new TokenDecoder(await json(f.vocab), await json(f.addedTokens));
+    const tied = await json(f.tied);
+    const session = (
+      model: Uint8Array,
+      dataPath: string,
+      data: Uint8Array,
+      gpuOutputs: string[] = [],
+    ) =>
+      ort.InferenceSession.create(model, {
         executionProviders: ['webgpu'],
         graphOptimizationLevel: 'all',
-        externalData: [{ path: data.split('/').pop() as string, data: get(data) }],
+        externalData: [{ path: dataPath.split('/').pop() as string, data }],
         ...(gpuOutputs.length
           ? {
               preferredOutputLocation: Object.fromEntries(
@@ -113,16 +120,20 @@ export class Qwen3Asr {
             }
           : {}),
       });
-    const encoder = await session(f.encoder, f.encoderData);
-    bufs.delete(f.encoder);
-    bufs.delete(f.encoderData);
-    onProgress?.((paths.length + 1) / (paths.length + 2), f.encoder);
+    const encoder = await session(
+      await read1(f.encoder),
+      f.encoderData,
+      await read1(f.encoderData),
+    );
+    onProgress?.(++done / steps, f.encoder);
     const presents = Array.from({ length: LAYERS }, (_, i) => [
       `present.${i}.key`,
       `present.${i}.value`,
     ]).flat();
-    const decoder = await session(f.decoder, f.decoderData, presents);
-    bufs.clear();
+    const decoderModel = await read1(f.decoder);
+    const decoderData = await read1(f.decoderData);
+    const embedRows = tiedEmbedding(tied, decoderData);
+    const decoder = await session(decoderModel, f.decoderData, decoderData, presents);
     onProgress?.(1, f.decoder);
     return new Qwen3Asr(encoder, decoder, embedRows, tokenizer);
   }
