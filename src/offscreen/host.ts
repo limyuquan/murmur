@@ -29,6 +29,9 @@ import type {
   TranslationEngine,
   TranslationEngineInfo,
 } from '@/engines/types';
+import { LookaheadHost, type LookaheadSnapshot } from '@/lookahead/host';
+import type { PlayheadReport, TeeWire } from '@/lookahead/protocol';
+import type { PipelineHooks } from '@/lookahead/runner';
 import {
   type ActiveSessionStatus,
   type CaptureSourceSpec,
@@ -51,6 +54,20 @@ import { ActivityTracker, activityChanged } from './activity';
 /** How often the session's activity is checked (and reported, when it changed). */
 const ACTIVITY_MS = 1000;
 
+/**
+ * How long after the page plays a moment the person hears it, while Murmur captures the tab and
+ * plays its audio back (measured 60–130 ms in Chrome, codec-dependent): lookahead cues are shown
+ * this much after their media time.
+ */
+export const CAPTURE_LAG_S = 0.1;
+
+/** Lookahead messages kept from before a session starts, at most (base64 bytes). */
+const EARLY_LOOKAHEAD_BYTES = 32 * 1024 * 1024;
+
+type LookaheadMessage =
+  | { type: 'tee'; wire: TeeWire }
+  | { type: 'playhead'; report: PlayheadReport };
+
 /** The part of `browser.runtime.Port` the host uses. */
 export interface OverlayPort {
   readonly sender?: { tab?: { id?: number }; frameId?: number };
@@ -69,6 +86,8 @@ export interface HostDeps {
   onSegment?: PipelineOptions['onSegment'];
   /** Sees the speech detector the session uses (`null`: the energy gate). */
   onVad?(vad: SileroVad | null): void;
+  /** Sees every lookahead cue (e2e builds log them). */
+  onLookaheadCue?(cue: Cue): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
   loadVad?(): Promise<SileroVad>;
   /**
@@ -104,6 +123,14 @@ interface Running {
   translationNote: string | null;
   /** Why the chosen translator gave way to another while loading, if it did. */
   translatorFailure: Error | null;
+  /** Lookahead, once an overlay on a site where it's on reported in. */
+  lookahead: LookaheadHost | null;
+  /** Lookahead's own speech detector (the live one keeps its state per stream). */
+  lookaheadVad: SileroVad | null | 'loading';
+  /** Lookahead is far enough ahead: live frames aren't recognized. */
+  livePaused: boolean;
+  /** What the session's pipeline was given, for lookahead pipelines to use too. */
+  pipelineOptions: Omit<PipelineOptions, 'onCue' | 'onError' | 'vad' | 'onVadFailure'> | null;
 }
 
 /**
@@ -125,21 +152,28 @@ export class SessionFailureError extends Error {
 
 export class OffscreenHost {
   private readonly registry = createBuiltinRegistry(ENGINE_FACTORIES);
-  /** Overlay ports, with whether their frame has a video to draw on. */
-  private readonly ports = new Map<OverlayPort, { video: boolean }>();
+  /** Overlay ports, with whether their frame has a video to draw on, and its address. */
+  private readonly ports = new Map<OverlayPort, { video: boolean; frameUrl: string }>();
   /** Last `videoInFrame` sent to each tab's top frame. */
   private readonly framesSent = new Map<number, boolean>();
   private session: Running | null = null;
   /** Last chip status per tab, for overlays that connect late. */
   private overlayStatus: { tabId: number; status: OverlayStatus } | null = null;
+  /**
+   * Lookahead messages that came before the session started (the overlay is injected, and
+   * forwards what the page's player did, just before the start command), with their size.
+   */
+  private early: { port: OverlayPort; message: LookaheadMessage; size: number }[] = [];
+  private earlyBytes = 0;
 
   constructor(private readonly deps: HostDeps) {}
 
   /** An overlay frame connected. Cues for its tab go to it until it disconnects. */
-  addOverlay(port: OverlayPort): void {
-    this.ports.set(port, { video: false });
+  addOverlay(port: OverlayPort, frameUrl = ''): void {
+    this.ports.set(port, { video: false, frameUrl });
     port.onDisconnect.addListener(() => {
       this.ports.delete(port);
+      this.session?.lookahead?.removePort(port);
       this.updateFrames(port.sender?.tab?.id);
     });
     const last = this.overlayStatus;
@@ -160,12 +194,96 @@ export class OffscreenHost {
     this.updateFrames(port.sender?.tab?.id);
   }
 
+  /** Lookahead from an overlay: the tee's events, or where its video plays. */
+  onLookahead(port: OverlayPort, message: LookaheadMessage): void {
+    const running = this.session;
+    const entry = this.ports.get(port);
+    if (!entry) return;
+    if (!running) {
+      // The start command is on its way: keep what the page sent (bounded).
+      const size =
+        message.type === 'tee' && message.wire.t === 'append' ? message.wire.bytes.length : 64;
+      if (this.earlyBytes + size > EARLY_LOOKAHEAD_BYTES) return;
+      this.early.push({ port, message, size });
+      this.earlyBytes += size;
+      return;
+    }
+    if (port.sender?.tab?.id !== running.config.tabId) return;
+    running.lookahead ??= this.createLookahead(running);
+    const lookahead = running.lookahead;
+    if (message.type === 'tee') lookahead.onTee(port, entry.frameUrl, message.wire);
+    else lookahead.onPlayhead(port, entry.frameUrl, message.report);
+  }
+
+  /** What lookahead is doing (e2e builds read it). */
+  lookaheadSnapshot(): LookaheadSnapshot | null {
+    return this.session?.lookahead?.snapshot() ?? null;
+  }
+
+  private createLookahead(running: Running): LookaheadHost {
+    const { config } = running;
+    return new LookaheadHost({
+      post: (message) => this.broadcast(config.tabId, message),
+      lagS: config.source.kind === 'tab' ? CAPTURE_LAG_S : 0,
+      createPipeline: (media, hooks) => this.lookaheadPipeline(running, media, hooks),
+      setLivePaused: (paused) => {
+        if (running.livePaused === paused) return;
+        running.livePaused = paused;
+        // The open live segment ends here; frames are only measured until lookahead falls back.
+        if (paused) running.pipeline?.flush();
+      },
+      onCue: (cue) => this.deps.onLookaheadCue?.(cue),
+    });
+  }
+
+  /**
+   * A pipeline over the session's engines for a lookahead job, or null while they load (or when
+   * the speech engine listens to the live track, which can't take audio ahead of time).
+   */
+  private lookaheadPipeline(
+    running: Running,
+    media: { timeline: string; idPrefix: string },
+    hooks: PipelineHooks,
+  ): Pipeline | null {
+    const options = running.pipelineOptions;
+    if (!this.isCurrent(running) || !options || !running.asr) return null;
+    if (running.asr.info.audioInput === 'track') return null;
+    let vad: SileroVad | null = null;
+    if (wantsModelVad(running.asr.info)) {
+      if (running.lookaheadVad === null) {
+        running.lookaheadVad = 'loading';
+        void this.loadVad().then((loaded) => {
+          if (!this.isCurrent(running)) {
+            void loaded?.dispose().catch(() => {});
+            return;
+          }
+          running.lookaheadVad = loaded;
+          running.lookahead?.kick();
+        });
+      }
+      if (running.lookaheadVad === 'loading') return null;
+      vad = running.lookaheadVad;
+    }
+    return new Pipeline({
+      ...options,
+      translatePartials: false,
+      track: null,
+      vad,
+      media,
+      onCue: hooks.onCue,
+      onSegment: hooks.onSegment,
+      onError: hooks.onError,
+    });
+  }
+
   /**
    * Opens the capture, then loads the engines without waiting for them: resolves once the
    * capture is open (or rejects with a `SessionFailureError`). Loading reports its progress and
    * any failure as status events; `stop()` cancels it.
    */
   async start(config: SessionConfig): Promise<void> {
+    // Kept across the stop of any session before this one.
+    const kept = this.early;
     await this.stop();
     const running: Running = {
       config,
@@ -185,15 +303,27 @@ export class OffscreenHost {
       problems: [],
       translationNote: null,
       translatorFailure: null,
+      lookahead: null,
+      lookaheadVad: null,
+      livePaused: false,
+      pipelineOptions: null,
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
+    // What the tab's overlays forwarded before this start reached here.
+    const early = [...kept, ...this.early];
+    this.early = [];
+    this.earlyBytes = 0;
+    for (const { port, message } of early) {
+      if (this.ports.has(port)) this.onLookahead(port, message);
+    }
     // Capture first: the tab's stream ID expires seconds after it is minted, and models can
     // take minutes to load. Frames heard before the pipeline exists are only measured.
     try {
       running.capture = await startCapture(sourceFor(config.source), (frame) => {
         running.activity.onFrame(frame.samples, Date.now());
-        running.pipeline?.push(frame);
+        // While lookahead is ahead, live frames are only measured.
+        if (!running.livePaused) running.pipeline?.push(frame);
       });
     } catch (err) {
       if (!this.isCurrent(running)) return;
@@ -303,7 +433,7 @@ export class OffscreenHost {
         supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
       });
 
-      const pipeline = new Pipeline({
+      const shared = {
         asr: running.asr,
         translator: running.translator,
         targetLanguage: config.targetLanguage,
@@ -313,6 +443,10 @@ export class OffscreenHost {
         detectLanguages,
         translatePartials: config.translatePartials,
         track: running.capture?.track ?? null,
+      };
+      running.pipelineOptions = shared;
+      const pipeline = new Pipeline({
+        ...shared,
         vad,
         onVadFailure: (err) =>
           console.warn(LOG_PREFIX, 'speech detector failed, using loudness', err),
@@ -349,6 +483,7 @@ export class OffscreenHost {
         },
       });
       running.pipeline = pipeline;
+      running.lookahead?.kick();
       this.reportRunning(running, mtInfo.label);
       running.ticker = setInterval(() => {
         const next = running.activity.snapshot(Date.now());
@@ -382,6 +517,8 @@ export class OffscreenHost {
   async stop(): Promise<void> {
     const running = this.session;
     this.session = null;
+    this.early = [];
+    this.earlyBytes = 0;
     if (!running) return;
     running.controller.abort(new DOMException('The session stopped.', 'AbortError'));
     await this.teardown(running);
@@ -389,6 +526,11 @@ export class OffscreenHost {
 
   private async teardown(running: Running): Promise<void> {
     if (running.ticker) clearInterval(running.ticker);
+    await running.lookahead?.stop().catch(() => {});
+    running.lookahead = null;
+    const lookaheadVad = running.lookaheadVad;
+    running.lookaheadVad = null;
+    if (lookaheadVad && lookaheadVad !== 'loading') await lookaheadVad.dispose().catch(() => {});
     await running.capture?.stop().catch(() => {});
     await running.pipeline?.close().catch(() => {});
     await running.asr?.unload().catch(() => {});

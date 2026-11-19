@@ -2,6 +2,7 @@
  * Test-only hooks, present only in e2e builds (`import.meta.env.MODE === 'e2e'`). Production
  * builds tree-shake them away. Playwright reaches them through `serviceWorker.evaluate`.
  */
+import type { LookaheadSnapshot } from '@/lookahead/host';
 import type { SegmentEvent } from '@/pipeline/segmenter';
 import type { Cue } from '@/pipeline/types';
 
@@ -24,12 +25,28 @@ export interface BackgroundTestHook {
     engines?: 'demo' | 'settings' | { asr: string; translation: string },
   ): Promise<void>;
   stop(): Promise<void>;
+  /** Lookahead on or off for `site` (the e2e build already has access to every site). */
+  lookahead(site: string, on: boolean): Promise<void>;
+  /** What the offscreen document logged (asked over runtime messaging). */
+  offscreenLog(): Promise<OffscreenE2eLog | null>;
+}
+
+/** The offscreen document's answer to an `e2e-log` command. */
+export interface OffscreenE2eLog {
+  /** Live cues sent so far. */
+  cues: number;
+  lookaheadCues: { at: number; cue: Cue }[];
+  lookahead: LookaheadSnapshot | null;
 }
 
 /** On the offscreen document's global as `__murmurLog` (e2e builds): what the session produced. */
 export interface OffscreenTestLog {
   /** Every cue sent to the overlay, with the epoch ms it was sent. */
   cues: { at: number; cue: Cue }[];
+  /** Every lookahead cue, with the epoch ms it was sent. */
+  lookaheadCues: { at: number; cue: Cue }[];
+  /** What lookahead is doing now (null: not running in this session). */
+  lookahead: () => LookaheadSnapshot | null;
   /** Chrome speech: which recognizer won each segment, with every candidate's score. */
   arbitrations: { at: number; record: unknown }[];
   /** Segment decodes of engines that report them (Qwen3-ASR): kind, timing, text. */

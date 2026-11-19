@@ -4,6 +4,7 @@
  * inside the start command. Wires every listener synchronously.
  */
 import { browser } from 'wxt/browser';
+import { isPlayheadReport, isTeeWire } from '@/lookahead/protocol';
 import {
   isOffscreenCommand,
   type OffscreenReply,
@@ -17,7 +18,7 @@ import {
   type HostDeps as OffscreenHostDeps,
   type OverlayPort,
 } from '@/offscreen/host';
-import { IS_E2E, type OffscreenTestLog } from '@/shared/e2e';
+import { IS_E2E, type OffscreenE2eLog, type OffscreenTestLog } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
 
 const host = new OffscreenHost({
@@ -31,9 +32,14 @@ const host = new OffscreenHost({
  * with its cost, on
  * `globalThis.__murmurLog`, for real-model checks driven over CDP.
  */
-function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines' | 'onVad' | 'onSegment'> {
+function e2eTaps(): Pick<
+  OffscreenHostDeps,
+  'onCue' | 'onEngines' | 'onVad' | 'onSegment' | 'onLookaheadCue'
+> {
   const log: OffscreenTestLog = {
     cues: [],
+    lookaheadCues: [],
+    lookahead: () => host.lookaheadSnapshot(),
     arbitrations: [],
     decodes: [],
     engines: null,
@@ -44,6 +50,7 @@ function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines' | 'onVad' | 'o
   const now = () => performance.timeOrigin + performance.now();
   return {
     onCue: (cue) => log.cues.push({ at: now(), cue }),
+    onLookaheadCue: (cue) => log.lookaheadCues.push({ at: now(), cue }),
     onSegment: (event) => log.segments.push({ at: now(), event }),
     onVad: (vad) => {
       log.vad = vad ? { detector: 'silero', cost: vad.cost } : { detector: 'energy', cost: null };
@@ -67,6 +74,15 @@ const ext = { id: browser.runtime.id, base: browser.runtime.getURL('/') };
 browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   // Commands come from the service worker, never from a tab (content scripts have one).
   if (!isOffscreenCommand(message) || !isExtensionContext(sender, ext)) return;
+  if (IS_E2E && (message as { type: string }).type === 'e2e-log') {
+    const log = globalThis.__murmurLog;
+    sendResponse({
+      cues: log?.cues.length ?? 0,
+      lookaheadCues: log?.lookaheadCues ?? [],
+      lookahead: log?.lookahead() ?? null,
+    } satisfies OffscreenE2eLog);
+    return;
+  }
   const work =
     message.type !== 'start'
       ? host.stop()
@@ -91,9 +107,13 @@ browser.runtime.onConnect.addListener((port) => {
     // Wait for the hello so a port is only counted once its frame is listening.
     if (message?.type === 'hello' && !counted) {
       counted = true;
-      host.addOverlay(overlay);
+      host.addOverlay(overlay, typeof message.frameUrl === 'string' ? message.frameUrl : '');
     } else if (message?.type === 'video' && counted) {
       host.setOverlayVideo(overlay, message.present === true);
+    } else if (message?.type === 'tee' && counted && isTeeWire(message.wire)) {
+      host.onLookahead(overlay, message);
+    } else if (message?.type === 'playhead' && counted && isPlayheadReport(message.report)) {
+      host.onLookahead(overlay, message);
     }
   });
 });

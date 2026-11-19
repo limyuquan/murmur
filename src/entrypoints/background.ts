@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { dispatch } from '@/background/api';
+import { setLookaheadSite, syncLookaheadScripts } from '@/background/lookahead';
 import { models } from '@/background/models';
 import {
   installSessionListeners,
@@ -14,7 +15,7 @@ import { OFFSCREEN_PATH } from '@/capture/offscreen';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { isOffscreenEvent, isRequest, type Response } from '@/messaging/protocol';
 import { isExtensionPage, isOffscreenDocument } from '@/messaging/senders';
-import { loadSettings, saveSettings, spokenLanguages } from '@/settings/settings';
+import { loadSettings, saveSettings, spokenLanguages, watchSettings } from '@/settings/settings';
 import { COMMANDS } from '@/shared/commands';
 import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
@@ -25,6 +26,10 @@ export default defineBackground(() => {
   reconcile().catch((err: unknown) => console.error(LOG_PREFIX, 'reconcile failed', err));
   models.reconcile().catch(() => {});
   installSessionListeners();
+  // Lookahead's page scripts follow the settings and the access the person gave.
+  void syncLookaheadScripts().catch(() => {});
+  watchSettings(() => void syncLookaheadScripts().catch(() => {}));
+  browser.permissions.onRemoved.addListener(() => void syncLookaheadScripts().catch(() => {}));
 
   // First install: the welcome page (what Murmur does, pick a model, download). Not in e2e
   // builds, where a surprise tab would get in the tests' way.
@@ -87,6 +92,18 @@ export default defineBackground(() => {
       },
       async stop() {
         await stopSession();
+      },
+      async lookahead(site, on) {
+        await setLookaheadSite(site, on);
+      },
+      async offscreenLog() {
+        try {
+          return (
+            (await browser.runtime.sendMessage({ target: 'offscreen', type: 'e2e-log' })) ?? null
+          );
+        } catch {
+          return null;
+        }
       },
     };
   }
