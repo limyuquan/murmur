@@ -194,6 +194,15 @@ body {
   font-size: 12px;
   border-radius: 7px;
 }
+/* A button whose label may need two lines (long names in the narrow popup). */
+.btn-wrap {
+  height: auto;
+  min-height: 28px;
+  padding-block: 5px;
+  white-space: normal;
+  text-align: left;
+  justify-content: flex-start;
+}
 .btn-lg {
   height: 40px;
   padding: 0 18px;

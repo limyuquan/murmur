@@ -257,8 +257,11 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
         <div className="card p-4" data-testid="chrome-packs">
           <h3 className="font-semibold">Chrome language packs</h3>
           <p className="mt-0.5 text-[13px] text-[var(--color-muted)]">
-            {selectedLabel} uses Chrome’s own speech recognition or translation. Chrome downloads
-            and keeps a pack for each language, after a click.
+            {selectedLabel} uses Chrome’s own{' '}
+            {packs.some((p) => p.kind === 'speech-pack')
+              ? 'speech recognition and translation'
+              : 'translation'}
+            . Chrome downloads and keeps a pack for each language, after a click.
           </p>
           <div className="mt-1">
             <ChromePacks actions={packs} />

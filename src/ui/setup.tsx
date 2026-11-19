@@ -237,10 +237,10 @@ export function SetupButtons({
           <li key={a.id} className="grid gap-1">
             <button
               type="button"
-              className="btn btn-sm justify-self-start"
+              className="btn btn-sm btn-wrap justify-self-start"
               onClick={() => click(a)}
             >
-              <Icon name="download" size={14} /> {a.label}
+              <Icon name="download" size={14} /> <span>{a.label}</span>
             </button>
             {s?.state === 'failed' && (
               <span className="text-[12px] text-[var(--color-danger)]">{s.message}</span>
