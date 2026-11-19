@@ -18,6 +18,10 @@
  * (default 40) so downloads take long enough to watch and cancel. Files of the `murmur` group
  * (Murmur's own, whose repo isn't published yet) are served under any repo.
  *
+ * `/lib/<name>` serves the players the lookahead pages use (hls.js, dash.js, Shaka), pinned dev
+ * dependencies, from node_modules. The lookahead media (tests/fixtures/pages/lookahead) is made by
+ * scripts/make-lookahead-media.sh.
+ *
  * `FIXTURE_HF_DIR=<dir>` serves real model files instead, unthrottled, where it has them: from
  * `<dir>/<repo>/<path>`, else `<dir>/<path>`. With a build that downloads from here
  * (`WXT_MODEL_HOST=http://127.0.0.1:4392/hf pnpm build:e2e`), real models load in a real Chrome
@@ -110,6 +114,17 @@ const types = {
   '.html': 'text/html; charset=utf-8',
   '.webm': 'video/webm',
   '.js': 'text/javascript',
+  '.mp4': 'video/mp4',
+  '.m4s': 'video/iso.segment',
+  '.m3u8': 'application/vnd.apple.mpegurl',
+  '.mpd': 'application/dash+xml',
+};
+const modules = path.resolve(new URL('../node_modules', import.meta.url).pathname);
+/** Players for the lookahead pages. */
+const libs = {
+  'hls.min.js': 'hls.js/dist/hls.min.js',
+  'dash.all.min.js': 'dashjs/dist/modern/umd/dash.all.min.js',
+  'shaka-player.compiled.js': 'shaka-player/dist/shaka-player.compiled.js',
 };
 
 const server = createServer(async (req, res) => {
@@ -136,8 +151,11 @@ const server = createServer(async (req, res) => {
     }
     return;
   }
-  const file = path.join(root, path.normalize(url.pathname));
-  if (!file.startsWith(root + path.sep)) {
+  const lib = /^\/lib\/([^/]+)$/.exec(url.pathname);
+  const file = lib
+    ? libs[lib[1]] && path.join(modules, libs[lib[1]])
+    : path.join(root, path.normalize(url.pathname));
+  if (!file || (!lib && !file.startsWith(root + path.sep))) {
     res.writeHead(403);
     res.end();
     return;
@@ -148,7 +166,7 @@ const server = createServer(async (req, res) => {
     const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '');
     if (range) {
       const start = Number(range[1]);
-      const end = range[2] ? Number(range[2]) : body.length - 1;
+      const end = Math.min(body.length - 1, range[2] ? Number(range[2]) : body.length - 1);
       res.writeHead(206, {
         'content-type': type,
         'content-range': `bytes ${start}-${end}/${body.length}`,

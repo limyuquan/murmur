@@ -38,12 +38,21 @@ importers:
       "@wxt-dev/module-react":
         specifier: 1.2.2
         version: 1.2.2(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0))(wxt@0.21.4(rolldown@1.2.19)(typescript@7.0.2)(vite@8.3.5(@types/node@26.6.5)(jiti@2.7.0)))
+      dashjs:
+        specifier: 5.3.0
+        version: 5.3.0(@svta/cml-cta@1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)
+      hls.js:
+        specifier: 1.7.4
+        version: 1.7.4
       react:
         specifier: 19.3.1
         version: 19.3.1
       react-dom:
         specifier: 19.3.1
         version: 19.3.1(react@19.3.1)
+      shaka-player:
+        specifier: 5.3.3
+        version: 5.3.3
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
@@ -753,6 +762,98 @@ packages:
         integrity: sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA==,
       }
 
+  "@svta/cml-608@1.1.0":
+    resolution:
+      {
+        integrity: sha512-r427FE+vTYsgh9wi7lc6gkixFpdBiTSy+fIy4zdwe8+mgOtMiVjP9xHW68z1KcH/WNSGRDzCEunNIsX4tIljTA==,
+      }
+    engines: { node: ">=20" }
+
+  "@svta/cml-cmcd@2.8.2":
+    resolution:
+      {
+        integrity: sha512-/safKRbApNeycQBJHdA6EgrPj+6vqsChRLX6oQr1//DKKfoyjed2Pn7oDUNxw17hTN+X02AvvOtKrg7niY4AQw==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-structured-field-values": 1.1.6
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-cmsd@1.1.1":
+    resolution:
+      {
+        integrity: sha512-Om3w7qU33E7i/K3Gd0GOG8njIDP9GD3R3XjqxIGc/ZXFexTVvMK3eQIN9cyVLdJrLR7XLMUIih7Kc1D+tNLl8Q==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-cta": 1.0.9
+      "@svta/cml-structured-field-values": 1.1.6
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-cta@1.0.9":
+    resolution:
+      {
+        integrity: sha512-qEz9dYeHSDQtKiIfDQNWlBQgBsKJZcUojI8JLNhfc4d4IcAmqwwCd7UVXxEiAt7S6hNLQgWBE/YH43ot8x0Fbw==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-structured-field-values": 1.1.6
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-dash@1.0.9":
+    resolution:
+      {
+        integrity: sha512-+ufdUrkKpeNPtxDXA/8b7gXJAR9FnntGVvImgexzrjoIH4j/5QkhPmwjT2fUk/l3bsMGqRkZcFoqKLagT21BVQ==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-id3@1.0.9":
+    resolution:
+      {
+        integrity: sha512-dH902qkWEscl5srsL5pxJjyXMHWV6r3E9Up/thlnGj0M5hc0e+M6VeIFsmLVtZkuwwhugXb39PAkRP1IRRm8Nw==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-request@1.0.21":
+    resolution:
+      {
+        integrity: sha512-OEpyH5F4Buh8fYfaOXtbbWrHY3BG7J5i2euEz5qemj1H8ABVgmHHXnkv+NNSSvJH/0bjoqFbXwUcD2KHUUoaSA==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-cmcd": 2.8.2
+      "@svta/cml-utils": 1.6.1
+      "@svta/cml-xml": 1.2.1
+
+  "@svta/cml-structured-field-values@1.1.6":
+    resolution:
+      {
+        integrity: sha512-+aPvf3Ak9DdJZC+z5/R1A8Swq0AI4uoVD6QV5e8gM9W8im+LuzP69rPh7lrnA7RfANTPhSwd6zxTf/IXyPlY8A==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-utils@1.6.1":
+    resolution:
+      {
+        integrity: sha512-jPKb+it53Pi8rbO8fNX8qpbdE+JfDAeOXF7lcG+uVU5BCcR0wbMTT2VtFdMeVsUN57TFPAurRavE3aEUSzC+zw==,
+      }
+    engines: { node: ">=20" }
+
+  "@svta/cml-xml@1.2.1":
+    resolution:
+      {
+        integrity: sha512-zTogQQ6h6Lhzi78MU9pH2NEuCDK2lpWjMsmvQqGoLipozQAkLO7OXgEc4K9KZ1qmwg77DSiiJQo6TNtyT9PbQw==,
+      }
+    engines: { node: ">=20" }
+    peerDependencies:
+      "@svta/cml-utils": 1.6.1
+
   "@tailwindcss/node@4.3.3":
     resolution:
       {
@@ -1291,6 +1392,12 @@ packages:
       }
     engines: { node: ">=12" }
 
+  codem-isoboxer@0.3.10:
+    resolution:
+      {
+        integrity: sha512-eNk3TRV+xQMJ1PEj0FQGY8KD4m0GPxT487XJ+Iftm7mVa9WpPFDMWqPt+46buiP5j5Wzqe5oMIhqBcAeKfygSA==,
+      }
+
   color-convert@2.0.1:
     resolution:
       {
@@ -1355,6 +1462,13 @@ packages:
       {
         integrity: sha512-PoKaoPzQapnEoqUSnHx1u6W6ku8CVEgKsnpmmzU3m1nwkidpPBQ8V/Zq2+bWNrsOKoKLwTGdbx6xF7BXP1zLVQ==,
       }
+
+  dashjs@5.3.0:
+    resolution:
+      {
+        integrity: sha512-2Pe1gl4kUX30RkjmGVywT8Frje0a5reGqmqXDqsD/YC/3EkfN1XFuDoBg1p4gnfaHIDcL2KwD/4iqpCKz8tuwA==,
+      }
+    engines: { node: ">=20" }
 
   define-data-property@1.1.4:
     resolution:
@@ -1557,6 +1671,12 @@ packages:
         integrity: sha512-h1pQPR9XoeSMdntRNCjyTznaume4UpfXrULBnlkZ2CUM/G5eSa+pBByGldO5uR8dxbPC+OuJXsPPNf+JZ81ADg==,
       }
 
+  fast-deep-equal@3.1.3:
+    resolution:
+      {
+        integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==,
+      }
+
   fdir@6.5.0:
     resolution:
       {
@@ -1643,10 +1763,22 @@ packages:
         integrity: sha512-55JNKuIW+vq4Ke1BjOTjM2YctQIvCT7GFzHwmfZPGo5wnrgkid0YQtnAleFSqumZm4az3n2BS+erby5ipJdgrg==,
       }
 
+  hls.js@1.7.4:
+    resolution:
+      {
+        integrity: sha512-3GlxGdPvT2YHvQYOt+yOzT/DEior/qJVNIylHA77kgeoBTdQQqi70GwefNEUmHQeNGyjC8U62+bruqW/Tpm+tg==,
+      }
+
   hookable@6.1.2:
     resolution:
       {
         integrity: sha512-+abwxtiEA52GCVIsQqut3S/uKTbUwYIp4Pe/vv+6py5XiXBCqMZHg6pA6Y5qhgLSEys0/cYuPbO0z1QFj5ZCmg==,
+      }
+
+  html-entities@2.6.0:
+    resolution:
+      {
+        integrity: sha512-kig+rMn/QOVRvr7c86gQ8lWXq+Hkv6CbAH1hLu+RG338StTpE8Z0b44SDVaqVu7HGKf27frdmUYEs9hTUX/cLQ==,
       }
 
   html-escaper@3.0.3:
@@ -1659,6 +1791,18 @@ packages:
     resolution:
       {
         integrity: sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==,
+      }
+
+  immediate@3.0.6:
+    resolution:
+      {
+        integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==,
+      }
+
+  imsc@1.1.5:
+    resolution:
+      {
+        integrity: sha512-V8je+CGkcvGhgl2C1GlhqFFiUOIEdwXbXLiu1Fcubvvbo+g9inauqT3l0pNYXGoLPBj3jxtZz9t+wCopMkwadQ==,
       }
 
   is-docker@2.2.1:
@@ -1709,6 +1853,12 @@ packages:
       }
     engines: { node: ">=6" }
     hasBin: true
+
+  lie@3.1.1:
+    resolution:
+      {
+        integrity: sha512-RiNhHysUjhrDQntfYSfY4MU24coXXdEOgw9WGcKHNeEwffDYbF//u87M1EWaMGzuFoSbqW0C9C6lEEhDOAswfw==,
+      }
 
   lightningcss-android-arm64@1.32.0:
     resolution:
@@ -1941,6 +2091,12 @@ packages:
       }
     engines: { node: ">=14" }
 
+  localforage@1.10.0:
+    resolution:
+      {
+        integrity: sha512-14/H1aX7hzBBmmh7sGPd+AOMkkIrHM3Z1PAyGgZigA1H1p5O5ANnMyWzvpAETtG68/dC4pC0ncy3+PPGzXZHPg==,
+      }
+
   lodash.merge@4.6.2:
     resolution:
       {
@@ -2065,6 +2221,12 @@ packages:
         integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==,
       }
     engines: { node: ">=12" }
+
+  path-browserify@1.0.1:
+    resolution:
+      {
+        integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==,
+      }
 
   pathe@2.0.3:
     resolution:
@@ -2203,6 +2365,12 @@ packages:
     engines: { node: ^20.19.0 || >=22.12.0 }
     hasBin: true
 
+  sax@1.2.1:
+    resolution:
+      {
+        integrity: sha512-8I2a3LovHTOpm7NV5yOyO8IHqgVsfK4+UuySrXU8YXkSRX7k6hCV9b3HrkKCr3nMpgj+0bmocaJJWpvp1oc7ZA==,
+      }
+
   scheduler@0.28.0:
     resolution:
       {
@@ -2229,6 +2397,13 @@ packages:
         integrity: sha512-3NnuWfM6vBYoy5gZFvHiYsVbafvI9vZv/+jlIigFn4oP4zjNPK3LhcY0xSCgeb1a5L8jO71Mit9LlNoi2UfDDQ==,
       }
     engines: { node: ">=10" }
+
+  shaka-player@5.3.3:
+    resolution:
+      {
+        integrity: sha512-Y0i1Vkdv2kdGVfjKWiKENw+/mgavB031tXi9toHunAwRqvs40nkelbkw/hOMnCaLH5rrs7+1w0vhkfqMaIfwZg==,
+      }
+    engines: { node: ">=18" }
 
   sharp@0.35.5:
     resolution:
@@ -2911,6 +3086,48 @@ snapshots:
 
   "@rolldown/pluginutils@1.1.1": {}
 
+  "@svta/cml-608@1.1.0": {}
+
+  "@svta/cml-cmcd@2.8.2(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-structured-field-values": 1.1.6(@svta/cml-utils@1.6.1)
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-cmsd@1.1.1(@svta/cml-cta@1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-cta": 1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)
+      "@svta/cml-structured-field-values": 1.1.6(@svta/cml-utils@1.6.1)
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-cta@1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-structured-field-values": 1.1.6(@svta/cml-utils@1.6.1)
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-dash@1.0.9(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-id3@1.0.9(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-request@1.0.21(@svta/cml-cmcd@2.8.2(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)(@svta/cml-xml@1.2.1(@svta/cml-utils@1.6.1))":
+    dependencies:
+      "@svta/cml-cmcd": 2.8.2(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)
+      "@svta/cml-utils": 1.6.1
+      "@svta/cml-xml": 1.2.1(@svta/cml-utils@1.6.1)
+
+  "@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-utils": 1.6.1
+
+  "@svta/cml-utils@1.6.1": {}
+
+  "@svta/cml-xml@1.2.1(@svta/cml-utils@1.6.1)":
+    dependencies:
+      "@svta/cml-utils": 1.6.1
+
   "@tailwindcss/node@4.3.3":
     dependencies:
       "@jridgewell/remapping": 2.3.5
@@ -3162,6 +3379,8 @@ snapshots:
       strip-ansi: 6.0.1
       wrap-ansi: 7.0.0
 
+  codem-isoboxer@0.3.10: {}
+
   color-convert@2.0.1:
     dependencies:
       color-name: 1.1.4
@@ -3189,6 +3408,26 @@ snapshots:
   cssomnom@0.1.12: {}
 
   csstype@3.2.4: {}
+
+  dashjs@5.3.0(@svta/cml-cta@1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1):
+    dependencies:
+      "@svta/cml-608": 1.1.0
+      "@svta/cml-cmcd": 2.8.2(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)
+      "@svta/cml-cmsd": 1.1.1(@svta/cml-cta@1.0.9(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)
+      "@svta/cml-dash": 1.0.9(@svta/cml-utils@1.6.1)
+      "@svta/cml-id3": 1.0.9(@svta/cml-utils@1.6.1)
+      "@svta/cml-request": 1.0.21(@svta/cml-cmcd@2.8.2(@svta/cml-structured-field-values@1.1.6(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1))(@svta/cml-utils@1.6.1)(@svta/cml-xml@1.2.1(@svta/cml-utils@1.6.1))
+      "@svta/cml-xml": 1.2.1(@svta/cml-utils@1.6.1)
+      codem-isoboxer: 0.3.10
+      fast-deep-equal: 3.1.3
+      html-entities: 2.6.0
+      imsc: 1.1.5
+      localforage: 1.10.0
+      path-browserify: 1.0.1
+    transitivePeerDependencies:
+      - "@svta/cml-cta"
+      - "@svta/cml-structured-field-values"
+      - "@svta/cml-utils"
 
   define-data-property@1.1.4:
     dependencies:
@@ -3285,6 +3524,8 @@ snapshots:
 
   exsolve@1.2.0: {}
 
+  fast-deep-equal@3.1.3: {}
+
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
@@ -3322,7 +3563,11 @@ snapshots:
     dependencies:
       es-define-property: 1.0.1
 
+  hls.js@1.7.4: {}
+
   hookable@6.1.2: {}
+
+  html-entities@2.6.0: {}
 
   html-escaper@3.0.3: {}
 
@@ -3332,6 +3577,12 @@ snapshots:
       domhandler: 5.0.3
       domutils: 3.2.2
       entities: 7.0.1
+
+  immediate@3.0.6: {}
+
+  imsc@1.1.5:
+    dependencies:
+      sax: 1.2.1
 
   is-docker@2.2.1: {}
 
@@ -3348,6 +3599,10 @@ snapshots:
   js-tokens@10.0.0: {}
 
   json5@2.2.3: {}
+
+  lie@3.1.1:
+    dependencies:
+      immediate: 3.0.6
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -3461,6 +3716,10 @@ snapshots:
       pkg-types: 2.4.0
       quansync: 0.2.11
 
+  localforage@1.10.0:
+    dependencies:
+      lie: 3.1.1
+
   lodash.merge@4.6.2: {}
 
   long@5.3.2: {}
@@ -3534,6 +3793,8 @@ snapshots:
       define-lazy-prop: 2.0.0
       is-docker: 2.2.1
       is-wsl: 2.2.0
+
+  path-browserify@1.0.1: {}
 
   pathe@2.0.3: {}
 
@@ -3631,6 +3892,8 @@ snapshots:
       "@rolldown/binding-win32-arm64-msvc": 1.2.19
       "@rolldown/binding-win32-x64-msvc": 1.2.19
 
+  sax@1.2.1: {}
+
   scheduler@0.28.0: {}
 
   scule@1.3.0: {}
@@ -3640,6 +3903,8 @@ snapshots:
   serialize-error@8.1.0:
     dependencies:
       type-fest: 0.20.2
+
+  shaka-player@5.3.3: {}
 
   sharp@0.35.5(@types/node@26.6.5):
     dependencies:
