@@ -157,7 +157,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/entrypoints/background.ts`, `src/background/` | Service worker: the one session (start/stop, state in `storage.session`), badge, popup dispatcher |
 | `src/entrypoints/offscreen/`, `src/offscreen/host.ts` | Offscreen document (`USER_MEDIA`): capture graph, engines, pipeline, cues to the overlay |
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
-| `src/pipeline/` | VAD hook, segmenter, orchestration (ASR → translation → cues), per-segment language |
+| `src/pipeline/` | VAD hook, segmenter and its sentence-end detector (`sentence.ts`), orchestration (ASR → translation → cues), per-segment language |
 | `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
@@ -180,7 +180,12 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    20 ms frames stamped with the epoch time they are heard. It answers `start` once the capture is
    open, then loads the engines, reporting progress and any failure (with its code, pack buttons
    or missing models) as `session-status` events, so a stop never waits for a load.
-4. The segmenter cuts speech segments (pre-roll, hangover, max length). The ASR session streams
+4. The segmenter cuts speech segments (`src/pipeline/segmenter.ts`, every parameter in one
+   `SegmenterConfig`). By default a segment ends at a 250 ms pause once it is 1 s long, already
+   at a 150 ms pause when the words so far end a sentence (it asks the ASR session to decode up
+   to the pause, `requestPartial`, and `sentence.ts` judges the text), and at 6 s at the quietest
+   moment of its last second, the rest carrying over into the next segment. Engines that listen
+   to the track get the older pause-only rule (`PAUSE_SEGMENTER`). The ASR session streams
    partial and final results, each with its own language. Finals are translated in order with
    recent lines as context; a segment already in the target language isn't translated.
 5. Each change to a segment is sent as a whole `Cue` over the overlay's port. The overlay replaces
@@ -235,7 +240,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 |---|---|---|
 | `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
 | `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
-| `qwen3-asr-0.6b` | Qwen3-ASR-0.6B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker | First in Balanced. SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). **Those files aren't published yet**, so production builds show it unavailable and Balanced runs turbo. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; Whisper's scheduler and guards (`segments.ts`). |
+| `qwen3-asr-0.6b` | Qwen3-ASR-0.6B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker | First in Balanced. SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). **Those files aren't published yet**, so production builds show it unavailable and Balanced runs turbo. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; probes and finals decode from scratch, and a probe at the segment's end is its final; decoding stops at a token cap that grows with the audio or on a repetition loop; Whisper's scheduler and guards (`segments.ts`). |
 | `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions (`whisper/files.json`), one download per backend, read from the model cache with the network off. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
 
 - **Chrome language packs need a click.** Chrome only starts a speech or translation pack
