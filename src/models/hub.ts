@@ -54,14 +54,15 @@ export const MODEL_CACHE = 'murmur-models';
 
 /**
  * TODO(publish): the Hugging Face repo and commit that host the model files Murmur makes itself
- * (re-quantized weights and their sidecars; see each engine's files.json, group `murmur`). They
+ * (re-quantized weights and their sidecars; see each engine's files.json, group `murmur`), each
+ * model's under its own path (Qwen3-ASR 0.6B at the root, 1.7B under `qwen3-asr-1.7b/`). They
  * aren't uploaded yet: upload them, then set `repo` to that repo and `revision` to the commit's
  * full hash. Until then `isPublished` is false and the engines that need them are unavailable in
  * builds that download from Hugging Face (e2e builds and `WXT_MODEL_HOST` builds still offer
  * them; scripts/serve-fixtures.mjs serves the files).
  */
 export const MURMUR_MODELS: FileOrigin = {
-  repo: 'TODO-owner/murmur-qwen3-asr-0.6b',
+  repo: 'TODO-owner/murmur-models',
   revision: 'TODO',
 };
 

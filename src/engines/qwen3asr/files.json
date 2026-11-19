@@ -1,47 +1,90 @@
 {
-  "upstream": {
-    "repo": "subtitleking/qwen3-asr-0.6b-onnx",
-    "revision": "29a54e5c3dd0a68dcc7b35eea95946d1cde6c36d",
-    "files": [
-      [
-        "onnx/audio_encoder_fp16.onnx",
-        83779,
-        "sha256:4dc78755a8f8ac54e71746f510ed0743181af06cdf97241ffe8132409ad8a5f7"
-      ],
-      [
-        "onnx/audio_encoder_fp16.onnx_data",
-        372772800,
-        "sha256:233c382466f2b5006738243001d6ff18ef504131198c2115c50a21f934f12bb3"
+  "qwen3-asr-0.6b": {
+    "upstream": {
+      "repo": "subtitleking/qwen3-asr-0.6b-onnx",
+      "revision": "29a54e5c3dd0a68dcc7b35eea95946d1cde6c36d",
+      "files": [
+        [
+          "onnx/audio_encoder_fp16.onnx",
+          83779,
+          "sha256:4dc78755a8f8ac54e71746f510ed0743181af06cdf97241ffe8132409ad8a5f7"
+        ],
+        [
+          "onnx/audio_encoder_fp16.onnx_data",
+          372772800,
+          "sha256:233c382466f2b5006738243001d6ff18ef504131198c2115c50a21f934f12bb3"
+        ]
       ]
-    ]
+    },
+    "murmur": {
+      "files": [
+        [
+          "onnx/decoder_model_merged_q8.onnx",
+          189775,
+          "sha256:d6aa3bb6341fdc1cc453bacff2db1819dfde239e330852a343dbf6005c837e6e"
+        ],
+        [
+          "onnx/decoder_model_merged_q8.onnx_data",
+          679104512,
+          "sha256:1d66a5ab76d1dbcc492725f480566869aa7d312b3c08a4f59cd12ed52440a187"
+        ],
+        [
+          "onnx/decoder_model_merged_q8.tied.json",
+          326,
+          "sha256:03fea3d84daa4fa8a7353238a0101401a78bd09f1b9cb249f582542d45865a66"
+        ],
+        [
+          "vocab.json",
+          2776833,
+          "sha256:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+        ],
+        [
+          "added_tokens.json",
+          1566,
+          "sha256:de40784677cbd1843cabe5fbee078c7e042cd0b62155f0810af5a13842e5722a"
+        ]
+      ]
+    }
   },
-  "murmur": {
-    "files": [
-      [
-        "onnx/decoder_model_merged_q8.onnx",
-        189775,
-        "sha256:d6aa3bb6341fdc1cc453bacff2db1819dfde239e330852a343dbf6005c837e6e"
-      ],
-      [
-        "onnx/decoder_model_merged_q8.onnx_data",
-        679104512,
-        "sha256:1d66a5ab76d1dbcc492725f480566869aa7d312b3c08a4f59cd12ed52440a187"
-      ],
-      [
-        "onnx/decoder_model_merged_q8.tied.json",
-        326,
-        "sha256:03fea3d84daa4fa8a7353238a0101401a78bd09f1b9cb249f582542d45865a66"
-      ],
-      [
-        "vocab.json",
-        2776833,
-        "sha256:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
-      ],
-      [
-        "added_tokens.json",
-        1566,
-        "sha256:de40784677cbd1843cabe5fbee078c7e042cd0b62155f0810af5a13842e5722a"
+  "qwen3-asr-1.7b": {
+    "murmur": {
+      "files": [
+        [
+          "qwen3-asr-1.7b/onnx/audio_encoder_q8.onnx",
+          140445,
+          "sha256:8ce827fcdff0c9886fa5420e060b1c8d9c38eabe26f9a522744d374c8ebaff7e"
+        ],
+        [
+          "qwen3-asr-1.7b/onnx/audio_encoder_q8.onnx_data",
+          341541312,
+          "sha256:8eccfcc1a8e269139b83c3f14f5feac05e49fd5a851ed53c15cfd75b2e587bfa"
+        ],
+        [
+          "qwen3-asr-1.7b/onnx/decoder_model_merged_q8.onnx",
+          190192,
+          "sha256:942b6ccb6ec9d023f02194a20b2c543bde498a7d23e328ef83303a166e200623"
+        ],
+        [
+          "qwen3-asr-1.7b/onnx/decoder_model_merged_q8.onnx_data",
+          1944363008,
+          "sha256:5e196a744d8b0962d8d2b86325853c1292f0bf8f83dcc840aedd5a2cf6c7363b"
+        ],
+        [
+          "qwen3-asr-1.7b/onnx/decoder_model_merged_q8.tied.json",
+          328,
+          "sha256:ddbc8dc2b4b5fef5cb84c14a85d84f78037584b2bff674a5d53518bfd606ee47"
+        ],
+        [
+          "vocab.json",
+          2776833,
+          "sha256:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+        ],
+        [
+          "added_tokens.json",
+          1566,
+          "sha256:de40784677cbd1843cabe5fbee078c7e042cd0b62155f0810af5a13842e5722a"
+        ]
       ]
-    ]
+    }
   }
 }

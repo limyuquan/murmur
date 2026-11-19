@@ -1,9 +1,11 @@
 /**
- * Qwen3-ASR-0.6B on ONNX Runtime Web (WebGPU): log-mel → audio encoder → prompt embeddings with
- * the audio rows spliced in → prefill → greedy decoding through the merged decoder, its KV cache
- * kept on the GPU. Runs in the engine's worker only.
+ * Qwen3-ASR on ONNX Runtime Web (WebGPU): log-mel → audio encoder → prompt embeddings with the
+ * audio rows spliced in → prefill → greedy decoding through the merged decoder, its KV cache kept
+ * on the GPU. Runs in the engine's worker only. Both sizes (0.6B, 1.7B) are the same graphs at
+ * another width (`hidden`).
  *
- * - Encoder: SubtitleKing's `audio_encoder_fp16` (fp32 in and out).
+ * - Encoder: SubtitleKing's `audio_encoder_fp16` (fp32 in and out); the 1.7B's with its weights
+ *   at 8 bits.
  * - Decoder: the same export's merged decoder (fused attention, per-layer KV), with every
  *   `MatMulNBits` re-quantized to 8 bits. Its `lm_head` is tied to the token embeddings, so the
  *   embedding rows are read straight from the 8-bit `lm_head` bytes (`.tied.json` gives where).
@@ -14,7 +16,7 @@
  *   there is no speech.
  */
 import * as ort from 'onnxruntime-web/webgpu';
-import { QWEN3_FILES } from './info';
+import type { Qwen3Model } from './info';
 import { audioTokens, logMel } from './mel';
 import {
   ASR_TEXT,
@@ -30,7 +32,6 @@ import {
 } from './prompt';
 import { TokenDecoder } from './tokenizer';
 
-const HIDDEN = 1024;
 const LAYERS = 28;
 const KV_HEADS = 8;
 const HEAD_DIM = 128;
@@ -81,14 +82,17 @@ export class Qwen3Asr {
     private readonly decoder: ort.InferenceSession,
     private readonly embedRows: (ids: readonly number[]) => Float32Array,
     readonly tokenizer: TokenDecoder,
+    /** The decoder's width (1024 for 0.6B, 2048 for 1.7B). */
+    private readonly hidden: number,
   ) {}
 
-  /** Creates the sessions from the model files (read with `read`, never fetched). */
+  /** Creates the sessions from `model`'s files (read with `read`, never fetched). */
   static async load(
+    model: Pick<Qwen3Model, 'files' | 'hidden'>,
     read: FileReader,
     onProgress?: (fraction: number, file: string) => void,
   ): Promise<Qwen3Asr> {
-    const f = QWEN3_FILES;
+    const f = model.files;
     // One model at a time: the encoder's files are read, made into its session and dropped
     // before the decoder's are read, so the two never sit in memory together (with ONNX
     // Runtime's copy of one of them, on a machine that also loads a translation model).
@@ -132,10 +136,10 @@ export class Qwen3Asr {
     ]).flat();
     const decoderModel = await read1(f.decoder);
     const decoderData = await read1(f.decoderData);
-    const embedRows = tiedEmbedding(tied, decoderData);
+    const embedRows = tiedEmbedding(tied, decoderData, model.hidden);
     const decoder = await session(decoderModel, f.decoderData, decoderData, presents);
     onProgress?.(1, f.decoder);
-    return new Qwen3Asr(encoder, decoder, embedRows, tokenizer);
+    return new Qwen3Asr(encoder, decoder, embedRows, tokenizer, model.hidden);
   }
 
   async transcribe(samples: Float32Array, opts: TranscribeOptions = {}): Promise<Transcript> {
@@ -144,7 +148,7 @@ export class Qwen3Asr {
     const { data: mel, frames } = logMel(samples);
     const t1 = now();
     const audio = await this.encode(mel, frames);
-    const rows = audio.length / HIDDEN;
+    const rows = audio.length / this.hidden;
     if (rows !== audioTokens(frames)) {
       throw new Error(`The audio encoder gave ${rows} rows, expected ${audioTokens(frames)}.`);
     }
@@ -152,7 +156,7 @@ export class Qwen3Asr {
     const forced = [...(opts.forced ?? [])];
     const ids = promptIds(rows, forced);
     const embeds = this.embedRows(ids);
-    embeds.set(audio, AUDIO_OFFSET * HIDDEN);
+    embeds.set(audio, AUDIO_OFFSET * this.hidden);
     this.reset();
     let logits = await this.run(embeds, ids.length);
     const t3 = now();
@@ -240,7 +244,7 @@ export class Qwen3Asr {
   private async run(embeds: Float32Array, length: number): Promise<ort.Tensor> {
     const total = this.pos + length;
     const feeds: Record<string, ort.Tensor> = {
-      inputs_embeds: new ort.Tensor('float32', embeds, [1, length, HIDDEN]),
+      inputs_embeds: new ort.Tensor('float32', embeds, [1, length, this.hidden]),
       attention_mask: new ort.Tensor('int64', new BigInt64Array(total).fill(1n), [1, total]),
       position_ids: new ort.Tensor(
         'int64',
@@ -355,24 +359,25 @@ const firstToken = (tag: string) => (LANGUAGE_TOKENS[tag] as readonly number[])[
 
 /**
  * Embedding rows from the decoder's 8-bit `lm_head` (Qwen3 ties it to the token embeddings):
- * uint8 [vocab, 1024] with zero point 128 and one fp32 scale per 32 values, at the byte ranges
+ * uint8 [vocab, hidden] with zero point 128 and one fp32 scale per 32 values, at the byte ranges
  * the `.tied.json` sidecar gives. Copies those ranges, so the data file can be freed.
  */
 export function tiedEmbedding(
   meta: { q8: { offset: number; length: number }; scales: { offset: number; length: number } },
   data: Uint8Array,
+  hidden: number,
 ): (ids: readonly number[]) => Float32Array {
   const q = data.slice(meta.q8.offset, meta.q8.offset + meta.q8.length);
   const sb = data.slice(meta.scales.offset, meta.scales.offset + meta.scales.length);
   const scales = new Float32Array(sb.buffer, sb.byteOffset, sb.byteLength / 4);
-  const blocks = HIDDEN / 32;
+  const blocks = hidden / 32;
   return (ids) => {
-    const out = new Float32Array(ids.length * HIDDEN);
+    const out = new Float32Array(ids.length * hidden);
     ids.forEach((id, r) => {
       for (let b = 0; b < blocks; b++) {
         const scale = scales[id * blocks + b] as number;
-        const base = id * HIDDEN + b * 32;
-        const at = r * HIDDEN + b * 32;
+        const base = id * hidden + b * 32;
+        const at = r * hidden + b * 32;
         for (let j = 0; j < 32; j++) out[at + j] = ((q[base + j] as number) - 128) * scale;
       }
     });

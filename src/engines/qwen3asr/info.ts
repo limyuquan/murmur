@@ -1,15 +1,21 @@
 /**
- * Qwen3-ASR-0.6B in the browser (ONNX Runtime Web on WebGPU), and its static engine info.
+ * Qwen3-ASR in the browser (ONNX Runtime Web on WebGPU), and the static info of its two sizes.
+ * Both use the same code (model.ts) and the same graphs (SubtitleKing's export: an audio encoder
+ * and a merged decoder with fused attention), each at its own width.
  *
- * The files (files.json) come from two places, each pinned:
- * - the fp16 audio encoder, from SubtitleKing's ONNX export (`upstream`);
- * - the decoder, re-quantized by us to 8 bits from the same export and the official weights
- *   (every 4-bit build tested lost 0.5–2.3 points of accuracy), its tied-embedding offsets, and
- *   the tokenizer's vocabulary (`murmur`, hosted at `MURMUR_MODELS` in models/hub.ts).
+ * - 0.6B (Balanced): SubtitleKing's fp16 audio encoder (`upstream`), and our decoder, re-quantized
+ *   to 8 bits from the same export and the official weights (every 4-bit build tested lost
+ *   0.5–2.3 points of accuracy). Chrome 157, RTX 3070: median real-time factor 0.083 for
+ *   segments up to 15 s (≈70 ms + 19 ms per token), load 2–4 s from the model cache, about 1.3 GB
+ *   of GPU memory.
+ * - 1.7B (Best): the same, with the encoder's weights at 8 bits too (same accuracy as fp16, 0.3 GB
+ *   less). As fast per token (≈19 ms: the time goes to per-step overhead, not weights), about
+ *   2.4 GB of GPU memory (3.2 GB at the peak), 5.6 GB next to Gemma 4 E4B. Accuracy on the
+ *   benchmark set: Korean CER 3.1 % (0.6B: 4.5 %), code-switched speech 4.5 % (6.6 %).
  *
- * Measured on Chrome 157, RTX 3070: median real-time factor 0.083 for segments up to 15 s
- * (≈70 ms + 19 ms per token), load 2–4 s from the model cache, about 1.3 GB of GPU memory.
- * WebGPU with 16-bit float shaders only: on WebAssembly it is 10× slower than real time.
+ * Our files (group `murmur`) are hosted at `MURMUR_MODELS` (models/hub.ts): the 0.6B's at the
+ * repo's root, the 1.7B's under `qwen3-asr-1.7b/`; the tokenizer's vocabulary is the same file for
+ * both. WebGPU with 16-bit float shaders only: on WebAssembly it is 10× slower than real time.
  */
 import {
   HUGGING_FACE,
@@ -23,37 +29,89 @@ import FILES from './files.json';
 
 export const QWEN3_ASR_ID = 'qwen3-asr-0.6b';
 export const QWEN3_ASR_MODEL_ID = `${QWEN3_ASR_ID}-webgpu`;
+export const QWEN3_ASR_17B_ID = 'qwen3-asr-1.7b';
+export const QWEN3_ASR_17B_MODEL_ID = `${QWEN3_ASR_17B_ID}-webgpu`;
+export type Qwen3AsrId = typeof QWEN3_ASR_ID | typeof QWEN3_ASR_17B_ID;
 
 /** `[path, bytes, hash]`. */
 type FileList = [string, number, string][];
+interface FileGroups {
+  upstream?: { repo: string; revision: string; files: FileList };
+  murmur: { files: FileList };
+}
 
 const toFiles = (list: FileList, from?: { repo: string; revision: string }) =>
   list.map(([path, bytes, hash]) => ({ path, bytes, hash, ...(from ? { from } : {}) }));
 
-/** Every file the engine reads, each from its own repo and commit. */
-export const QWEN3_ASR_SOURCE: ModelSource = {
-  ...MURMUR_MODELS,
-  files: [
-    ...toFiles(FILES.upstream.files as FileList, {
-      repo: FILES.upstream.repo,
-      revision: FILES.upstream.revision,
-    }),
-    ...toFiles(FILES.murmur.files as FileList),
-  ],
-};
+/** Every file a size reads, each from its own repo and commit. */
+function source(groups: FileGroups): ModelSource {
+  const { upstream } = groups;
+  return {
+    ...MURMUR_MODELS,
+    files: [
+      ...(upstream
+        ? toFiles(upstream.files, { repo: upstream.repo, revision: upstream.revision })
+        : []),
+      ...toFiles(groups.murmur.files),
+    ],
+  };
+}
 
-/** Paths in QWEN3_ASR_SOURCE. */
-export const QWEN3_FILES = {
-  encoder: 'onnx/audio_encoder_fp16.onnx',
-  encoderData: 'onnx/audio_encoder_fp16.onnx_data',
-  decoder: 'onnx/decoder_model_merged_q8.onnx',
-  decoderData: 'onnx/decoder_model_merged_q8.onnx_data',
-  tied: 'onnx/decoder_model_merged_q8.tied.json',
+/** Where each of a size's files is in its source. */
+export interface Qwen3Files {
+  encoder: string;
+  encoderData: string;
+  decoder: string;
+  decoderData: string;
+  tied: string;
+  vocab: string;
+  addedTokens: string;
+}
+
+/** What the engine, its worker and the model need to know about one size. */
+export interface Qwen3Model {
+  id: Qwen3AsrId;
+  /** The model's id in the model manager. */
+  modelId: string;
+  source: ModelSource;
+  files: Qwen3Files;
+  /** The decoder's width (the encoder's output and the token embeddings). */
+  hidden: number;
+}
+
+const decoderFiles = (dir: string, encoder: string) => ({
+  encoder: `${dir}onnx/${encoder}.onnx`,
+  encoderData: `${dir}onnx/${encoder}.onnx_data`,
+  decoder: `${dir}onnx/decoder_model_merged_q8.onnx`,
+  decoderData: `${dir}onnx/decoder_model_merged_q8.onnx_data`,
+  tied: `${dir}onnx/decoder_model_merged_q8.tied.json`,
   vocab: 'vocab.json',
   addedTokens: 'added_tokens.json',
-} as const;
+});
 
-const DOWNLOAD_MB = Math.round(QWEN3_ASR_SOURCE.files.reduce((n, f) => n + f.bytes, 0) / 1e6);
+export const QWEN3_MODELS: Record<Qwen3AsrId, Qwen3Model> = {
+  [QWEN3_ASR_ID]: {
+    id: QWEN3_ASR_ID,
+    modelId: QWEN3_ASR_MODEL_ID,
+    source: source(FILES[QWEN3_ASR_ID] as FileGroups),
+    files: decoderFiles('', 'audio_encoder_fp16'),
+    hidden: 1024,
+  },
+  [QWEN3_ASR_17B_ID]: {
+    id: QWEN3_ASR_17B_ID,
+    modelId: QWEN3_ASR_17B_MODEL_ID,
+    source: source(FILES[QWEN3_ASR_17B_ID] as FileGroups),
+    files: decoderFiles(`${QWEN3_ASR_17B_ID}/`, 'audio_encoder_q8'),
+    hidden: 2048,
+  },
+};
+
+/** The 0.6B's files (QWEN3_MODELS has both sizes). */
+export const QWEN3_ASR_SOURCE = QWEN3_MODELS[QWEN3_ASR_ID].source;
+export const QWEN3_FILES = QWEN3_MODELS[QWEN3_ASR_ID].files;
+
+const downloadMB = (id: Qwen3AsrId) =>
+  Math.round(QWEN3_MODELS[id].source.files.reduce((n, f) => n + f.bytes, 0) / 1e6);
 
 /**
  * Why the engine can't be offered, or undefined: our files aren't on Hugging Face yet, and this
@@ -101,30 +159,11 @@ export const QWEN3_LANGUAGES = [
 
 const unavailable = qwen3Unavailable();
 
-export const QWEN3_ASR_INFO: AsrEngineInfo = {
+/** What both sizes share. */
+const common = {
   kind: 'asr',
-  id: QWEN3_ASR_ID,
-  label: 'Qwen3-ASR 0.6B',
-  description:
-    'Accurate speech recognition on the graphics card that follows language switches. 1.1 GB download.',
   runtime: 'browser',
-  requirements: {
-    backends: ['webgpu'],
-    shaderF16: true,
-    // The largest single weight is 156 MB; the whole model needs about 1.3 GB of GPU memory.
-    minGpuBufferMB: 256,
-    minDeviceMemoryGB: 8,
-    downloadMB: DOWNLOAD_MB,
-  },
   ...(unavailable ? { unavailable } : {}),
-  models: [
-    {
-      id: QWEN3_ASR_MODEL_ID,
-      label: 'Qwen3-ASR 0.6B, for the graphics card',
-      sizeMB: DOWNLOAD_MB,
-      source: QWEN3_ASR_SOURCE,
-    },
-  ],
   languages: QWEN3_LANGUAGES,
   streaming: true,
   detectsLanguage: true,
@@ -132,4 +171,62 @@ export const QWEN3_ASR_INFO: AsrEngineInfo = {
   codeSwitching: false,
   license: 'Apache-2.0',
   homepage: 'https://github.com/QwenLM/Qwen3-ASR',
+} as const;
+
+export const QWEN3_ASR_INFO: AsrEngineInfo = {
+  ...common,
+  id: QWEN3_ASR_ID,
+  label: 'Qwen3-ASR 0.6B',
+  description:
+    'Accurate speech recognition on the graphics card that follows language switches. 1.1 GB download.',
+  requirements: {
+    backends: ['webgpu'],
+    shaderF16: true,
+    // The largest single weight is 156 MB; the whole model needs about 1.3 GB of GPU memory.
+    minGpuBufferMB: 256,
+    minDeviceMemoryGB: 8,
+    downloadMB: downloadMB(QWEN3_ASR_ID),
+  },
+  models: [
+    {
+      id: QWEN3_ASR_MODEL_ID,
+      label: 'Qwen3-ASR 0.6B, for the graphics card',
+      sizeMB: downloadMB(QWEN3_ASR_ID),
+      source: QWEN3_MODELS[QWEN3_ASR_ID].source,
+    },
+  ],
+};
+
+export const QWEN3_ASR_17B_INFO: AsrEngineInfo = {
+  ...common,
+  id: QWEN3_ASR_17B_ID,
+  label: 'Qwen3-ASR 1.7B',
+  description:
+    'The most accurate speech recognition on the graphics card, and it follows language switches. Needs a graphics card with its own memory. 2.3 GB download.',
+  requirements: {
+    backends: ['webgpu'],
+    shaderF16: true,
+    // The largest single weight is 311 MB.
+    minGpuBufferMB: 512,
+    minDeviceMemoryGB: 8,
+    // Its own 2.4 GB (3.2 GB at the peak), next to the translation model: 5.6 GB measured with
+    // Gemma 4 E4B. More than E4B asks for, so a device that fits only one of them keeps E4B
+    // and gets the 0.6B (profiles.ts).
+    minGpuMemoryMB: 6144,
+    downloadMB: downloadMB(QWEN3_ASR_17B_ID),
+  },
+  models: [
+    {
+      id: QWEN3_ASR_17B_MODEL_ID,
+      label: 'Qwen3-ASR 1.7B, for the graphics card',
+      sizeMB: downloadMB(QWEN3_ASR_17B_ID),
+      source: QWEN3_MODELS[QWEN3_ASR_17B_ID].source,
+    },
+  ],
+};
+
+/** Each size's static info, by engine id. */
+export const QWEN3_INFOS: Record<Qwen3AsrId, AsrEngineInfo> = {
+  [QWEN3_ASR_ID]: QWEN3_ASR_INFO,
+  [QWEN3_ASR_17B_ID]: QWEN3_ASR_17B_INFO,
 };

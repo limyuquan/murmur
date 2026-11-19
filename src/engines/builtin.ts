@@ -15,7 +15,7 @@ import {
   STALLED_ASR_INFO,
 } from './demo/info';
 import { GEMMA_E2B_INFO, GEMMA_E4B_INFO } from './llm/info';
-import { QWEN3_ASR_INFO } from './qwen3asr/info';
+import { QWEN3_ASR_17B_INFO, QWEN3_ASR_INFO } from './qwen3asr/info';
 import { EngineRegistry } from './registry';
 import type { AnyEngine, AsrEngine, TranslationEngine } from './types';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from './whisper/info';
@@ -36,6 +36,7 @@ export function createBuiltinRegistry(factories: EngineFactories = {}): EngineRe
     WHISPER_BASE_INFO,
     WHISPER_TURBO_INFO,
     QWEN3_ASR_INFO,
+    QWEN3_ASR_17B_INFO,
   ]) {
     registry.registerAsr({ info, create: make<AsrEngine>(info.id) });
   }

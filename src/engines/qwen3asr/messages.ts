@@ -1,11 +1,11 @@
 /** Messages between the Qwen3-ASR engine (offscreen document) and its worker. */
-import type { ModelSource } from '@/models/hub';
+import type { Qwen3Model } from './info';
 
 export type ToWorker =
   | {
       type: 'load';
-      /** Already in the model cache: the worker never downloads. */
-      source: ModelSource;
+      /** Its files are already in the model cache: the worker never downloads. */
+      model: Qwen3Model;
     }
   | {
       type: 'decode';

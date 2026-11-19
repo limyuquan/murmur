@@ -62,8 +62,9 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
     throw new Unavailable('Qwen3-ASR needs a graphics card with 16-bit float shaders.');
   }
   const cache = await caches.open(MODEL_CACHE);
-  const { source } = message;
+  const { source } = message.model;
   model = await Qwen3Asr.load(
+    message.model,
     async (path) => {
       const file = source.files.find((f) => f.path === path);
       const res = file && (await readFile(cache, source, file));

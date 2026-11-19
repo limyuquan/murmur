@@ -25,7 +25,7 @@ import type {
   LoadOptions,
 } from '../types';
 import type { DecodeJob, SchedulerOptions } from '../whisper/scheduler';
-import { QWEN3_ASR_MODEL_ID, QWEN3_ASR_SOURCE } from './info';
+import type { Qwen3Model } from './info';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
 import { modelLanguages, rollbackPrefix } from './prompt';
 
@@ -76,6 +76,8 @@ export class Qwen3AsrEngine implements AsrEngine {
 
   constructor(
     readonly info: AsrEngineInfo,
+    /** Which size: its files and width. */
+    private readonly model: Qwen3Model,
     options: Qwen3Options = {},
   ) {
     this.options = {
@@ -102,10 +104,10 @@ export class Qwen3AsrEngine implements AsrEngine {
       if (this.info.unavailable) {
         throw new EngineUnavailableError(`${this.info.label}: ${this.info.unavailable}.`);
       }
-      if (!(await isComplete(QWEN3_ASR_SOURCE))) {
+      if (!(await isComplete(this.model.source))) {
         throw new ModelError(
           `${this.info.label} isn’t downloaded yet. Download it in Settings, under Models.`,
-          [QWEN3_ASR_MODEL_ID],
+          [this.model.modelId],
           true,
         );
       }
@@ -137,12 +139,12 @@ export class Qwen3AsrEngine implements AsrEngine {
               m.unavailable
                 ? new EngineUnavailableError(m.message)
                 : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
-                    QWEN3_ASR_MODEL_ID,
+                    this.model.modelId,
                   ]),
             );
           }
         };
-        worker.postMessage({ type: 'load', source: QWEN3_ASR_SOURCE } satisfies ToWorker);
+        worker.postMessage({ type: 'load', model: this.model } satisfies ToWorker);
       });
       worker.onmessage = (event: MessageEvent<FromWorker>) => this.onMessage(event.data);
       worker.onerror = (e) =>

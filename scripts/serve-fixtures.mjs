@@ -48,10 +48,11 @@ for (const entry of Object.values(await readJson('whisper/files.json'))) {
 for (const entry of Object.values(await readJson('llm/files.json'))) {
   for (const [file, bytes] of entry.files) modelFiles.set(`${entry.repo}/${file}`, bytes);
 }
-const qwen = await readJson('qwen3asr/files.json');
-for (const [file, bytes] of qwen.upstream.files)
-  modelFiles.set(`${qwen.upstream.repo}/${file}`, bytes);
-for (const [file, bytes] of qwen.murmur.files) anyRepoFiles.set(file, bytes);
+for (const qwen of Object.values(await readJson('qwen3asr/files.json'))) {
+  for (const [file, bytes] of qwen.upstream?.files ?? [])
+    modelFiles.set(`${qwen.upstream.repo}/${file}`, bytes);
+  for (const [file, bytes] of qwen.murmur.files) anyRepoFiles.set(file, bytes);
+}
 
 /** A real file for `<repo>/<path>` under FIXTURE_HF_DIR, or null. */
 function localModelFile(repo, file) {

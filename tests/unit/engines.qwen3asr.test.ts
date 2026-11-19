@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { checkEngine, type HardwareInfo, NO_HARDWARE } from '@/engines/hardware';
 import { resolveEngines } from '@/engines/profiles';
-import { QWEN3_ASR_INFO, QWEN3_ASR_SOURCE, qwen3Unavailable } from '@/engines/qwen3asr/info';
+import {
+  QWEN3_ASR_17B_INFO,
+  QWEN3_ASR_INFO,
+  QWEN3_ASR_SOURCE,
+  QWEN3_MODELS,
+  qwen3Unavailable,
+} from '@/engines/qwen3asr/info';
 import { audioTokens, logMel } from '@/engines/qwen3asr/mel';
+import { tiedEmbedding } from '@/engines/qwen3asr/model';
 import {
   ASR_TEXT,
   endsInLoop,
@@ -232,5 +239,113 @@ describe('Qwen3-ASR engine info', () => {
     expect(QWEN3_ASR_SOURCE.files.reduce((n, f) => n + f.bytes, 0)).toBe(1_054_929_591);
     expect(QWEN3_ASR_INFO.requirements.downloadMB).toBe(1055);
     for (const f of QWEN3_ASR_SOURCE.files) expect(f.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+});
+
+describe('Qwen3-ASR 1.7B', () => {
+  const model = QWEN3_MODELS['qwen3-asr-1.7b'];
+  const small = QWEN3_MODELS['qwen3-asr-0.6b'];
+  const NVIDIA: HardwareInfo = {
+    webgpu: { available: true, shaderF16: true, maxBufferMB: 2048, vendor: 'nvidia' },
+    deviceMemoryGB: 8,
+    cores: 12,
+    companion: false,
+  };
+
+  it('takes its files from Murmur’s repo, under its own folder, and the vocabulary the 0.6B has', () => {
+    const own = model.source.files.filter((f) => !f.path.endsWith('.json') || f.path.includes('/'));
+    expect(own.map((f) => f.path)).toEqual([
+      'qwen3-asr-1.7b/onnx/audio_encoder_q8.onnx',
+      'qwen3-asr-1.7b/onnx/audio_encoder_q8.onnx_data',
+      'qwen3-asr-1.7b/onnx/decoder_model_merged_q8.onnx',
+      'qwen3-asr-1.7b/onnx/decoder_model_merged_q8.onnx_data',
+      'qwen3-asr-1.7b/onnx/decoder_model_merged_q8.tied.json',
+    ]);
+    for (const f of model.source.files) {
+      expect(f.from).toBeUndefined();
+      expect(f.hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(cacheKey(model.source, f).startsWith(`${HUGGING_FACE}/${MURMUR_MODELS.repo}/`)).toBe(
+        true,
+      );
+    }
+    // Every path the model reads is one of its files.
+    const paths = new Set(model.source.files.map((f) => f.path));
+    for (const path of Object.values(model.files)) expect(paths.has(path)).toBe(true);
+    // The same vocabulary file as the 0.6B (one download, kept while either size is).
+    const key = (m: typeof model, path: string) => cacheKey(m.source, path);
+    for (const path of [model.files.vocab, model.files.addedTokens]) {
+      expect(key(model, path)).toBe(key(small, path));
+      const a = model.source.files.find((f) => f.path === path);
+      const b = small.source.files.find((f) => f.path === path);
+      expect(a).toEqual(b);
+    }
+    // No other file in common.
+    const smallKeys = new Set(small.source.files.map((f) => key(small, f.path)));
+    expect(model.source.files.filter((f) => smallKeys.has(key(model, f.path)))).toHaveLength(2);
+  });
+
+  it('is a 2.3 GB download, shown at that size in the model manager', () => {
+    expect(model.source.files.reduce((n, f) => n + f.bytes, 0)).toBe(2_289_013_684);
+    expect(QWEN3_ASR_17B_INFO.requirements.downloadMB).toBe(2289);
+    expect(QWEN3_ASR_17B_INFO.models).toEqual([
+      {
+        id: 'qwen3-asr-1.7b-webgpu',
+        label: 'Qwen3-ASR 1.7B, for the graphics card',
+        sizeMB: 2289,
+        source: model.source,
+      },
+    ]);
+    expect(QWEN3_ASR_17B_INFO.description).toContain('2.3 GB download');
+    expect(QWEN3_ASR_INFO.models?.[0]?.sizeMB).toBe(1055);
+  });
+
+  it('is twice as wide as the 0.6B', () => {
+    expect(small.hidden).toBe(1024);
+    expect(model.hidden).toBe(2048);
+    expect(QWEN3_ASR_17B_INFO.languages).toEqual(QWEN3_ASR_INFO.languages);
+  });
+
+  it('needs a graphics card with its own memory', () => {
+    const info = { requirements: QWEN3_ASR_17B_INFO.requirements };
+    expect(checkEngine(info, NVIDIA)).toEqual({ ok: true });
+    expect(checkEngine(info, { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, vendor: 'apple' } })).toEqual(
+      {
+        ok: false,
+        reasons: ['Needs about 6 GB of graphics memory, more than this device seems to have.'],
+      },
+    );
+    expect(
+      checkEngine(info, { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, shaderF16: false } }).ok,
+    ).toBe(false);
+    expect(checkEngine(info, NO_HARDWARE).ok).toBe(false);
+    // Unit tests build like production: not offered until the files are published.
+    expect(QWEN3_ASR_17B_INFO.unavailable).toBe('model files not published yet');
+  });
+
+  it('reads token embeddings from the tied 8-bit lm_head at its width', () => {
+    const hidden = 64;
+    const vocab = 3;
+    const q = new Uint8Array(vocab * hidden).map((_, i) => 128 + (i % 5) - 2);
+    const scales = new Float32Array(vocab * (hidden / 32)).map((_, i) => 0.5 + i);
+    const data = new Uint8Array(8 + q.length + scales.byteLength);
+    data.set(q, 8);
+    data.set(new Uint8Array(scales.buffer), 8 + q.length);
+    const embed = tiedEmbedding(
+      {
+        q8: { offset: 8, length: q.length },
+        scales: { offset: 8 + q.length, length: scales.byteLength },
+      },
+      data,
+      hidden,
+    );
+    const rows = embed([2, 0]);
+    expect(rows).toHaveLength(2 * hidden);
+    for (let j = 0; j < hidden; j++) {
+      const at = 2 * hidden + j;
+      expect(rows[j]).toBe(
+        ((q[at] as number) - 128) * (scales[2 * 2 + (j >= 32 ? 1 : 0)] as number),
+      );
+      expect(rows[hidden + j]).toBe(((q[j] as number) - 128) * (scales[j >= 32 ? 1 : 0] as number));
+    }
   });
 });

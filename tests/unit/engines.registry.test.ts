@@ -79,6 +79,7 @@ describe('EngineRegistry', () => {
       WHISPER_BASE_ID,
       WHISPER_TURBO_ID,
       QWEN3_ASR_ID,
+      'qwen3-asr-1.7b',
     ]);
     expect(r.translationEngines().map((e) => e.id)).toEqual([
       'chrome-translator',
