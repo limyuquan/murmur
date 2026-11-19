@@ -17,8 +17,8 @@ import {
 } from '@/engines/errors';
 import { ENGINE_FACTORIES } from '@/engines/factories';
 import { detectHardware, type HardwareInfo } from '@/engines/hardware';
-import { loadWithFallback } from '@/engines/loading';
-import { LINE_FALLBACKS } from '@/engines/profiles';
+import { loadLadder, loadWithFallback } from '@/engines/loading';
+import { type LadderStep, LINE_FALLBACKS } from '@/engines/profiles';
 import { type FallbackEvent, sessionTranslator } from '@/engines/translators';
 import type {
   AsrEngine,
@@ -48,8 +48,12 @@ import type { DetectLanguages } from '@/pipeline/mixed';
 import { Pipeline, type PipelineOptions } from '@/pipeline/pipeline';
 import type { SileroVad } from '@/pipeline/silero';
 import type { Cue } from '@/pipeline/types';
+import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
 import { ActivityTracker, activityChanged } from './activity';
+
+/** What the popup says when a session runs smaller models than its profile's largest. */
+export const FIT_NOTE = 'Using smaller models to fit this device’s graphics memory.';
 
 /** How often the session's activity is checked (and reported, when it changed). */
 const ACTIVITY_MS = 1000;
@@ -81,6 +85,8 @@ export interface HostDeps {
   onVad?(vad: SileroVad | null): void;
   /** A start-up step is done (e2e builds log when, to measure how late the first line is). */
   onStartup?(step: 'capture' | 'asr' | 'translation' | 'pipeline'): void;
+  /** An engine ran out of memory and the session stepped down its ladder (e2e builds log it). */
+  onStepDown?(engine: string, error: Error, next: LadderStep | null): void;
   /** Sees every lookahead cue (e2e builds log them). */
   onLookaheadCue?(cue: Cue): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
@@ -118,6 +124,10 @@ interface Running {
   translationNote: string | null;
   /** Why the chosen translator gave way to another while loading, if it did. */
   translatorFailure: Error | null;
+  /** The translator the session meant to run (a ladder's step down changes it). */
+  plannedTranslation: string;
+  /** Smaller models run to fit the graphics memory, in plain words (null: they don't). */
+  fitNote: string | null;
   /** Lookahead, once an overlay on a site where it's on reported in. */
   lookahead: LookaheadHost | null;
   /** Lookahead's own speech detector (the live one keeps its state per stream). */
@@ -309,6 +319,8 @@ export class OffscreenHost {
       problems: [],
       translationNote: null,
       translatorFailure: null,
+      plannedTranslation: config.translationEngine,
+      fitNote: config.ladder?.smaller ? FIT_NOTE : null,
       lookahead: null,
       lookaheadVad: null,
       livePaused: false,
@@ -362,6 +374,8 @@ export class OffscreenHost {
         onlySpoken: config.onlySpoken ?? false,
       };
       const hardware = await detectHardware();
+      /** Stepped down a memory ladder in this load. */
+      let stepped = false;
       const loading = (label: string, p: LoadProgress | null) =>
         this.isCurrent(running) &&
         this.report({
@@ -369,40 +383,87 @@ export class OffscreenHost {
           tabId: config.tabId,
           sessionId: config.sessionId,
           progress: p?.fraction ?? null,
-          detail: loadingDetail(label, p),
+          detail: stepped ? `${FIT_NOTE} ${loadingDetail(label, p)}` : loadingDetail(label, p),
         });
       const chosen = this.registry.asrInfo(config.asrEngine);
       loading(chosen?.label ?? config.asrEngine, null);
       // The speech detector loads alongside the engines; it is small.
       if (chosen && wantsModelVad(chosen)) running.vad = this.loadVad();
       // Engines that can't run here at all hand over to their fallback (profiles.ts).
-      const options = (label: string) => ({
-        hardware,
-        session,
-        signal,
-        onProgress: (p: LoadProgress) => loading(label, p),
-      });
-      running.asr = await loadWithFallback(
-        config.asrEngine,
-        (id) => this.registry.createAsr(id),
-        (engine) => engine.load(options(engine.info.label)),
-        signal,
-      );
-      this.deps.onStartup?.('asr');
-      // A translation model that isn't downloaded or doesn't load doesn't stop the session:
-      // another translator takes over (and the popup offers the download).
-      running.translator = await loadWithFallback(
-        config.translationEngine,
-        (id) => this.registry.createTranslation(id),
-        (engine) => engine.load(options(engine.info.label)),
-        signal,
-        {
-          onModelError: true,
-          onFallback: (_id, err) => {
-            running.translatorFailure ??= err;
+      const simulate = IS_E2E ? (config.simulateOutOfMemory ?? {}) : {};
+      const options = (info: { id: string; label: string }) => {
+        const failure = simulate[info.id];
+        return {
+          hardware,
+          session,
+          signal,
+          onProgress: (p: LoadProgress) => loading(info.label, p),
+          ...(failure ? { simulateOutOfMemory: failure } : {}),
+        };
+      };
+      const onTranslatorFallback = (_id: string, err: Error) => {
+        running.translatorFailure ??= err;
+      };
+      const ladder = config.ladder;
+      if (ladder && ladder.steps.length > 0) {
+        // Balanced and Best: speech recognition, then the translator; an engine that runs out of
+        // graphics memory steps the session down to smaller ones (profiles.ts `LADDERS`).
+        const loaded = await loadLadder(ladder.steps, {
+          createAsr: (id) => this.registry.createAsr(id),
+          createTranslation: (id) => this.registry.createTranslation(id),
+          loadAsr: async (engine) => {
+            await engine.load(options(engine.info));
+            this.deps.onStartup?.('asr');
           },
-        },
-      );
+          loadTranslation: (engine) => engine.load(options(engine.info)),
+          signal,
+          onTranslatorFallback,
+          asrMemoryFailure: (engine) => engine.memoryFailure?.() ?? null,
+          onStepDown: (next, engine, err) => {
+            console.warn(LOG_PREFIX, `${engine} ran out of graphics memory`, err.message);
+            this.deps.onStepDown?.(engine, err, next);
+            if (!this.isCurrent(running)) return;
+            stepped = true;
+            running.fitNote = FIT_NOTE;
+            this.deps
+              .send({
+                target: 'background',
+                type: 'memory-fit',
+                sessionId: config.sessionId,
+                profile: ladder.profile,
+                gpu: ladder.gpu,
+                step: next?.index ?? ladder.length,
+                engine,
+                message: err.message,
+              })
+              .catch(() => {});
+            const label = next ? this.registry.asrInfo(next.asr)?.label : undefined;
+            loading(label ?? 'Chrome’s speech recognition', null);
+          },
+        });
+        running.asr = loaded.asr;
+        running.translator = loaded.translator;
+        running.plannedTranslation = loaded.step?.translation ?? loaded.translator.info.id;
+      } else {
+        // Engines that run out of graphics memory hand over to smaller ones (`MEMORY_FALLBACKS`).
+        running.asr = await loadWithFallback(
+          config.asrEngine,
+          (id) => this.registry.createAsr(id),
+          (engine) => engine.load(options(engine.info)),
+          signal,
+          { onOutOfMemory: true },
+        );
+        this.deps.onStartup?.('asr');
+        // A translation model that isn't downloaded or doesn't load doesn't stop the session:
+        // another translator takes over (and the popup offers the download).
+        running.translator = await loadWithFallback(
+          config.translationEngine,
+          (id) => this.registry.createTranslation(id),
+          (engine) => engine.load(options(engine.info)),
+          signal,
+          { onModelError: true, onOutOfMemory: true, onFallback: onTranslatorFallback },
+        );
+      }
       if (!this.isCurrent(running)) {
         // Stopped while loading: the teardown ran before these existed.
         await this.teardown(running);
@@ -576,9 +637,9 @@ export class OffscreenHost {
     hardware: HardwareInfo,
   ): TranslationEngine {
     const { config } = running;
-    const chosen = this.registry.translationInfo(config.translationEngine);
+    const chosen = this.registry.translationInfo(running.plannedTranslation);
     const failure = running.translatorFailure;
-    if (translator.info.id !== config.translationEngine && chosen) {
+    if (translator.info.id !== running.plannedTranslation && chosen) {
       // Not downloaded: the popup offers the download instead of a note.
       if (!failure || !isModelError(failure)) {
         running.translationNote = `${chosen.label} couldn’t run here, so ${translator.info.label} translates.`;
@@ -630,6 +691,7 @@ export class OffscreenHost {
       ...(running.setup.length > 0 ? { setup: [...running.setup] } : {}),
       ...(running.problems.length > 0 ? { problems: [...running.problems] } : {}),
       ...(running.translationNote ? { translationNote: running.translationNote } : {}),
+      ...(running.fitNote ? { fitNote: running.fitNote } : {}),
     });
   }
 

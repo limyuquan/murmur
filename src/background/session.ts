@@ -16,8 +16,10 @@ import {
   hasOffscreenDocument,
   mintTabStreamId,
 } from '@/capture/offscreen';
+import { gpuKey } from '@/engines/hardware';
 import { untilAborted } from '@/engines/loading';
-import { type ResolvedEngines, resolveEngines } from '@/engines/profiles';
+import { ladderFromStart, type ResolvedEngines, resolveEngines } from '@/engines/profiles';
+import type { SimulatedFailure } from '@/engines/types';
 import type {
   ActiveSessionStatus,
   CaptureSourceSpec,
@@ -26,14 +28,17 @@ import type {
   SessionConfig,
   SessionErrorCode,
   SessionFailure,
+  SessionLadder,
   SessionStatus,
 } from '@/messaging/protocol';
 import { modelsFor, splitMissing } from '@/models/catalog';
+import { saveMemoryFit } from '@/settings/memoryfit';
 import { loadSettings, type Settings, spokenLanguages } from '@/settings/settings';
+import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
 import { LANGUAGES } from '@/ui/languages';
 import { showBadge } from './badge';
-import { deviceHardware, registry } from './engines';
+import { deviceHardware, deviceResolveOptions, registry } from './engines';
 import { modelStore } from './models';
 
 const SESSION_KEY = 'session';
@@ -100,7 +105,52 @@ function ifStillStarting(sessionId: string, status: SessionStatus) {
 /** Engines a session would use now, from settings and this device. */
 export async function plannedEngines(settings?: Settings): Promise<ResolvedEngines> {
   const s = settings ?? (await loadSettings());
-  return resolveEngines(s.profile, s.custom, registry, await deviceHardware());
+  return resolveEngines(
+    s.profile,
+    s.custom,
+    registry,
+    await deviceHardware(),
+    await deviceResolveOptions(s, s.profile),
+  );
+}
+
+/** What the offscreen document needs of the profile's memory ladder, from where it starts. */
+async function sessionLadder(engines: ResolvedEngines): Promise<SessionLadder | undefined> {
+  const { ladder } = engines;
+  if (!ladder) return undefined;
+  const steps = ladderFromStart(ladder);
+  // Below the last step: Chrome's engines, nothing to step down.
+  if (steps.length === 0) return undefined;
+  return {
+    profile: ladder.profile,
+    gpu: gpuKey(await deviceHardware()),
+    steps,
+    length: ladder.steps.length,
+    smaller: ladder.reason === 'estimate' || ladder.reason === 'record',
+  };
+}
+
+/**
+ * The offscreen document stepped down a memory ladder: start there next time on this device.
+ * Kept even when the session then fails (a smaller model not downloaded yet), so the popup offers
+ * the right download.
+ */
+export async function onMemoryFit(event: {
+  sessionId: string;
+  profile: SessionLadder['profile'];
+  gpu: string;
+  step: number;
+  engine: string;
+  message: string;
+}): Promise<void> {
+  const status = await getStatus();
+  if (status.state === 'idle' || status.sessionId !== event.sessionId) return;
+  await saveMemoryFit(event.gpu, event.profile, {
+    step: event.step,
+    at: Date.now(),
+    engine: event.engine,
+    message: event.message,
+  });
 }
 
 export function engineLabels(engines: ResolvedEngines): { asr: string; translation: string } {
@@ -115,6 +165,8 @@ export interface StartOptions {
   source?: 'tab' | 'tone';
   /** These engines instead of the settings' (e2e builds: the demo engines). */
   engines?: { asr: string; translation: string };
+  /** Engines to fail as if out of graphics memory (e2e builds only). */
+  simulateOutOfMemory?: Record<string, SimulatedFailure>;
 }
 
 export function startSession(tabId: number, options: StartOptions = {}): Promise<SessionStatus> {
@@ -137,7 +189,9 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
     await setStatus({ state: 'starting', tabId, sessionId });
     try {
       const settings = await step(loadSettings());
-      const engines = options.engines ?? (await step(plannedEngines(settings)));
+      const planned = options.engines ? null : await step(plannedEngines(settings));
+      const engines = options.engines ?? (planned as ResolvedEngines);
+      const ladder = planned ? await step(sessionLadder(planned)) : undefined;
       const spoken = spokenLanguages(settings, navigator.languages, LANGUAGES);
       if (!options.engines) {
         // Models download only when the person asks: say so before capturing anything.
@@ -146,6 +200,7 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
           settings.custom,
           registry,
           await step(deviceHardware()),
+          await step(deviceResolveOptions(settings, settings.profile)),
         );
         const downloaded = await step(modelStore.downloaded(needed));
         // A missing translation model doesn't stop the start: another translator stands in.
@@ -187,6 +242,10 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
         spokenLanguages: spoken,
         onlySpoken: settings.onlySpoken,
         ...(settings.glossary.length > 0 ? { glossary: settings.glossary } : {}),
+        ...(ladder ? { ladder } : {}),
+        ...(IS_E2E && options.simulateOutOfMemory
+          ? { simulateOutOfMemory: options.simulateOutOfMemory }
+          : {}),
       };
       // Answered once the capture is open; the models load after, reporting by event.
       const reply = await step(

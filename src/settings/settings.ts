@@ -54,6 +54,11 @@ export interface Settings {
    */
   onlySpoken: boolean;
   profile: ProfileChoice;
+  /**
+   * Balanced runs the smaller speech model (Qwen3-ASR 0.6B, 1.1 GB) instead of the larger one
+   * (1.7B, 2.3 GB): a smaller download, a little less accurate.
+   */
+  smallerSpeech: boolean;
   /** Engines for `profile: 'custom'`. */
   custom: { asr: string; translation: string };
   /** Translate partial lines as a preview (more work, earlier text). */
@@ -84,6 +89,7 @@ export const DEFAULT_SETTINGS: Settings = {
   spokenLanguages: [],
   onlySpoken: false,
   profile: 'balanced',
+  smallerSpeech: false,
   custom: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID },
   translatePartials: false,
   glossary: [],
@@ -159,6 +165,7 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
       : d.spokenLanguages,
     onlySpoken: bool(s.onlySpoken, d.onlySpoken),
     profile: oneOf(s.profile, ['light', 'balanced', 'best', 'custom'] as const, d.profile),
+    smallerSpeech: bool(s.smallerSpeech, d.smallerSpeech),
     custom: {
       asr: typeof c.asr === 'string' && c.asr ? c.asr : d.custom.asr,
       translation:

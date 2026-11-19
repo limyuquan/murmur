@@ -24,7 +24,8 @@ vi.mock('@/capture/offscreen', () => ({
 }));
 vi.mock('@/background/badge', () => ({ showBadge: vi.fn(async () => {}) }));
 vi.mock('@/background/models', () => ({
-  modelStore: { downloaded: async () => new Set<string>() },
+  // Every model is downloaded.
+  modelStore: { downloaded: async (models: { id: string }[]) => new Set(models.map((m) => m.id)) },
   models: {},
 }));
 
@@ -42,6 +43,7 @@ let session: Session;
 /** What the offscreen document does with `start`. */
 let onStart: (command: Extract<OffscreenCommand, { type: 'start' }>) => Promise<OffscreenReply>;
 let lastSessionId = '';
+let lastConfig: Extract<OffscreenCommand, { type: 'start' }>['config'] | null = null;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -54,6 +56,7 @@ beforeEach(async () => {
     const command = message as OffscreenCommand;
     if (command.type !== 'start') return { ok: true };
     lastSessionId = command.config.sessionId;
+    lastConfig = command.config;
     return onStart(command);
   }) as typeof browser.runtime.sendMessage);
   session = await import('@/background/session');
@@ -163,5 +166,52 @@ describe('stopping', () => {
     await session.onOffscreenStatus(setupFailure('another'));
     expect((await session.getStatus()).state).toBe('starting');
     expect(offscreen.open).toBe(true);
+  });
+});
+
+/** The config of the last start sent (assigned in the stub, so read through a call). */
+const sent = () => lastConfig as Extract<OffscreenCommand, { type: 'start' }>['config'] | null;
+
+describe('memory ladders', () => {
+  it('hands the offscreen document the profile’s ladder, and keeps its steps down', async () => {
+    const { saveSettings } = await import('@/settings/settings');
+    const { fitFor, loadMemoryFit } = await import('@/settings/memoryfit');
+    await saveSettings({ profile: 'balanced' });
+    lastConfig = null;
+    await session.startSession(TAB, { source: 'tone' });
+    const ladder = sent()?.ladder;
+    expect(ladder).toMatchObject({ profile: 'balanced', gpu: 'none', length: 3, smaller: false });
+    expect(ladder?.steps[0]).toMatchObject({
+      index: 0,
+      asr: sent()?.asrEngine,
+      translation: sent()?.translationEngine,
+    });
+    // A step down below the last step: next time, Chrome's own engines.
+    const event = {
+      sessionId: lastSessionId,
+      profile: 'balanced' as const,
+      gpu: 'none',
+      step: 3,
+      engine: 'qwen3-asr-0.6b',
+      message: 'out of memory',
+    };
+    await session.onMemoryFit({ ...event, sessionId: 'another' });
+    expect(fitFor(await loadMemoryFit(), 'none', 'balanced')).toBeNull();
+    await session.onMemoryFit(event);
+    expect(fitFor(await loadMemoryFit(), 'none', 'balanced')).toMatchObject({
+      step: 3,
+      engine: 'qwen3-asr-0.6b',
+    });
+    const planned = await session.plannedEngines();
+    expect([planned.asr, planned.translation]).toEqual(['chrome-webspeech', 'chrome-translator']);
+    // Engines chosen by a test: no ladder, and no simulated failures outside e2e builds.
+    await session.stopSession();
+    await session.startSession(TAB, {
+      source: 'tone',
+      engines: ENGINES,
+      simulateOutOfMemory: { 'demo-echo': 'load' },
+    });
+    expect(sent()?.ladder).toBeUndefined();
+    expect(sent()?.simulateOutOfMemory).toBeUndefined();
   });
 });

@@ -57,12 +57,15 @@ export function describeStatus(view: TabView): StatusLine {
     case 'running':
       return withNote(
         describeRunning(view, s.heard, s.activity, s.setup, s.problems),
-        s.translationNote,
+        [s.fitNote, s.translationNote].filter(Boolean).join(' ') || undefined,
       );
   }
 }
 
-/** A running session's line, with the translation note after what it says, when all is well. */
+/**
+ * A running session's line, with its notes (smaller models to fit the graphics memory, another
+ * translator) after what it says, when all is well.
+ */
 function withNote(line: StatusLine, note: string | undefined): StatusLine {
   if (!note || line.tone !== 'ok') return line;
   return { ...line, detail: line.detail ? `${line.detail} ${note}` : note };

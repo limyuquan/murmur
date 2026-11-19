@@ -11,8 +11,8 @@
  * document directly over a port, keeping per-cue traffic off the service worker; the port's
  * disconnect is also how the overlay learns the session ended.
  */
-import type { ProfileChoice } from '@/engines/profiles';
-import type { LanguageTag, SetupAction } from '@/engines/types';
+import type { LadderStep, ProfileChoice, ProfileId } from '@/engines/profiles';
+import type { LanguageTag, SetupAction, SimulatedFailure } from '@/engines/types';
 import type { PlayheadReport, TeeWire } from '@/lookahead/protocol';
 import type { ModelsView } from '@/models/types';
 import type { Cue } from '@/pipeline/types';
@@ -112,6 +112,11 @@ export type SessionStatus =
        * which another one did instead, in plain words.
        */
       translationNote?: string;
+      /**
+       * The session runs smaller models than its profile's largest, to fit this device's graphics
+       * memory, in plain words.
+       */
+      fitNote?: string;
     }
   | ({ state: 'error'; tabId: number; sessionId: string } & SessionFailure);
 
@@ -222,6 +227,29 @@ export interface SessionConfig {
   onlySpoken?: boolean;
   /** The person's glossary (settings.ts); translators that use one get the entries a line needs. */
   glossary?: { source: string; target: string }[];
+  /**
+   * The profile's memory ladder from `asrEngine` + `translationEngine` down (profiles.ts): where
+   * to step down to when an engine runs out of graphics memory. Absent: no ladder (Light, a
+   * custom choice, engines chosen by a test).
+   */
+  ladder?: SessionLadder;
+  /**
+   * Engines to fail as if out of graphics memory, and where (e2e builds only: checks of the step
+   * down with real models).
+   */
+  simulateOutOfMemory?: Record<string, SimulatedFailure>;
+}
+
+export interface SessionLadder {
+  profile: ProfileId;
+  /** This device's graphics (`gpuKey`), for the record of what fits. */
+  gpu: string;
+  /** The steps from where the session starts, the first being the config's engines. */
+  steps: LadderStep[];
+  /** How many steps the profile's ladder has (a step down past the last one records this). */
+  length: number;
+  /** It starts below the top to fit this device's graphics memory (a guess, or a record). */
+  smaller: boolean;
 }
 
 export type OffscreenCommand =
@@ -238,11 +266,28 @@ export type OffscreenReply = { ok: true } | { ok: false; error: SessionFailure }
 // ---------------------------------------------------------------------------------------------
 // Offscreen document → service worker
 
-export type OffscreenEvent = {
-  target: 'background';
-  type: 'session-status';
-  status: ActiveSessionStatus;
-};
+export type OffscreenEvent =
+  | {
+      target: 'background';
+      type: 'session-status';
+      status: ActiveSessionStatus;
+    }
+  | {
+      /**
+       * An engine ran out of graphics memory and the session stepped down its memory ladder to
+       * `step` (the ladder's length: below its last step). The service worker keeps it for this
+       * device (settings/memoryfit.ts), so the next session starts there.
+       */
+      target: 'background';
+      type: 'memory-fit';
+      sessionId: string;
+      profile: ProfileId;
+      gpu: string;
+      step: number;
+      /** The engine that ran out, and what it said. */
+      engine: string;
+      message: string;
+    };
 
 // ---------------------------------------------------------------------------------------------
 // Offscreen document ↔ overlay
@@ -321,7 +366,8 @@ export function isRequest(m: unknown): m is Request {
 }
 
 export function isOffscreenEvent(m: unknown): m is OffscreenEvent {
-  return isTargeted(m, 'background') && (m as { type?: unknown }).type === 'session-status';
+  const type = (m as { type?: unknown }).type;
+  return isTargeted(m, 'background') && (type === 'session-status' || type === 'memory-fit');
 }
 
 export function isOffscreenCommand(m: unknown): m is OffscreenCommand {

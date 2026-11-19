@@ -62,7 +62,7 @@ beforeEach(() => {
   sent = [];
   host = new OffscreenHost({
     send: async (event) => {
-      sent.push(event.status);
+      if (event.type === 'session-status') sent.push(event.status);
     },
   });
 });

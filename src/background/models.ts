@@ -4,6 +4,7 @@ import { allModels, knownModels } from '@/models/catalog';
 import { HUGGING_FACE, MODEL_HOST } from '@/models/hub';
 import { ModelManager } from '@/models/manager';
 import { CacheModelStore } from '@/models/store';
+import { loadMemoryFit, resolveOptions } from '@/settings/memoryfit';
 import { loadSettings } from '@/settings/settings';
 import { deviceHardware, registry } from './engines';
 
@@ -17,7 +18,11 @@ export const modelStore = new CacheModelStore({
 export const models = new ModelManager({
   async catalog() {
     const settings = await loadSettings();
-    return allModels(settings.custom, registry, await deviceHardware());
+    const hardware = await deviceHardware();
+    const fit = await loadMemoryFit();
+    return allModels(settings.custom, registry, hardware, (profile) =>
+      resolveOptions(settings, profile, hardware, fit),
+    );
   },
   async known() {
     return knownModels(registry);

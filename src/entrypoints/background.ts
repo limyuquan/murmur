@@ -5,6 +5,7 @@ import { setLookaheadSite, syncLookaheadScripts } from '@/background/lookahead';
 import { models } from '@/background/models';
 import {
   installSessionListeners,
+  onMemoryFit,
   onOffscreenStatus,
   reconcile,
   startSession,
@@ -61,7 +62,9 @@ export default defineBackground(() => {
   const ext = { id: browser.runtime.id, base: browser.runtime.getURL('/') };
   browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
     if (isOffscreenEvent(message)) {
-      if (isOffscreenDocument(sender, ext, OFFSCREEN_PATH)) void onOffscreenStatus(message.status);
+      if (!isOffscreenDocument(sender, ext, OFFSCREEN_PATH)) return;
+      if (message.type === 'session-status') void onOffscreenStatus(message.status);
+      else void onMemoryFit(message).catch(() => {});
       return;
     }
     // Content scripts pass the id check too: requests come from extension pages only.
@@ -79,9 +82,10 @@ export default defineBackground(() => {
 
   if (IS_E2E) {
     globalThis.__murmur = {
-      async start(tabId, source = 'tone', engines = 'demo') {
+      async start(tabId, source = 'tone', engines = 'demo', simulateOutOfMemory) {
         const status = await startSession(tabId, {
           source,
+          ...(simulateOutOfMemory ? { simulateOutOfMemory } : {}),
           ...(engines === 'demo'
             ? { engines: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID } }
             : engines === 'settings'

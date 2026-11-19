@@ -71,7 +71,7 @@ describe('OffscreenHost speech detector', () => {
     const statuses: string[] = [];
     const host = new OffscreenHost({
       send: async (event) => {
-        statuses.push(event.status.state);
+        if (event.type === 'session-status') statuses.push(event.status.state);
       },
       loadVad: async () => {
         throw new Error('no WebAssembly');

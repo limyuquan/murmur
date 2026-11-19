@@ -4,7 +4,7 @@ import type { Op, Ops } from '@/messaging/protocol';
 import { modelsFor, splitMissing, totalMB } from '@/models/catalog';
 import { siteKey } from '@/settings/positions';
 import { loadSettings, lookaheadOn } from '@/settings/settings';
-import { deviceHardware, registry } from './engines';
+import { deviceHardware, deviceResolveOptions, registry } from './engines';
 import { setLookaheadSite } from './lookahead';
 import { modelStore, models } from './models';
 import {
@@ -22,7 +22,13 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
       const settings = await loadSettings();
       const status = await getStatus();
       const engines = await plannedEngines(settings);
-      const needed = modelsFor(settings.profile, settings.custom, registry, await deviceHardware());
+      const needed = modelsFor(
+        settings.profile,
+        settings.custom,
+        registry,
+        await deviceHardware(),
+        await deviceResolveOptions(settings, settings.profile),
+      );
       const downloaded = await modelStore.downloaded(needed);
       const { required, optional } = splitMissing(
         needed.filter((m) => !downloaded.has(m.id)),

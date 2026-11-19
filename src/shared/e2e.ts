@@ -17,12 +17,15 @@ export interface BackgroundTestHook {
    * which without the toolbar click needs Chrome started with `--allowlisted-extension-id`.
    * `engines`: `demo` (default; no models, no network), `settings` (the real engines the
    * settings choose, for checks on a machine that has them), or these engine ids. Resolves once
-   * the capture is open; the engines load after (poll the status).
+   * the capture is open; the engines load after (poll the status). `simulateOutOfMemory`: engine
+   * ids to fail as if out of graphics memory, while loading (`load`) or warming up (`warmup`),
+   * to check the step down to smaller models with real models.
    */
   start(
     tabId: number,
     source?: 'tab' | 'tone',
     engines?: 'demo' | 'settings' | { asr: string; translation: string },
+    simulateOutOfMemory?: Record<string, 'load' | 'warmup'>,
   ): Promise<void>;
   stop(): Promise<void>;
   /** Lookahead on or off for `site` (the e2e build already has access to every site). */
@@ -54,6 +57,8 @@ export interface OffscreenTestLog {
   /** Segment decodes of engines that report them (Qwen3-ASR): kind, timing, text. */
   decodes: { at: number; record: unknown }[];
   engines: { asr: string; translation: string } | null;
+  /** Each step down a memory ladder: the engine that ran out of memory, and the step after. */
+  memory: { at: number; engine: string; message: string; next: unknown }[];
   /** Each segment's start and end (with why it ended), with the epoch ms it was sent. */
   segments: { at: number; event: SegmentEvent }[];
   /** The session's speech detector, and the time it has spent so far (live). */

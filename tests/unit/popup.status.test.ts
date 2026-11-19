@@ -69,6 +69,15 @@ describe('describeStatus', () => {
     expect(behind.detail).not.toContain(note);
   });
 
+  it('says when smaller models run to fit the graphics memory', () => {
+    const fit = 'Using smaller models to fit this device’s graphics memory.';
+    const note = 'Gemma 4 E2B didn’t load, so Chrome translation translates.';
+    const ok = describeStatus(
+      view({ ...running(activity()), fitNote: fit, translationNote: note } as SessionStatus),
+    );
+    expect(ok.detail).toBe(`About 2.4 s behind the speech. ${fit} ${note}`);
+  });
+
   it('says when the session is on another tab', () => {
     const s = describeStatus(view(running(activity()), { tabId: 2, thisTab: false }));
     expect(s.title).toBe('On in another tab');
