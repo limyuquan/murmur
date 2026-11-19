@@ -1,7 +1,7 @@
 /** Profile picker and model manager, shared by the options page and the welcome page. */
 import type { ReactNode } from 'react';
 import { packsFor } from '@/engines/chrome/setup';
-import { checkRequirements, type HardwareInfo } from '@/engines/hardware';
+import { checkEngine, type HardwareInfo } from '@/engines/hardware';
 import {
   PROFILE_ORDER,
   PROFILES,
@@ -405,10 +405,11 @@ export function HardwareSummary({ hardware }: { hardware: HardwareInfo | null })
 
 /** Whether an engine fits this device (custom picker). */
 export function engineFits(
-  req: Parameters<typeof checkRequirements>[0],
+  info: Parameters<typeof checkEngine>[0],
   hw: HardwareInfo | null,
 ): boolean {
-  return hw === null || checkRequirements(req, hw).ok;
+  if (info.unavailable) return false;
+  return hw === null || checkEngine(info, hw).ok;
 }
 
 /** Chrome's language packs a choice of engines and languages needs, with their status. */

@@ -339,8 +339,8 @@ function CustomEngines({
           onChange={(e) => update({ custom: { asr: e.target.value } })}
         >
           {registry.asrEngines().map((e) => (
-            <option key={e.id} value={e.id} disabled={!engineFits(e.requirements, hardware)}>
-              {e.label}
+            <option key={e.id} value={e.id} disabled={!engineFits(e, hardware)}>
+              {e.unavailable ? `${e.label} (${e.unavailable})` : e.label}
             </option>
           ))}
         </select>
@@ -353,8 +353,8 @@ function CustomEngines({
           onChange={(e) => update({ custom: { translation: e.target.value } })}
         >
           {registry.translationEngines().map((e) => (
-            <option key={e.id} value={e.id} disabled={!engineFits(e.requirements, hardware)}>
-              {e.label}
+            <option key={e.id} value={e.id} disabled={!engineFits(e, hardware)}>
+              {e.unavailable ? `${e.label} (${e.unavailable})` : e.label}
             </option>
           ))}
         </select>

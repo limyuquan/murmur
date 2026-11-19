@@ -80,6 +80,11 @@ export interface EngineInfoBase {
   description: string;
   runtime: EngineRuntime;
   requirements: HardwareRequirements;
+  /**
+   * Why the engine can't be used in this build at all, whatever the device (its model files
+   * aren't published yet, say). Profiles skip it and the custom picker shows it disabled.
+   */
+  unavailable?: string;
   /** Models to download before the engine can run. None for engines that need no download. */
   models?: readonly EngineModel[];
   license?: string;

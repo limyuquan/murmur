@@ -34,11 +34,12 @@ export function engineModels(info: EngineInfo | undefined, hardware: HardwareInf
   return [...plain, ...(pick ? [pick] : [])].map((m) => toModel(info, m));
 }
 
-/** Every download any engine in `registry` declares, on any backend. */
+/** Every download any engine in `registry` offers in this build, on any backend. */
 export function knownModels(registry: EngineRegistry): ModelInfo[] {
   const seen = new Set<string>();
   const out: ModelInfo[] = [];
   for (const info of [...registry.asrEngines(), ...registry.translationEngines()]) {
+    if (info.unavailable) continue;
     for (const m of info.models ?? []) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);

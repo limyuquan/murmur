@@ -5,7 +5,7 @@
  * its id at the front of the profiles it suits. `custom` uses the engines chosen in settings.
  */
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
-import { checkRequirements, type HardwareInfo } from './hardware';
+import { checkEngine, type HardwareInfo } from './hardware';
 import type { EngineRegistry } from './registry';
 import type { EngineInfo } from './types';
 
@@ -118,7 +118,7 @@ function pick(
       notes.push(`${id} isn't available in this build.`);
       continue;
     }
-    const check = checkRequirements(engine.requirements, hardware);
+    const check = checkEngine(engine, hardware);
     if (check.ok) return id;
     notes.push(`${engine.label}: ${check.reasons.join(' ')}`);
   }

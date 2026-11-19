@@ -2,7 +2,7 @@
  * What this device can run, and whether an engine fits. Detection is browser-only; the checks are
  * pure so the options page, the popup and tests share them.
  */
-import type { ComputeBackend, HardwareRequirements } from './types';
+import type { ComputeBackend, EngineInfoBase, HardwareRequirements } from './types';
 
 export interface HardwareInfo {
   webgpu: {
@@ -90,6 +90,15 @@ export function checkRequirements(req: HardwareRequirements, hw: HardwareInfo): 
     reasons.push(`Needs ${req.minDeviceMemoryGB} GB of memory.`);
   }
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
+/** Whether the engine can run here: offered in this build, and its requirements fit `hw`. */
+export function checkEngine(
+  info: Pick<EngineInfoBase, 'requirements' | 'unavailable'>,
+  hw: HardwareInfo,
+): RequirementCheck {
+  if (info.unavailable) return { ok: false, reasons: [info.unavailable] };
+  return checkRequirements(info.requirements, hw);
 }
 
 function backendName(b: ComputeBackend): string {
