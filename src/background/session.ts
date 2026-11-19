@@ -77,6 +77,8 @@ export function engineLabels(engines: ResolvedEngines): { asr: string; translati
 export interface StartOptions {
   /** `tone`: the synthetic source instead of tab audio (e2e builds). */
   source?: 'tab' | 'tone';
+  /** These engines instead of the settings' (e2e builds: the demo engines). */
+  engines?: { asr: string; translation: string };
 }
 
 export function startSession(tabId: number, options: StartOptions = {}): Promise<SessionStatus> {
@@ -90,7 +92,7 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
     await setStatus({ state: 'starting', tabId, sessionId });
     try {
       const settings = await loadSettings();
-      const engines = await plannedEngines(settings);
+      const engines = options.engines ?? (await plannedEngines(settings));
       await ensureOffscreenDocument();
       await injectOverlay(tabId);
       // Mint last: the ID is single-use and expires within seconds.

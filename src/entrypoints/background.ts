@@ -10,6 +10,7 @@ import {
   stopSession,
   toggleSession,
 } from '@/background/session';
+import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { isOffscreenEvent, isRequest, type Response } from '@/messaging/protocol';
 import { loadSettings, saveSettings } from '@/settings/settings';
 import { COMMANDS } from '@/shared/commands';
@@ -66,8 +67,13 @@ export default defineBackground(() => {
 
   if (IS_E2E) {
     globalThis.__earshot = {
-      async start(tabId, source = 'tone') {
-        const status = await startSession(tabId, { source });
+      async start(tabId, source = 'tone', engines = 'demo') {
+        const status = await startSession(tabId, {
+          source,
+          ...(engines === 'demo'
+            ? { engines: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID } }
+            : {}),
+        });
         if (status.state === 'error') throw new Error(status.message);
       },
       async stop() {
