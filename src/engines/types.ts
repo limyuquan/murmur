@@ -50,6 +50,17 @@ export interface HardwareRequirements {
   downloadMB?: number;
 }
 
+/**
+ * A model an engine downloads before it can run. Listed so the options page can show sizes and
+ * manage downloads; engines that share a model list the same `id`, and it is stored once.
+ */
+export interface EngineModel {
+  id: string;
+  /** Plain name for the model manager ("Speech recognition, small"). */
+  label: string;
+  sizeMB: number;
+}
+
 /** Static description of an engine: readable without loading it (settings, popup). */
 export interface EngineInfoBase {
   /** Stable id, stored in settings: `<family>-<variant>`, e.g. `demo-echo`. */
@@ -59,6 +70,8 @@ export interface EngineInfoBase {
   description: string;
   runtime: EngineRuntime;
   requirements: HardwareRequirements;
+  /** Models to download before the engine can run. None for engines that need no download. */
+  models?: readonly EngineModel[];
   license?: string;
   homepage?: string;
 }
