@@ -102,6 +102,8 @@ interface Entry {
   original: { key: string; rows: string[] } | null;
   /** When the cue last changed. */
   updatedAt: number;
+  /** Stays at least until then (a cue timed on the video: to the end of its speech). */
+  holdUntil: number | null;
 }
 
 /**
@@ -127,7 +129,8 @@ export class CaptionStore {
 
   constructor(private readonly options: CaptionOptions = DEFAULT_CAPTION_OPTIONS) {}
 
-  apply(cue: Cue, now: number): void {
+  /** Adds or updates `cue` at `now`. `holdUntil`: it stays on screen at least until then. */
+  apply(cue: Cue, now: number, holdUntil?: number): void {
     const prev = this.entries.get(cue.id);
     const source = track(prev?.source ?? null, cue.source, now) as Track;
     const translation = track(prev?.translation ?? null, cue.translation, now);
@@ -140,6 +143,7 @@ export class CaptionStore {
       pages: prev?.pages ?? null,
       original: prev?.original ?? null,
       updatedAt: now,
+      holdUntil: holdUntil ?? prev?.holdUntil ?? null,
     });
     if (cue.source.final && cue.source.text.trim()) {
       const lang = primaryLanguage(cue.source.language);
@@ -233,11 +237,12 @@ export class CaptionStore {
 
   /** When `e` should leave the screen: once read when done, or once it has gone stale. */
   expiresAt(e: Entry): number {
-    if (e.doneAt === null) return e.updatedAt + STALE_MS;
+    const hold = e.holdUntil ?? Number.NEGATIVE_INFINITY;
+    if (e.doneAt === null) return Math.max(e.updatedAt + STALE_MS, hold);
     const main = this.mainTrack(e, this.view);
     const from = main?.finalAt ?? e.doneAt;
     const reading = e.pages ? sum(e.pages.times) : readingMs(main?.text ?? e.cue.source.text);
-    return Math.max(e.doneAt + MIN_DISPLAY_MS, from + reading + LINGER_MS);
+    return Math.max(e.doneAt + MIN_DISPLAY_MS, from + reading + LINGER_MS, hold);
   }
 
   /** The older block has been on screen long enough to read (or can't be read yet anyway). */

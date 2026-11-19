@@ -4,6 +4,8 @@
  * session stopped). Injecting again while one is running is a no-op.
  */
 import { browser } from 'wxt/browser';
+import { toBase64 } from '@/lookahead/bytes';
+import { lookaheadSiteFor, videoTimeline } from '@/lookahead/sites';
 import { OVERLAY_PORT, type OverlayMessage, type OverlayToHost } from '@/messaging/protocol';
 import type { Cue } from '@/pipeline/types';
 import { loadPosition, savePosition, siteKey, watchPositions } from '@/settings/positions';
@@ -42,21 +44,60 @@ export function startOverlay(): void {
   if (globalThis.__murmurOverlay) return;
   const site = topSiteKey(location);
   const port = browser.runtime.connect({ name: OVERLAY_PORT });
+  const post = (message: OverlayToHost): void => {
+    try {
+      port.postMessage(message);
+    } catch {
+      // Disconnected: the overlay is going away.
+    }
+  };
+  // Lookahead: the relay is here only on sites where it's on (src/lookahead/relay.ts).
+  const relay = globalThis.__murmurTee;
+  const lookaheadSite = lookaheadSiteFor(location.hostname);
   const controller = new OverlayController(window, document, {
     onPositionChange: (offset) => {
       if (site) savePosition(site, offset).catch(() => {});
     },
     // So the top frame knows a player here shows the subtitles.
-    onVideo: (present) => {
-      try {
-        port.postMessage({ type: 'video', present } satisfies OverlayToHost);
-      } catch {
-        // Disconnected: the overlay is going away.
-      }
-    },
+    onVideo: (present) => post({ type: 'video', present }),
+    ...(relay
+      ? {
+          timelineOf: (video: HTMLVideoElement) =>
+            videoTimeline(
+              video.currentSrc || video.src,
+              (url) => relay.mediaSourceOf(url),
+              lookaheadSite,
+              location,
+              video,
+            ),
+          onPlayhead: (report: import('@/lookahead/protocol').PlayheadReport) =>
+            post({ type: 'playhead', report }),
+        }
+      : {}),
   });
   const unwatch: (() => void)[] = [];
   let held = false;
+
+  /** A progressive source on this page's origin, read with the page's access. */
+  const fetchFor = (message: Extract<OverlayMessage, { type: 'fetch' }>): void => {
+    if (!relay) return;
+    relay.fetchRange(message.url, message.start, message.end).then(
+      ({ bytes, total }) =>
+        post({
+          type: 'tee',
+          wire: { t: 'fetched', id: message.id, bytes: toBase64(bytes), total },
+        }),
+      (err: unknown) =>
+        post({
+          type: 'tee',
+          wire: {
+            t: 'fetched',
+            id: message.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        }),
+    );
+  };
 
   const stop = (): void => {
     for (const u of unwatch) u();
@@ -72,6 +113,13 @@ export function startOverlay(): void {
     else if (message.type === 'reset') controller.reset();
     else if (message.type === 'status') controller.setStatus(message.status);
     else if (message.type === 'frames') controller.setVideoInFrame(message.videoInFrame);
+    else if (message.type === 'lookahead') {
+      // Only frames where lookahead can read the player follow the playhead.
+      if (relay) controller.setLookahead(message.lagS);
+    } else if (message.type === 'coverage') controller.setCoverage(message.timeline, message.spans);
+    else if (message.type === 'drop')
+      controller.dropCues(message.timeline, message.start, message.end);
+    else if (message.type === 'fetch') fetchFor(message);
   };
   const onMessage = (message: OverlayMessage): void => {
     // A test that holds the session's cues still wants to know about the frames.
@@ -80,6 +128,23 @@ export function startOverlay(): void {
   port.onMessage.addListener(onMessage);
   port.onDisconnect.addListener(stop);
   port.postMessage({ type: 'hello', frameUrl: location.href } satisfies OverlayToHost);
+  // Lookahead can read this page: what the player did so far, then as it happens (after the
+  // hello, which the session counts the port by), and where the video is.
+  if (relay) {
+    unwatch.push(relay.attach((wire) => post({ type: 'tee', wire })));
+    post({
+      type: 'playhead',
+      report: {
+        timeline: null,
+        key: null,
+        ad: false,
+        time: 0,
+        rate: 1,
+        paused: true,
+        at: Date.now(),
+      },
+    });
+  }
 
   if (IS_E2E) {
     const onTest = (e: Event): void => {

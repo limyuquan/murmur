@@ -18,12 +18,15 @@
  * When a frame inside the page has a video, that frame's overlay shows the subtitles, and the
  * top frame's stays out of the way.
  */
+import type { PlayheadReport } from '@/lookahead/protocol';
+import type { VideoTimeline } from '@/lookahead/sites';
+import type { Span } from '@/lookahead/types';
 import type { OverlayStatus } from '@/messaging/protocol';
 import type { Cue } from '@/pipeline/types';
 import type { CaptionOffset } from '@/settings/positions';
 import { clampOffset } from '@/settings/positions';
 import { DEFAULT_SETTINGS, type OverlaySettings } from '@/settings/settings';
-import { CaptionStore, type ViewOptions } from './captions';
+import { type CaptionBlock, CaptionStore, type ViewOptions } from './captions';
 import {
   type CaptionLayout,
   captionLayout,
@@ -33,6 +36,7 @@ import {
   rectChanged,
 } from './geometry';
 import { fitFor } from './measure';
+import { JUMP_S, MediaClock, MediaCues } from './mediacues';
 import { describeVideo, findVideos, pickBest, VideoFinder } from './pickVideo';
 import { adapterFor, liftToClear, type PlayerAdapter } from './sites';
 import { OverlayView, type StatusChip, type ViewStyle } from './view';
@@ -52,7 +56,22 @@ export interface ControllerHooks {
   onPositionChange?(offset: CaptionOffset | null): void;
   /** This frame started or stopped having a video to draw on. */
   onVideo?(present: boolean): void;
+  /** Lookahead: what a video plays (null: nothing lookahead can read here). */
+  timelineOf?(video: HTMLVideoElement): VideoTimeline | null;
+  /** Lookahead: where the followed video is, for the session (on changes, and every second). */
+  onPlayhead?(report: PlayheadReport): void;
 }
+
+/** Media events that move or stop the playhead (lookahead follows them). */
+const PLAYHEAD_EVENTS = [
+  'seeking',
+  'seeked',
+  'ratechange',
+  'pause',
+  'play',
+  'emptied',
+  'timeupdate',
+];
 
 /** Elements whose children are never drawn, or that hold their video in a shadow root. */
 const NO_CHILDREN = new Set([
@@ -110,6 +129,17 @@ export class OverlayController {
   private lift = 0;
   private drag: { x: number; y: number; from: CaptionOffset; current: CaptionOffset } | null = null;
   private destroyed = false;
+  /** Lookahead (null until the session says it runs): cues on the video's timeline. */
+  private media: MediaCues | null = null;
+  private readonly clock = new MediaClock();
+  /** How long after the page plays a moment the person hears it, seconds. */
+  private lagS = 0;
+  private mediaFrame = 0;
+  /** Media time at the last refresh, and the next one at which the picture changes. */
+  private mediaT: number | null = null;
+  private mediaNext: number | null = null;
+  private lastReport = '';
+  private lastReportAt = 0;
 
   constructor(
     private readonly win: Window,
@@ -161,6 +191,12 @@ export class OverlayController {
     this.win.clearTimeout(this.timer);
     this.win.clearTimeout(this.chipTimer);
     this.win.cancelAnimationFrame(this.frame);
+    this.win.cancelAnimationFrame(this.mediaFrame);
+    if (this.media) {
+      for (const type of PLAYHEAD_EVENTS) {
+        this.doc.removeEventListener(type, this.onPlayheadEvent, { capture: true });
+      }
+    }
     this.resize.disconnect();
     this.view.unmount();
   }
@@ -180,12 +216,52 @@ export class OverlayController {
   }
 
   applyCue(cue: Cue): void {
+    const media = this.media;
+    if (cue.origin === 'lookahead') {
+      media?.add(cue);
+      this.mediaNext = null;
+      this.refresh();
+      return;
+    }
+    // A live line lookahead (or an earlier pass) already has isn't shown again.
+    const placed = media ? this.placeLive(cue) : null;
+    if (media && placed && !media.addLive(cue, placed)) return;
     this.store.apply(cue, Date.now());
     this.refresh();
   }
 
   reset(): void {
     this.store.reset();
+    this.media?.reset();
+    this.refresh();
+  }
+
+  /**
+   * Lookahead runs in this session: cues on the video's timeline are shown by its playhead, which
+   * the session is told about. `lagS`: how long after the page plays a moment it is heard.
+   */
+  setLookahead(lagS: number): void {
+    this.lagS = Number.isFinite(lagS) ? Math.max(0, Math.min(1, lagS)) : 0;
+    if (this.media) return;
+    this.media = new MediaCues();
+    for (const type of PLAYHEAD_EVENTS) {
+      this.doc.addEventListener(type, this.onPlayheadEvent, { capture: true, passive: true });
+    }
+    this.reportPlayhead(true);
+    this.mediaLoop();
+  }
+
+  /** Where lookahead has finished subtitles on `key`. */
+  setCoverage(key: string, spans: readonly Span[]): void {
+    this.media?.setCoverage(key, spans);
+    this.mediaNext = null;
+    this.refresh();
+  }
+
+  /** Lookahead cues of `key` from `[start, end)` are void. */
+  dropCues(key: string, start: number, end: number): void {
+    this.media?.drop(key, start, end);
+    this.mediaNext = null;
     this.refresh();
   }
 
@@ -278,6 +354,8 @@ export class OverlayController {
     this.sameOriginVideo = !next && this.win === this.win.top && this.sameOriginFrameHasVideo();
     if (!this.view.host.isConnected) this.onFullscreen();
     this.schedule();
+    this.reportPlayhead(false);
+    if (this.media && this.video && !this.video.paused) this.mediaLoop();
   }
 
   /** Recomputes what to show and draws it. */
@@ -290,7 +368,7 @@ export class OverlayController {
     }
     const now = Date.now();
     const s = this.settings;
-    const blocks = this.store.visible(now, {
+    const view: ViewOptions = {
       display: s.display,
       showPartials: s.showPartials,
       originalPlacement: s.originalPlacement,
@@ -298,7 +376,8 @@ export class OverlayController {
       showOriginal: this.showOriginal,
       fit: this.fit,
       fitKey: this.lastFitKey,
-    });
+    };
+    const blocks = this.mediaBlocks(now, view) ?? this.store.visible(now, view);
     const shown = blocks.length > 0;
     const signature = JSON.stringify(blocks) + this.lastFitKey;
     if (signature !== this.lastRender) {
@@ -315,6 +394,109 @@ export class OverlayController {
     this.win.clearTimeout(this.timer);
     const next = this.store.nextChange(now);
     if (next !== null) this.timer = this.win.setTimeout(() => this.refresh(), next - now + 16);
+  }
+
+  /**
+   * Lookahead's blocks at the playhead, or null to show the live ones. Where lookahead has
+   * finished subtitles only its cues show; elsewhere live lines show, and kept cues fill in when
+   * there are none (after a seek back, say).
+   */
+  private mediaBlocks(now: number, view: ViewOptions): CaptionBlock[] | null {
+    const media = this.media;
+    const video = this.video;
+    const timeline = media && video ? this.currentTimeline() : null;
+    if (!media || !video || !timeline || timeline.ad) {
+      this.mediaT = null;
+      return null;
+    }
+    const t = video.currentTime - this.lagS;
+    this.clock.record(
+      epochNow(),
+      video.currentTime,
+      video.playbackRate,
+      video.paused,
+      timeline.key,
+    );
+    media.advance(timeline.key, t);
+    this.mediaT = t;
+    this.mediaNext = media.nextEvent(timeline.key, t);
+    if (media.covered(timeline.key, t)) return media.visible(t, view);
+    const live = this.store.visible(now, view);
+    return live.length > 0 ? live : media.visible(t, view);
+  }
+
+  /** A live cue's place on the followed video's timeline, from when it was heard. */
+  private placeLive(cue: Cue): { timeline: string; start: number; end: number } | null {
+    const timeline = this.video ? this.currentTimeline() : null;
+    if (!timeline || timeline.ad) return null;
+    const start = this.clock.toMedia(cue.startEpochMs, timeline.key);
+    const end = this.clock.toMedia(cue.endEpochMs, timeline.key);
+    if (start === null || end === null || end < start) return null;
+    return { timeline: timeline.key, start: start - this.lagS, end: end - this.lagS };
+  }
+
+  private currentTimeline(): VideoTimeline | null {
+    const video = this.video;
+    if (!video || !this.hooks.timelineOf) return null;
+    try {
+      return this.hooks.timelineOf(video);
+    } catch {
+      return null;
+    }
+  }
+
+  private readonly onPlayheadEvent = (e: Event): void => {
+    if (e.target !== this.video) return;
+    this.reportPlayhead(e.type !== 'timeupdate');
+    if (e.type === 'play') this.mediaLoop();
+    this.mediaTick();
+  };
+
+  /** Each animation frame while the video plays: redraw when the picture should change. */
+  private mediaLoop(): void {
+    if (this.destroyed || !this.media || this.mediaFrame) return;
+    this.mediaFrame = this.win.requestAnimationFrame(() => {
+      this.mediaFrame = 0;
+      this.mediaTick();
+      if (this.video && !this.video.paused) this.mediaLoop();
+    });
+  }
+
+  private mediaTick(): void {
+    const video = this.video;
+    if (!this.media || !video) return;
+    const t = video.currentTime - this.lagS;
+    const last = this.mediaT;
+    const due =
+      last === null ||
+      t < last - 0.05 ||
+      t - last > JUMP_S ||
+      (this.mediaNext !== null && t >= this.mediaNext);
+    if (due) this.refresh();
+  }
+
+  /** Tells the session where the video is: on events at once, else about once a second. */
+  private reportPlayhead(force: boolean): void {
+    const send = this.hooks.onPlayhead;
+    const video = this.video;
+    if (!send || !this.media) return;
+    const now = epochNow();
+    if (!force && now - this.lastReportAt < 1000) return;
+    const timeline = video ? this.currentTimeline() : null;
+    const report: PlayheadReport = {
+      timeline: timeline?.timeline ?? null,
+      key: timeline?.key ?? null,
+      ad: timeline?.ad ?? false,
+      time: video?.currentTime ?? 0,
+      rate: video?.playbackRate ?? 1,
+      paused: video ? video.paused || video.readyState < 3 : true,
+      at: now,
+    };
+    const signature = `${report.timeline}|${report.key}|${report.ad}|${report.paused}|${report.rate}`;
+    if (!force && signature === this.lastReport && now - this.lastReportAt < 1000) return;
+    this.lastReport = signature;
+    this.lastReportAt = now;
+    send(report);
   }
 
   /** Keeps the view over the picture and clear of the controls. */
@@ -500,6 +682,10 @@ export class OverlayController {
     }
     return false;
   }
+}
+
+function epochNow(): number {
+  return performance.timeOrigin + performance.now();
 }
 
 function hasShowingCues(video: HTMLVideoElement): boolean {
