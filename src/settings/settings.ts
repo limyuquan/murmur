@@ -15,17 +15,27 @@ export const SETTINGS_KEY = 'settings';
 
 export type CaptionDisplay = 'both' | 'translation' | 'original';
 export type CaptionPosition = 'bottom' | 'top';
+/** Where the original goes relative to the translation in `both` mode. */
+export type OriginalPlacement = 'above' | 'below';
+/** What keeps text readable over the picture. */
+export type CaptionBackground = 'box' | 'shadow' | 'outline';
 
 export interface OverlaySettings {
-  /** Which lines to show. `both` puts the original (smaller) above the translation. */
+  /** Which lines to show. `both` adds the original, smaller, next to the translation. */
   display: CaptionDisplay;
   position: CaptionPosition;
+  originalPlacement: OriginalPlacement;
   /** Multiplies the default size (a share of the video height). 0.5–2. */
   fontScale: number;
-  /** Opacity of the box behind each line, 0–1. */
+  background: CaptionBackground;
+  /** Opacity of the box behind each line (`box`), or of the shadow (`shadow`), 0–1. */
   backgroundOpacity: number;
   /** Show text that may still change, dimmed. */
   showPartials: boolean;
+  /** Tag a line with its language when it differs from what is mostly being spoken. */
+  languageTags: boolean;
+  /** Move subtitles up while the player's controls or its own captions are showing. */
+  avoidControls: boolean;
 }
 
 export interface Settings {
@@ -50,11 +60,22 @@ export const DEFAULT_SETTINGS: Settings = {
   overlay: {
     display: 'both',
     position: 'bottom',
+    originalPlacement: 'above',
     fontScale: 1,
-    backgroundOpacity: 0.75,
+    background: 'box',
+    backgroundOpacity: 0.7,
     showPartials: true,
+    languageTags: true,
+    avoidControls: true,
   },
 };
+
+/** Sizes offered as quick choices (popup), as `fontScale`. */
+export const SIZE_PRESETS = [
+  { id: 'small', label: 'S', name: 'Small', scale: 0.8 },
+  { id: 'medium', label: 'M', name: 'Medium', scale: 1 },
+  { id: 'large', label: 'L', name: 'Large', scale: 1.3 },
+] as const;
 
 export type SettingsPatch = Partial<Omit<Settings, 'overlay' | 'custom'>> & {
   overlay?: Partial<OverlaySettings>;
@@ -83,9 +104,17 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
     overlay: {
       display: oneOf(o.display, ['both', 'translation', 'original'] as const, d.overlay.display),
       position: oneOf(o.position, ['bottom', 'top'] as const, d.overlay.position),
+      originalPlacement: oneOf(
+        o.originalPlacement,
+        ['above', 'below'] as const,
+        d.overlay.originalPlacement,
+      ),
       fontScale: num(o.fontScale, 0.5, 2, d.overlay.fontScale),
+      background: oneOf(o.background, ['box', 'shadow', 'outline'] as const, d.overlay.background),
       backgroundOpacity: num(o.backgroundOpacity, 0, 1, d.overlay.backgroundOpacity),
       showPartials: bool(o.showPartials, d.overlay.showPartials),
+      languageTags: bool(o.languageTags, d.overlay.languageTags),
+      avoidControls: bool(o.avoidControls, d.overlay.avoidControls),
     },
   };
 }
