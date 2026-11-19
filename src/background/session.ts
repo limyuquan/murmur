@@ -126,12 +126,14 @@ async function sessionLadder(engines: ResolvedEngines): Promise<SessionLadder | 
     gpu: gpuKey(await deviceHardware()),
     steps,
     length: ladder.steps.length,
-    smaller: ladder.reason === 'estimate' || ladder.reason === 'record',
+    smaller: ladder.reason !== null && ladder.reason !== 'smaller',
+    ...(ladder.reason === 'slow' || ladder.reason === 'speed' ? { why: ladder.reason } : {}),
   };
 }
 
 /**
- * The offscreen document stepped down a memory ladder: start there next time on this device.
+ * The offscreen document stepped down a memory ladder (out of memory, or falling behind): start
+ * there next time on this device.
  * Kept even when the session then fails (a smaller model not downloaded yet), so the popup offers
  * the right download.
  */
@@ -142,12 +144,14 @@ export async function onMemoryFit(event: {
   step: number;
   engine: string;
   message: string;
+  cause?: 'slow';
 }): Promise<void> {
   const status = await getStatus();
   if (status.state === 'idle' || status.sessionId !== event.sessionId) return;
   await saveMemoryFit(event.gpu, event.profile, {
     step: event.step,
     at: Date.now(),
+    cause: event.cause ?? 'memory',
     engine: event.engine,
     message: event.message,
   });

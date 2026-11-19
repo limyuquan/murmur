@@ -250,6 +250,12 @@ export interface SessionLadder {
   length: number;
   /** It starts below the top to fit this device's graphics memory (a guess, or a record). */
   smaller: boolean;
+  /**
+   * Why it starts below the top, when it does for another reason than graphics memory: larger
+   * models fell behind here (`slow`), or the largest translator is too slow on graphics that
+   * share the computer's memory (`speed`).
+   */
+  why?: 'slow' | 'speed';
 }
 
 export type OffscreenCommand =
@@ -287,6 +293,11 @@ export type OffscreenEvent =
       /** The engine that ran out, and what it said. */
       engine: string;
       message: string;
+      /**
+       * Not out of memory: the session's models kept falling behind the speech (slowness.ts).
+       * The session runs on; the next one starts at `step`.
+       */
+      cause?: 'slow';
     };
 
 // ---------------------------------------------------------------------------------------------

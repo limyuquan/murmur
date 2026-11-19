@@ -19,7 +19,7 @@ describe('memory fit record', () => {
   it('keeps valid records per card and profile', () => {
     const clean = cleanMemoryFit({
       'nvidia|ampere||2048': {
-        best: { step: 2, at: 5, engine: 'gemma4-e2b', message: 'x'.repeat(400) },
+        best: { step: 2, at: 5, engine: 'gemma4-e2b', message: 'x'.repeat(400), cause: 'slow' },
         balanced: { step: -1, at: 1 },
         light: 'nope',
         custom: { step: 1 },
@@ -30,6 +30,11 @@ describe('memory fit record', () => {
     const card = clean['nvidia|ampere||2048'];
     expect(card?.best?.step).toBe(2);
     expect(card?.best?.message).toHaveLength(300);
+    expect(card?.best?.cause).toBe('slow');
+    expect(cleanMemoryFit({ g: { best: { step: 1, cause: 'bored' } } }).g?.best).toEqual({
+      step: 1,
+      at: 0,
+    });
     expect(card?.balanced).toBeUndefined();
     expect(cleanMemoryFit('nope')).toEqual({});
   });

@@ -1,7 +1,7 @@
 /** Profile picker and model manager, shared by the options page and the welcome page. */
 import type { ReactNode } from 'react';
 import { packsFor } from '@/engines/chrome/setup';
-import { checkEngine, gpuKey, type HardwareInfo } from '@/engines/hardware';
+import { checkEngine, gpuKey, type HardwareInfo, sharesMemory } from '@/engines/hardware';
 import {
   PROFILE_ORDER,
   PROFILES,
@@ -18,7 +18,7 @@ import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/
 import { type MemoryFit, resolveOptions, saveMemoryFit } from '@/settings/memoryfit';
 import type { Settings, SettingsPatch } from '@/settings/settings';
 import { Icon, Meter, ProgressBar } from './components';
-import { engineNames, memoryFitCopy, smallerSpeechCopy } from './fitcopy';
+import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from './fitcopy';
 import type { ModelActions } from './hooks';
 import { PackRow, usePacks } from './setup';
 import { chosenSpoken } from './spoken';
@@ -119,6 +119,9 @@ export function fitWarning(profile: ProfileId, hardware: HardwareInfo | null): s
   if (RANK[profile] <= RANK[suggested]) return null;
   if (profile === 'balanced' || !hardware.webgpu.available) {
     return 'This device has no WebGPU, so this would run slowly and fall behind.';
+  }
+  if (sharesMemory(hardware.webgpu)) {
+    return 'On graphics that share the computer’s memory, Best starts with Balanced’s models: its largest translation model falls behind here. You can still choose it below.';
   }
   return 'Needs a stronger graphics card or the companion app; subtitles may fall behind.';
 }
@@ -300,7 +303,7 @@ export function ModelSizeOptions({
               }
               data-testid="try-larger"
             >
-              Try the larger models
+              {fit.action}
             </button>
           )}
         </div>
@@ -468,12 +471,7 @@ export function HardwareSummary({ hardware }: { hardware: HardwareInfo | null })
       ? 'WebGPU, with 16-bit floats'
       : 'WebGPU'
     : 'No WebGPU';
-  const memory =
-    hardware.deviceMemoryGB === null
-      ? 'Unknown'
-      : hardware.deviceMemoryGB >= 8
-        ? '8 GB or more'
-        : `About ${hardware.deviceMemoryGB} GB`;
+  const memory = memoryText(hardware.deviceMemoryGB);
   const rows: [string, string][] = [
     ['Graphics', gpu],
     ['Memory', memory],

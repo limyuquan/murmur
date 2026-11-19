@@ -131,6 +131,44 @@ describe('line fallback', () => {
     expect(events).toEqual([{ segmentId: 's1', reason: 'took longer than 3 s', permanent: false }]);
   });
 
+  it('tells the session whether each live line came in time', async () => {
+    vi.useFakeTimers();
+    let slowNext = false;
+    const primary = scripted(INFO, async function* (r) {
+      if (slowNext) await aborted(r.signal);
+      yield { text: 'Hello', final: true };
+    });
+    const lines: unknown[] = [];
+    const t = new LineFallbackTranslator(primary, {
+      backup: async () => backup(),
+      budgetMs: 3000,
+      onLine: (line) => lines.push(line),
+    });
+    await collect(t.translate(request('Bonjour', { segmentId: 'a' })));
+    slowNext = true;
+    const late = collect(t.translate(request('Bonjour', { segmentId: 'b' })));
+    await vi.advanceTimersByTimeAsync(3000);
+    await late;
+    // Ahead of time (its own budget), a preview, a failure: not counted.
+    const ahead = collect(t.translate(request('Bonjour', { segmentId: 'c', budgetMs: 11_000 })));
+    await vi.advanceTimersByTimeAsync(11_000);
+    await ahead;
+    slowNext = false;
+    await collect(t.translate(request('Bonjour', { segmentId: 'd', sourceFinal: false })));
+    const broken = new LineFallbackTranslator(
+      scripted(
+        INFO,
+        failing(() => new Error('boom')),
+      ),
+      { backup: async () => backup(), onLine: (line) => lines.push(line) },
+    );
+    await collect(broken.translate(request('Bonjour', { segmentId: 'e' })));
+    expect(lines).toEqual([
+      { segmentId: 'a', slow: false },
+      { segmentId: 'b', slow: true },
+    ]);
+  });
+
   it('gives a line made ahead of time until shortly before it shows', async () => {
     expect(lookaheadBudgetMs(12_000)).toBe(11_000);
     // Due soon or now: as long as a live line, no less.

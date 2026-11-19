@@ -4,8 +4,8 @@ import { createBuiltinRegistry } from '@/engines/builtin';
 import type { HardwareInfo } from '@/engines/hardware';
 import { resolveEngines } from '@/engines/profiles';
 import { EngineRegistry } from '@/engines/registry';
-import { engineNames, memoryFitCopy, smallerSpeechCopy } from '@/ui/fitcopy';
-import { PROFILE_COPY } from '@/ui/models';
+import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from '@/ui/fitcopy';
+import { fitWarning, PROFILE_COPY } from '@/ui/models';
 
 const NVIDIA: HardwareInfo = {
   webgpu: { available: true, shaderF16: true, maxBufferMB: 2048, vendor: 'nvidia' },
@@ -45,6 +45,7 @@ describe('model size copy', () => {
     expect(memoryFitCopy(guess, r)).toEqual({
       text: 'Using smaller models to fit this device’s graphics memory: Qwen3-ASR 0.6B and Gemma 4 E2B. Browsers don’t report graphics memory, so this is Murmur’s guess.',
       retry: true,
+      action: 'Try the larger models',
     });
     const recorded = resolveEngines('best', none, r, NVIDIA, { fit: { step: 1 } });
     expect(memoryFitCopy(recorded, r)?.text).toBe(
@@ -55,6 +56,37 @@ describe('model size copy', () => {
     expect(
       memoryFitCopy(resolveEngines('balanced', none, r, NVIDIA, { smallerSpeech: true }), r),
     ).toBeNull();
+  });
+
+  it('says when larger models fell behind, or are too slow on this kind of graphics', () => {
+    const r = published();
+    const slow = resolveEngines('best', none, r, NVIDIA, { fit: { step: 1, cause: 'slow' } });
+    expect(memoryFitCopy(slow, r)).toEqual({
+      text: 'Using smaller models: Qwen3-ASR 1.7B and Gemma 4 E2B. Larger ones fell behind the speech here.',
+      retry: true,
+      action: 'Try the larger models',
+    });
+    const mac = resolveEngines('best', none, r, { ...APPLE, deviceMemoryGB: 16 });
+    const copy = memoryFitCopy(mac, r);
+    expect(copy?.action).toBe('Use Gemma 4 E4B anyway');
+    expect(copy?.text).toMatch(
+      /^Using Qwen3-ASR 1\.7B and Gemma 4 E2B\. Gemma 4 E4B translates a little better, but on graphics that share the computer’s memory, like Apple silicon, it is too slow for live subtitles/,
+    );
+  });
+
+  it('shows the computer’s memory as reported', () => {
+    expect(memoryText(null)).toBe('Unknown');
+    expect(memoryText(4)).toBe('About 4 GB');
+    // An older Chrome stopped at 8.
+    expect(memoryText(8)).toBe('8 GB or more');
+    expect(memoryText(16)).toBe('About 16 GB');
+  });
+
+  it('warns honestly about Best on graphics that share memory', () => {
+    expect(fitWarning('best', { ...APPLE, deviceMemoryGB: 16 })).toMatch(
+      /^On graphics that share the computer’s memory, Best starts with Balanced’s models/,
+    );
+    expect(fitWarning('best', NVIDIA)).toBeNull();
   });
 
   it('profile cards describe the models honestly', () => {

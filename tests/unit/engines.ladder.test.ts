@@ -19,6 +19,7 @@ import {
   gpuKind,
   type HardwareInfo,
   namedCardGB,
+  sharesMemory,
 } from '@/engines/hardware';
 import { loadLadder, loadWithFallback } from '@/engines/loading';
 import {
@@ -32,6 +33,7 @@ import {
   QWEN3_ASR_ID,
   recommendProfile,
   resolveEngines,
+  SLOW_ON_SHARED_MEMORY,
   WHISPER_BASE_ID,
   WHISPER_TURBO_ID,
 } from '@/engines/profiles';
@@ -143,6 +145,50 @@ describe('memory ladders', () => {
     expect(pair(best(9))).toEqual([CHROME_WEBSPEECH_ID, CHROME_TRANSLATOR_ID]);
   });
 
+  it('start Best below E4B where the graphics share the computer’s memory', () => {
+    const r = published();
+    // A 16 GB Mac (Chrome 158 reports 16): 8 GB guessed, enough for E4B, but too slow there.
+    const mac: HardwareInfo = { ...APPLE, deviceMemoryGB: 16 };
+    expect(SLOW_ON_SHARED_MEMORY.has(GEMMA_E4B_ID)).toBe(true);
+    expect(sharesMemory(mac.webgpu)).toBe(true);
+    expect(sharesMemory(NVIDIA.webgpu)).toBe(false);
+    const best = resolveEngines('best', none, r, mac);
+    expect(pair(best)).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(best.ladder).toMatchObject({ start: 1, estimated: 0, reason: 'speed' });
+    expect(best.notes).toEqual([
+      'Smaller models: the largest translation model is too slow for live subtitles on graphics that share the computer’s memory.',
+    ]);
+    // Balanced's top is already E2B: nothing changes.
+    const balanced = resolveEngines('balanced', none, r, mac);
+    expect(pair(balanced)).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(balanced.ladder?.reason).toBeNull();
+    // Chosen anyway ("Use Gemma 4 E4B anyway" records the top): E4B.
+    expect(pair(resolveEngines('best', none, r, mac, { fit: { step: 0 } }))).toEqual([
+      QWEN3_ASR_17B_ID,
+      GEMMA_E4B_ID,
+    ]);
+    // Where the memory guess is lower anyway, that is the reason.
+    const small = resolveEngines('best', none, r, APPLE);
+    expect(pair(small)).toEqual([QWEN3_ASR_ID, GEMMA_E2B_ID]);
+    expect(small.ladder?.reason).toBe('estimate');
+    // Cards with their own memory start at the top.
+    expect(resolveEngines('best', none, r, NVIDIA).ladder?.start).toBe(0);
+    // Not recommended there: Best only for cards with their own memory.
+    expect(recommendProfile(mac)).toBe('balanced');
+  });
+
+  it('a record of falling behind says so', () => {
+    const r = published();
+    const slow = resolveEngines('best', none, r, NVIDIA, { fit: { step: 1, cause: 'slow' } });
+    expect(pair(slow)).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(slow.ladder?.reason).toBe('slow');
+    expect(slow.notes).toEqual([
+      'Smaller models: larger ones fell behind the speech on this device.',
+    ]);
+    const memory = resolveEngines('best', none, r, NVIDIA, { fit: { step: 1, cause: 'memory' } });
+    expect(memory.ladder?.reason).toBe('record');
+  });
+
   it('Balanced can use the smaller speech model by choice', () => {
     const r = published();
     const balanced = resolveEngines('balanced', none, r, NVIDIA, { smallerSpeech: true });
@@ -201,6 +247,12 @@ describe('graphics-memory hints', () => {
     expect(estimateGpuMemoryMB(named('NVIDIA GeForce RTX 3050 Laptop GPU'))).toBe(3482);
     expect(estimateGpuMemoryMB(NVIDIA)).toBe(6144);
     expect(estimateGpuMemoryMB({ ...NVIDIA, deviceMemoryGB: 4 })).toBe(3482);
+    // Apple silicon: half the computer's memory, as Chrome reports it (16 on a 16 GB Mac in
+    // Chrome 158; an older Chrome's 8 may mean more), at most 16 GB.
+    expect(estimateGpuMemoryMB({ ...APPLE, deviceMemoryGB: 16 })).toBe(8192);
+    expect(estimateGpuMemoryMB({ ...APPLE, deviceMemoryGB: 8 })).toBe(4096);
+    expect(estimateGpuMemoryMB({ ...APPLE, deviceMemoryGB: 64 })).toBe(16384);
+    expect(estimateGpuMemoryMB({ ...APPLE, deviceMemoryGB: null })).toBe(2048);
     // A card whose largest buffer is under 1 GB is an old or small one.
     expect(
       estimateGpuMemoryMB({ ...NVIDIA, webgpu: { ...NVIDIA.webgpu, maxStorageBufferMB: 512 } }),

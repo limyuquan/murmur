@@ -19,7 +19,8 @@ import { ENGINE_FACTORIES } from '@/engines/factories';
 import { detectHardware, type HardwareInfo } from '@/engines/hardware';
 import { loadLadder, loadWithFallback } from '@/engines/loading';
 import { type LadderStep, LINE_FALLBACKS } from '@/engines/profiles';
-import { type FallbackEvent, sessionTranslator } from '@/engines/translators';
+import { describeSlowness, type Slowness, SlownessWatch } from '@/engines/slowness';
+import { type FallbackEvent, LINE_BUDGET_MS, sessionTranslator } from '@/engines/translators';
 import type {
   AsrEngine,
   AsrEngineInfo,
@@ -54,6 +55,11 @@ import { ActivityTracker, activityChanged } from './activity';
 
 /** What the popup says when a session runs smaller models than its profile's largest. */
 export const FIT_NOTE = 'Using smaller models to fit this device’s graphics memory.';
+/** The same, when larger ones fell behind here before. */
+export const SLOW_NOTE = 'Using smaller models: larger ones fell behind the speech here.';
+/** The same, on graphics that share the computer's memory (profiles.ts `SLOW_ON_SHARED_MEMORY`). */
+export const SPEED_NOTE =
+  'Using smaller models: the largest translation model is too slow on this device’s graphics.';
 
 /** How often the session's activity is checked (and reported, when it changed). */
 const ACTIVITY_MS = 1000;
@@ -87,6 +93,11 @@ export interface HostDeps {
   onStartup?(step: 'capture' | 'asr' | 'translation' | 'pipeline'): void;
   /** An engine ran out of memory and the session stepped down its ladder (e2e builds log it). */
   onStepDown?(engine: string, error: Error, next: LadderStep | null): void;
+  /**
+   * The session's models kept falling behind, and the next session starts at `next` (null: below
+   * the ladder). e2e builds log it.
+   */
+  onSlow?(found: Slowness, next: LadderStep | null): void;
   /** Sees every lookahead cue (e2e builds log them). */
   onLookaheadCue?(cue: Cue): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
@@ -128,6 +139,13 @@ interface Running {
   plannedTranslation: string;
   /** Smaller models run to fit the graphics memory, in plain words (null: they don't). */
   fitNote: string | null;
+  /** The ladder step that loaded (null: no ladder, or below its last step). */
+  ladderStep: LadderStep | null;
+  /** Watches for models that keep falling behind (null: no ladder step to go down from). */
+  slowness: SlownessWatch | null;
+  /** Speech recognition's last real-time factor, and the lines it finished (ids, recent). */
+  rtf: number | null;
+  recognized: Set<string>;
   /** Lookahead, once an overlay on a site where it's on reported in. */
   lookahead: LookaheadHost | null;
   /** Lookahead's own speech detector (the live one keeps its state per stream). */
@@ -320,7 +338,11 @@ export class OffscreenHost {
       translationNote: null,
       translatorFailure: null,
       plannedTranslation: config.translationEngine,
-      fitNote: config.ladder?.smaller ? FIT_NOTE : null,
+      fitNote: config.ladder?.smaller ? fitNote(config.ladder.why) : null,
+      ladderStep: null,
+      slowness: null,
+      rtf: null,
+      recognized: new Set(),
       lookahead: null,
       lookaheadVad: null,
       livePaused: false,
@@ -444,6 +466,10 @@ export class OffscreenHost {
         running.asr = loaded.asr;
         running.translator = loaded.translator;
         running.plannedTranslation = loaded.step?.translation ?? loaded.translator.info.id;
+        running.ladderStep = loaded.step;
+        // A step that fits can still be too slow here: step down for next time if it keeps
+        // falling behind (slowness.ts).
+        if (loaded.step) running.slowness = new SlownessWatch();
       } else {
         // Engines that run out of graphics memory hand over to smaller ones (`MEMORY_FALLBACKS`).
         running.asr = await loadWithFallback(
@@ -523,6 +549,7 @@ export class OffscreenHost {
           console.warn(LOG_PREFIX, 'speech detector failed, using loudness', err),
         onCue: (cue) => {
           running.activity.onCue(cue, Date.now());
+          this.onRecognized(running, cue);
           this.deps.onCue?.(cue);
           if (!running.heard) {
             running.heard = true;
@@ -530,7 +557,10 @@ export class OffscreenHost {
           }
           this.broadcast(config.tabId, { type: 'cue', cue });
         },
-        onHealth: (health) => running.activity.onHealth(health),
+        onHealth: (health) => {
+          running.activity.onHealth(health);
+          running.rtf = health.rtf;
+        },
         ...(this.deps.onSegment ? { onSegment: this.deps.onSegment } : {}),
         onError: (err) => {
           if (isActionRequired(err)) {
@@ -651,6 +681,11 @@ export class OffscreenHost {
     let fellBack = 0;
     return sessionTranslator(translator, {
       glossary: config.glossary ?? [],
+      onLine: ({ slow }) => {
+        if (!this.isCurrent(running)) return;
+        const found = running.slowness?.onTranslated(slow);
+        if (found) this.stepDownForSpeed(running, found);
+      },
       backup: backupId
         ? async () => {
             const backup = await this.registry.createTranslation(backupId);
@@ -671,6 +706,57 @@ export class OffscreenHost {
         this.reportRunning(running);
       },
     });
+  }
+
+  /** A cue: the first time its line is final with text, speech recognition finished a line. */
+  private onRecognized(running: Running, cue: Cue): void {
+    if (!running.slowness || !cue.source.final || !cue.source.text.trim()) return;
+    if (running.recognized.has(cue.id)) return;
+    running.recognized.add(cue.id);
+    // Only recent lines can still change.
+    if (running.recognized.size > 64) {
+      running.recognized.delete(running.recognized.values().next().value as string);
+    }
+    const found = running.slowness.onRecognized(running.rtf);
+    if (found) this.stepDownForSpeed(running, found);
+  }
+
+  /**
+   * The session's models keep falling behind: the next session on this device starts one step
+   * down its ladder (the step after the one that loaded: the ladder shrinks the translator first,
+   * then the speech model), as after running out of memory. This one runs on as it is; the
+   * per-line backup covers the translator's late lines.
+   */
+  private stepDownForSpeed(running: Running, found: Slowness): void {
+    const { config } = running;
+    const ladder = config.ladder;
+    const at = running.ladderStep;
+    if (!ladder || !at) return;
+    const i = ladder.steps.findIndex((step) => step.index === at.index);
+    const next = ladder.steps[i + 1] ?? null;
+    const engine = found.engine === 'translator' ? at.translation : at.asr;
+    const label =
+      (found.engine === 'translator'
+        ? this.registry.translationInfo(engine)?.label
+        : this.registry.asrInfo(engine)?.label) ?? engine;
+    const message = `${label} ${describeSlowness(found, LINE_BUDGET_MS)}.`;
+    console.warn(LOG_PREFIX, 'falling behind, smaller models next time:', message);
+    this.deps.onSlow?.(found, next);
+    this.deps
+      .send({
+        target: 'background',
+        type: 'memory-fit',
+        sessionId: config.sessionId,
+        profile: ladder.profile,
+        gpu: ladder.gpu,
+        step: next?.index ?? ladder.length,
+        engine,
+        message,
+        cause: 'slow',
+      })
+      .catch(() => {});
+    running.fitNote = `${label} is falling behind the speech here, so the next session starts with smaller models.`;
+    this.reportRunning(running);
   }
 
   private isCurrent(running: Running): boolean {
@@ -737,6 +823,11 @@ export class OffscreenHost {
       }
     }
   }
+}
+
+/** What the popup says when a session starts below its ladder's top, by why. */
+function fitNote(why: 'slow' | 'speed' | undefined): string {
+  return why === 'slow' ? SLOW_NOTE : why === 'speed' ? SPEED_NOTE : FIT_NOTE;
 }
 
 /** Chrome's language detector, when it is on this device already; null otherwise. */

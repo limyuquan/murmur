@@ -8,7 +8,8 @@
  *   before it shows for a line made ahead of time (lookahead). If it fails, gives an answer it
  *   rejects itself, or takes longer than the budget, the backup (Chrome's translator) translates
  *   that line instead, and the session is told why. If it stops for good (its worker crashed),
- *   the backup translates every later line.
+ *   the backup translates every later line. The session also hears whether each live line came
+ *   in time (`onLine`), to step down when the translator keeps falling behind (slowness.ts).
  *
  * Previews of unfinished lines get neither the budget nor the backup: a later preview or the
  * finished line replaces them anyway. Nor does a revision of the line before, which a finished
@@ -79,6 +80,11 @@ export interface LineFallbackOptions {
   /** For lines whose request names none. Default `LINE_BUDGET_MS`. */
   budgetMs?: number;
   onFallback?(event: FallbackEvent): void;
+  /**
+   * The translator finished a live line (one whose request names no budget: not made ahead of
+   * time) within its budget, or ran out of it (`slow`). Lines it failed on don't count.
+   */
+  onLine?(line: { segmentId: string; slow: boolean }): void;
 }
 
 export class LineFallbackTranslator implements TranslationEngine {
@@ -124,6 +130,11 @@ export class LineFallbackTranslator implements TranslationEngine {
       return;
     }
     const budget = request.budgetMs ?? this.options.budgetMs ?? LINE_BUDGET_MS;
+    const timed = (slow: boolean) => {
+      if (request.budgetMs === undefined) {
+        this.options.onLine?.({ segmentId: request.segmentId, slow });
+      }
+    };
     const timer = new AbortController();
     const signal = AbortSignal.any([request.signal, timer.signal]);
     const timeout = setTimeout(() => timer.abort(new Error('too slow')), budget);
@@ -143,17 +154,20 @@ export class LineFallbackTranslator implements TranslationEngine {
           // The line is done: no budget, nor backup, for what follows (a revision).
           done = true;
           clearTimeout(timeout);
+          timed(false);
           if (!request.previous) return;
         }
       }
       if (done) return;
       if (request.signal.aborted) return;
+      if (timer.signal.aborted) timed(true);
       reason = timer.signal.aborted
         ? `took longer than ${formatSeconds(budget)}`
         : 'gave no answer';
     } catch (err) {
       if (request.signal.aborted || done) return;
       if (timer.signal.aborted) {
+        timed(true);
         reason = `took longer than ${formatSeconds(budget)}`;
       } else {
         const message = err instanceof Error ? err.message : String(err);
@@ -200,6 +214,7 @@ export interface SessionTranslatorOptions {
   backup?: (() => Promise<TranslationEngine>) | null;
   budgetMs?: number;
   onFallback?(event: FallbackEvent): void;
+  onLine?: LineFallbackOptions['onLine'];
 }
 
 /** The translator a session runs: `engine` with its glossary and, if it has one, its backup. */
@@ -213,6 +228,7 @@ export function sessionTranslator(
     backup: options.backup,
     ...(options.budgetMs !== undefined ? { budgetMs: options.budgetMs } : {}),
     ...(options.onFallback ? { onFallback: options.onFallback } : {}),
+    ...(options.onLine ? { onLine: options.onLine } : {}),
   });
   fallback.prepareBackup();
   return fallback;

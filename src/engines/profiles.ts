@@ -11,7 +11,14 @@
  * loading or warming up (loading.ts `loadLadder`).
  */
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
-import { checkEngine, estimateGpuMemoryMB, formatGB, gpuKind, type HardwareInfo } from './hardware';
+import {
+  checkEngine,
+  estimateGpuMemoryMB,
+  formatGB,
+  gpuKind,
+  type HardwareInfo,
+  sharesMemory,
+} from './hardware';
 import { GEMMA_E2B_ID, GEMMA_E4B_ID, GEMMA_E4B_INFO } from './llm/info';
 import { QWEN3_ASR_17B_ID, QWEN3_ASR_17B_INFO, QWEN3_ASR_ID } from './qwen3asr/info';
 import type { EngineRegistry } from './registry';
@@ -154,6 +161,17 @@ export const LADDERS: Readonly<Partial<Record<ProfileId, readonly EnginePair[]>>
 };
 
 /**
+ * Translators a ladder doesn't start with where the graphics share the computer's memory
+ * (`sharesMemory`: Apple silicon, integrated graphics), though they may fit: on a MacBook Air M2
+ * (16 GB) Gemma 4 E4B fit beside Qwen3-ASR 1.7B (6.2 GB) but put translations 4.8 s behind the
+ * speech (median; E2B 1.9 s) and missed the 3 s budget on 15 of 63 lines. The person can still
+ * choose it (a record at the top step: "Try the larger models"); faster graphics of that kind
+ * (M-series Pro and Max) may run it well, and a session that keeps falling behind steps down by
+ * itself (`slowness.ts`).
+ */
+export const SLOW_ON_SHARED_MEMORY: ReadonlySet<string> = new Set([GEMMA_E4B_ID]);
+
+/**
  * Below a ladder's last step (it ran out of memory there too): what Light runs, Chrome's own
  * speech recognition (else Whisper base) and translation.
  */
@@ -180,11 +198,19 @@ export interface ResolvedLadder {
   /** The guess, MB (`estimateGpuMemoryMB`). */
   estimateMB: number;
   /**
-   * Why it doesn't start at the top: the guess, what happened on this device before (`record`),
-   * or the person chose the smaller speech model (`smaller`). Null at the top.
+   * Why it doesn't start at the top: the graphics-memory guess (`estimate`); larger models ran
+   * out of memory on this device before (`record`) or kept falling behind here (`slow`); the
+   * graphics share the computer's memory, where the largest translator is too slow
+   * (`speed`, `SLOW_ON_SHARED_MEMORY`); or the person chose the smaller speech model
+   * (`smaller`). Null at the top.
    */
-  reason: 'estimate' | 'record' | 'smaller' | null;
+  reason: LadderReason | null;
 }
+
+export type LadderReason = 'estimate' | 'record' | 'slow' | 'speed' | 'smaller';
+
+/** Why a device's record moved a ladder down (settings/memoryfit.ts). */
+export type FitCause = 'memory' | 'slow';
 
 export interface ResolvedEngines {
   asr: string;
@@ -196,8 +222,11 @@ export interface ResolvedEngines {
 }
 
 export interface ResolveOptions {
-  /** This device's record for the profile (settings/memoryfit.ts): the step that last worked. */
-  fit?: { step: number } | null;
+  /**
+   * This device's record for the profile (settings/memoryfit.ts): the step that last worked, and
+   * why the session stepped down to it (none: the person chose it).
+   */
+  fit?: { step: number; cause?: FitCause } | null;
   /** Balanced with the smaller speech model (Qwen3-ASR 0.6B): a smaller download. */
   smallerSpeech?: boolean;
 }
@@ -234,7 +263,15 @@ export function resolveEngines(
         ? ladder.findIndex((pair) => pair.asr !== QWEN3_ASR_17B_ID)
         : 0;
     const recorded = options.fit ? Math.min(Math.max(0, options.fit.step), steps.length) : null;
-    const start = Math.max(recorded ?? estimated, smallest);
+    // Graphics that share the computer's memory start below the translators too slow there.
+    const fast = sharesMemory(hardware.webgpu)
+      ? Math.max(
+          0,
+          steps.findIndex((step) => !SLOW_ON_SHARED_MEMORY.has(step.translation)),
+        )
+      : 0;
+    const guessed = Math.max(estimated, fast);
+    const start = Math.max(recorded ?? guessed, smallest);
     const top = steps[0];
     const chosen = steps[start];
     // Nothing smaller runs when the step it starts at runs the top's engines here.
@@ -245,14 +282,24 @@ export function resolveEngines(
         : start === smallest && options.smallerSpeech
           ? 'smaller'
           : start === recorded
-            ? 'record'
-            : 'estimate';
+            ? options.fit?.cause === 'slow'
+              ? 'slow'
+              : 'record'
+            : start === fast && fast > estimated
+              ? 'speed'
+              : 'estimate';
     if (reason === 'estimate') {
       notes.push(
         `Smaller models, to fit this device’s graphics memory (about ${formatGB(estimateMB)}, a guess: browsers don’t report it).`,
       );
     } else if (reason === 'record') {
       notes.push('Smaller models: larger ones ran out of graphics memory on this device.');
+    } else if (reason === 'slow') {
+      notes.push('Smaller models: larger ones fell behind the speech on this device.');
+    } else if (reason === 'speed') {
+      notes.push(
+        'Smaller models: the largest translation model is too slow for live subtitles on graphics that share the computer’s memory.',
+      );
     }
     const resolved = { profile: choice, steps, start, estimated, estimateMB, reason };
     const step = steps[start];

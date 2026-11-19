@@ -2,15 +2,17 @@
  * Which step of each profile's memory ladder (engines/profiles.ts `LADDERS`) last worked on this
  * device, in `chrome.storage.local` under `MEMORY_FIT_KEY`, per graphics card (`gpuKey`): when a
  * model runs out of graphics memory the session steps down, and the next session starts at the
- * step it reached instead of failing the same way again. "Try the larger models" (options page)
- * sets the step back to the top; a session that runs out again steps down and records that.
+ * step it reached instead of failing the same way again. So does a session whose models keep
+ * falling behind the speech (engines/slowness.ts): the next one starts a step lower. "Try the
+ * larger models" (options page) sets the step back to the top; a session that runs out again, or
+ * falls behind again, steps down and records that.
  *
  * Written by the service worker (the offscreen document has no storage access: it reports a step
  * down as a `memory-fit` event) and by the options page.
  */
 import { browser } from 'wxt/browser';
 import { gpuKey, type HardwareInfo } from '@/engines/hardware';
-import type { ProfileChoice, ProfileId, ResolveOptions } from '@/engines/profiles';
+import type { FitCause, ProfileChoice, ProfileId, ResolveOptions } from '@/engines/profiles';
 import type { Settings } from './settings';
 
 export const MEMORY_FIT_KEY = 'memoryFit';
@@ -20,7 +22,15 @@ export interface MemoryFitRecord {
   step: number;
   /** When it was recorded, epoch ms. */
   at: number;
-  /** The engine that ran out of memory, and what it said (none: set from the options page). */
+  /**
+   * Why the session stepped down to it: an engine ran out of memory, or the models kept falling
+   * behind (`slow`). None: the person chose it (options page).
+   */
+  cause?: FitCause;
+  /**
+   * The engine that ran out of memory or fell behind, and what happened (none: set from the
+   * options page).
+   */
   engine?: string;
   message?: string;
 }
@@ -44,6 +54,7 @@ export function cleanMemoryFit(stored: unknown): MemoryFit {
       kept[profile] = {
         step: r.step as number,
         at: typeof r.at === 'number' ? r.at : 0,
+        ...(r.cause === 'memory' || r.cause === 'slow' ? { cause: r.cause } : {}),
         ...(typeof r.engine === 'string' ? { engine: r.engine } : {}),
         ...(typeof r.message === 'string' ? { message: r.message.slice(0, 300) } : {}),
       };

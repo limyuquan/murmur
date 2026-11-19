@@ -24,7 +24,11 @@ export interface HardwareInfo {
     /** A software adapter (no graphics card behind it). */
     fallback?: boolean;
   };
-  /** `navigator.deviceMemory` (GB, capped at 8 by Chrome), or null when unknown. */
+  /**
+   * `navigator.deviceMemory`: the computer's memory, GB, rounded to a power of two, or null when
+   * unknown. Older Chrome capped it at 8; Chrome 158 reports 16 on a 16 GB Mac, so 8 may mean
+   * "8 or more" and anything above is as reported.
+   */
   deviceMemoryGB: number | null;
   /** Logical CPU cores. */
   cores: number;
@@ -104,6 +108,16 @@ interface GpuAdapterLike {
  */
 export type GpuKind = 'discrete' | 'unified' | 'integrated' | 'software' | 'unknown';
 
+/**
+ * Graphics that share the computer's memory (Apple silicon, integrated graphics): models fit in
+ * more memory there than on most cards, but run slower than their size suggests (fewer, slower
+ * cores sharing the memory's bandwidth with everything else).
+ */
+export function sharesMemory(webgpu: HardwareInfo['webgpu']): boolean {
+  const kind = gpuKind(webgpu);
+  return kind === 'unified' || kind === 'integrated';
+}
+
 export function gpuKind(webgpu: HardwareInfo['webgpu']): GpuKind {
   if (!webgpu.available || webgpu.fallback) return 'software';
   const vendor = webgpu.vendor?.toLowerCase() ?? '';
@@ -173,7 +187,7 @@ function usableMB(gb: number): number {
  * how much memory a card has, so this goes by what it does say, as hints:
  * - the card's name, when the browser gives one (`namedCardGB`);
  * - the kind of card (`gpuKind`), and for graphics that share the computer's memory, that memory
- *   (`navigator.deviceMemory`, which Chrome caps at 8 GB);
+ *   (`navigator.deviceMemory`: 16 on a 16 GB Mac in Chrome 158; older versions stopped at 8);
  * - a computer reporting under 8 GB of memory rarely has a card with more than 4 GB;
  * - a card whose largest buffer is under 1 GB (`maxBufferSize`, `maxStorageBufferBindingSize`) is
  *   an old or small one.
@@ -197,8 +211,12 @@ export function estimateGpuMemoryMB(hw: HardwareInfo): number {
       if (hw.deviceMemoryGB !== null && hw.deviceMemoryGB < 8) mb = usableMB(4);
       break;
     case 'unified':
-      // Chrome reports at most 8 GB; about half of it is free for graphics.
-      mb = ramMB / 2;
+      // About half the computer's memory is free for graphics next to the system, the browser
+      // and the person's other apps: 8 GB on a 16 GB Mac (measured: Qwen3-ASR 1.7B with Gemma 4
+      // E4B took 6.2 GB there without running out, and the system's memory pressure went
+      // critical while they loaded). An older Chrome's 8 ("8 or more") gives 4 GB, the 8 GB
+      // Mac's share. Capped at 16 GB, far above what any pair needs.
+      mb = Math.min(ramMB, 32 * 1024) / 2;
       break;
     case 'integrated':
       mb = Math.min(2048, ramMB / 4);

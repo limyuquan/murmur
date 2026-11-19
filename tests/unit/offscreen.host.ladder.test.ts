@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { OutOfMemoryError } from '@/engines/errors';
 import type { LoadOptions } from '@/engines/types';
 import type { ActiveSessionStatus, OffscreenEvent, SessionConfig } from '@/messaging/protocol';
+import type { Cue } from '@/pipeline/types';
 
 vi.mock('@/capture/graph', () => ({
   startCapture: vi.fn(async () => ({ track: null, stop: async () => {} })),
@@ -16,8 +17,12 @@ vi.mock('@/engines/hardware', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/engines/hardware')>();
   return { ...original, detectHardware: async () => original.NO_HARDWARE };
 });
+const pipelines = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 vi.mock('@/pipeline/pipeline', () => ({
   Pipeline: class {
+    constructor(options: Record<string, unknown>) {
+      pipelines.last = options;
+    }
     push() {}
     async close() {}
   },
@@ -50,7 +55,7 @@ vi.mock('@/engines/factories', async () => {
   return { ENGINE_FACTORIES: factories };
 });
 
-const { OffscreenHost, FIT_NOTE } = await import('@/offscreen/host');
+const { OffscreenHost, FIT_NOTE, SLOW_NOTE, SPEED_NOTE } = await import('@/offscreen/host');
 
 const CONFIG: SessionConfig = {
   sessionId: 's1',
@@ -156,5 +161,128 @@ describe('OffscreenHost memory ladder', () => {
     const out = await run({ ...plain, simulateOutOfMemory: { 'gemma4-e4b': 'load' } });
     expect(out.last).toMatchObject({ state: 'running', translation: 'Gemma 4 E2B' });
     expect(out.fits).toEqual([]);
+  });
+
+  it('says why it starts lower when larger models fell behind, or are too slow here', async () => {
+    const ladder = CONFIG.ladder as NonNullable<SessionConfig['ladder']>;
+    const lower = { ...CONFIG, asrEngine: 'qwen3-asr-1.7b', translationEngine: 'gemma4-e2b' };
+    const slow = await run({ ...lower, ladder: { ...ladder, smaller: true, why: 'slow' } });
+    expect(slow.last).toMatchObject({ state: 'running', fitNote: SLOW_NOTE });
+    const speed = await run({ ...lower, ladder: { ...ladder, smaller: true, why: 'speed' } });
+    expect(speed.last).toMatchObject({ state: 'running', fitNote: SPEED_NOTE });
+  });
+});
+
+describe('OffscreenHost falling behind', () => {
+  /** A final line with text, as the pipeline sends it. */
+  const line = (n: number): Cue => ({
+    id: `c${n}`,
+    seq: n,
+    startEpochMs: 0,
+    endEpochMs: 0,
+    source: { text: `line ${n}`, language: 'fr', final: true },
+    translation: null,
+    untranslated: 'pending',
+  });
+
+  it('steps down for the next session when speech recognition stays slow', async () => {
+    loads.log = [];
+    const events: OffscreenEvent[] = [];
+    const slow: unknown[] = [];
+    const host = new OffscreenHost({
+      send: async (event) => {
+        events.push(event);
+      },
+      loadVad: async () => {
+        throw new Error('no VAD here');
+      },
+      languageDetector: async () => null,
+      onSlow: (found, next) => slow.push({ found, next: next?.index ?? null }),
+    });
+    await host.start(CONFIG);
+    await host.loaded();
+    const pipeline = pipelines.last as {
+      onCue(cue: Cue): void;
+      onHealth(health: Record<string, unknown>): void;
+    };
+    const health = { behind: false, backlogMs: 0, droppedPartials: 0, droppedSegments: 0 };
+    pipeline.onHealth({ ...health, rtf: 0.8 });
+    // The same line again (an update) counts once.
+    for (let i = 0; i < 14; i++) {
+      pipeline.onCue(line(i));
+      pipeline.onCue(line(i));
+    }
+    expect(events.some((e) => e.type === 'memory-fit')).toBe(false);
+    pipeline.onCue(line(14));
+    const fits = events.filter((e) => e.type === 'memory-fit');
+    expect(fits).toEqual([
+      {
+        target: 'background',
+        type: 'memory-fit',
+        sessionId: 's1',
+        profile: 'best',
+        gpu: 'nvidia|ampere||2048',
+        // The next step down: the translator first (it shares the graphics card).
+        step: 1,
+        engine: 'qwen3-asr-1.7b',
+        message: 'Qwen3-ASR 1.7B took 0.8 s per second of speech for 15 lines in a row.',
+        cause: 'slow',
+      },
+    ]);
+    expect(slow).toEqual([{ found: { engine: 'asr', rtf: 0.8, lines: 15 }, next: 1 }]);
+    const statuses = events.flatMap((e) => (e.type === 'session-status' ? [e.status] : []));
+    expect(statuses.at(-1)).toMatchObject({
+      state: 'running',
+      asr: 'Qwen3-ASR 1.7B',
+      translation: 'Gemma 4 E4B',
+      fitNote:
+        'Qwen3-ASR 1.7B is falling behind the speech here, so the next session starts with smaller models.',
+    });
+    // Once a session.
+    for (let i = 15; i < 40; i++) pipeline.onCue(line(i));
+    expect(events.filter((e) => e.type === 'memory-fit')).toHaveLength(1);
+    await host.stop();
+  });
+
+  it('below the last step, Chrome’s own engines come next; no ladder, no step down', async () => {
+    const ladder = CONFIG.ladder as NonNullable<SessionConfig['ladder']>;
+    const last = { index: 3, asr: 'qwen3-asr-0.6b', translation: 'chrome-translator' };
+    const atLast = {
+      ...CONFIG,
+      asrEngine: last.asr,
+      translationEngine: last.translation,
+      ladder: { ...ladder, steps: [last] },
+    };
+    for (const [config, expected] of [
+      [atLast, [4]],
+      [(({ ladder: _, ...plain }) => plain)(CONFIG), []],
+    ] as const) {
+      const events: OffscreenEvent[] = [];
+      const host = new OffscreenHost({
+        send: async (event) => {
+          events.push(event);
+        },
+        loadVad: async () => {
+          throw new Error('no VAD here');
+        },
+        languageDetector: async () => null,
+      });
+      await host.start(config);
+      await host.loaded();
+      const pipeline = pipelines.last as {
+        onCue(cue: Cue): void;
+        onHealth(health: Record<string, unknown>): void;
+      };
+      pipeline.onHealth({
+        behind: false,
+        backlogMs: 0,
+        droppedPartials: 0,
+        droppedSegments: 0,
+        rtf: 1.2,
+      });
+      for (let i = 0; i < 20; i++) pipeline.onCue(line(i));
+      expect(events.flatMap((e) => (e.type === 'memory-fit' ? [e.step] : []))).toEqual(expected);
+      await host.stop();
+    }
   });
 });

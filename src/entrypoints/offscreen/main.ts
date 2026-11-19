@@ -34,7 +34,14 @@ const host = new OffscreenHost({
  */
 function e2eTaps(): Pick<
   OffscreenHostDeps,
-  'onCue' | 'onEngines' | 'onVad' | 'onSegment' | 'onLookaheadCue' | 'onStartup' | 'onStepDown'
+  | 'onCue'
+  | 'onEngines'
+  | 'onVad'
+  | 'onSegment'
+  | 'onLookaheadCue'
+  | 'onStartup'
+  | 'onStepDown'
+  | 'onSlow'
 > {
   const log: OffscreenTestLog = {
     cues: [],
@@ -59,6 +66,14 @@ function e2eTaps(): Pick<
     },
     onStepDown: (engine, error, next) =>
       log.memory.push({ at: now(), engine, message: error.message, next }),
+    // Falling behind steps down too (for the next session): logged with the memory step downs.
+    onSlow: (found, next) =>
+      log.memory.push({
+        at: now(),
+        engine: found.engine,
+        message: `slow: ${JSON.stringify(found)}`,
+        next,
+      }),
     onVad: (vad) => {
       log.vad = vad ? { detector: 'silero', cost: vad.cost } : { detector: 'energy', cost: null };
     },
