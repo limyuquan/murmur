@@ -258,9 +258,9 @@ export class OverlayController {
     this.refresh();
   }
 
-  /** Lookahead cues of `key` from `[start, end)` are void. */
-  dropCues(key: string, start: number, end: number): void {
-    this.media?.drop(key, start, end);
+  /** Lookahead cues of `key` from `[start, end)` are void (`keep`: until new ones replace them). */
+  dropCues(key: string, start: number, end: number, keep = false): void {
+    this.media?.drop(key, start, end, keep);
     this.mediaNext = null;
     this.refresh();
   }

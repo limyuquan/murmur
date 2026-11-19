@@ -63,8 +63,9 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   first frame.
 - `pcm.ts` stores it per timeline (MediaSource or progressive URL) as 16-bit samples in 1 s
   blocks; `host.ts` caps the total at `PCM_CAP_S` (10 min), dropping what's far from the playhead
-  first. `SourceBuffer.remove()` ahead of the playhead voids the audio and the cues made from it
-  (a language switch, a re-fetch); behind it, only the audio goes.
+  first. `SourceBuffer.remove()` ahead of the playhead voids the audio and has it processed again
+  (a language switch, a re-fetch; the overlay keeps the old cues until new ones replace them);
+  behind it, only the audio goes.
 - `progressive.ts`: `<video src="….mp4">` without MSE. Reads the index (`moov`, at the start or
   the end) with a few small range reads, then only the byte ranges holding audio near the
   playhead. Reads go through the page first (its cookies for its own origin; another origin's
@@ -86,6 +87,10 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   before Chrome's translator does it instead (`lookaheadBudgetMs`, from the runner's
   `untilShownMs`; paused: the cap). Gemma takes finished lines by when they are due, so live
   lines (due in 3 s) and the lines nearest the playhead go first.
+- The offscreen document keeps the latest `KEPT_CUES` (2500) lookahead cues too: an overlay
+  that comes back (the page reloaded, a navigation within the tab) is given the cues and
+  coverage of the video it reports. Cues let go (far from the playhead) take their stretch out
+  of the processed spans, so it is done again when the playhead comes near.
 - Processed spans and cues are kept per content key: a site's id for the video (YouTube's `v`,
   Twitch's `/videos/<id>`, Bilibili's BV id and part), else the timeline, so a video coming back
   in a new MediaSource after an ad isn't redone. Ads (YouTube's `.ad-showing`, Twitch's ad label)
@@ -105,11 +110,15 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   against lookahead's decoded audio of the same moments (placed by the playhead reports), within
   0–300 ms, keeping the median of 3 good windows (steady 1× playback, not quiet, correlation
   ≥ 0.6). Each new value goes to the overlays in a `lookahead` message.
-- Where lookahead has finished subtitles (`coverage` messages), only its cues show. Elsewhere live
+- Where lookahead has finished subtitles (`coverage` messages) and the stretch holds its cues,
+  only its cues show (a finished stretch with none of them lets live lines through). Elsewhere live
   lines show as before. Live lines are also placed on the timeline (`MediaClock`); one that
   mostly repeats a kept cue isn't shown, and a lookahead cue replaces the live ones it covers.
-  Seeking back shows kept cues at once.
-- The overlay keeps at most `MAX_MEDIA_CUES` (3000), dropping those far from the playhead.
+  Seeking back shows kept cues at once. Audio removed ahead of the playhead is processed again,
+  but the overlay keeps its cues there (stale) until new cues over the same speech replace them:
+  players that clear their buffer on every seek (Shaka, dash.js) append the same audio again.
+- The overlay keeps at most `MAX_MEDIA_CUES` (3000), dropping those far from the playhead (their
+  stretches stop counting as covered there).
 
 ## Limits and extension points
 

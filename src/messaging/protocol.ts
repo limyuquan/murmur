@@ -272,8 +272,12 @@ export type OverlayMessage =
   | { type: 'lookahead'; lagS: number }
   /** Lookahead has finished subtitles for these spans of `timeline` (a content key). */
   | { type: 'coverage'; timeline: string; spans: [number, number][] }
-  /** Lookahead cues of `timeline` starting in `[start, end)` are void (the audio was replaced). */
-  | { type: 'drop'; timeline: string; start: number; end: number }
+  /**
+   * Lookahead cues of `timeline` starting in `[start, end)` are void (their job was dropped
+   * unfinished). `keep`: the audio was removed from the player but may come back the same (a
+   * player that clears its buffer on a seek): keep showing them until new cues replace them.
+   */
+  | { type: 'drop'; timeline: string; start: number; end: number; keep?: boolean }
   /** Read bytes `[start, end)` of `url` with the page's access, answer with a `fetched` tee. */
   | { type: 'fetch'; id: number; url: string; start: number; end: number };
 

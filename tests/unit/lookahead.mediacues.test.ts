@@ -110,6 +110,36 @@ describe('MediaCues', () => {
     expect(ids(m, 2.5)).toEqual(['a']);
   });
 
+  it('lets live lines show in a finished stretch that holds no lookahead cue', () => {
+    const m = new MediaCues();
+    m.addLive(cue('live', 0, 0, 'live'), { timeline: 'v', start: 13, end: 14 });
+    // Finished per the session, but none of its cues are here (an overlay that came back).
+    m.setCoverage('v', [[0, 20]]);
+    expect(m.covered('v', 13.5)).toBe(false);
+    expect(ids(m, 13.5)).toEqual(['live']);
+    m.add(cue('la', 2, 3));
+    expect(m.covered('v', 13.5)).toBe(true);
+  });
+
+  it('keeps cues whose audio may come back until new ones replace them', () => {
+    const m = new MediaCues();
+    m.add(cue('a', 2, 3));
+    m.add(cue('b', 8, 9));
+    m.add(cue('c', 12, 13));
+    m.setCoverage('v', [[0, 20]]);
+    // The player cleared its buffer on a seek: kept, and shown on a seek back.
+    m.drop('v', 5, 20, true);
+    expect(ids(m, 8.5)).toEqual(['b']);
+    // Made again: the new cue replaces the old one over the same speech.
+    m.add(cue('b2', 8.1, 9));
+    expect(ids(m, 8.5)).toEqual(['b2']);
+    expect(m.size).toBe(3);
+    // The stretch is finished again with nothing new over `c`: it goes.
+    m.setCoverage('v', [[0, 20]]);
+    expect(ids(m, 12.5)).toEqual([]);
+    expect(m.size).toBe(2);
+  });
+
   it('says when the picture changes next', () => {
     const m = new MediaCues();
     m.add(cue('a', 2, 3));
@@ -125,9 +155,13 @@ describe('MediaCues', () => {
   it('keeps a bounded number of cues, dropping those far from the playhead', () => {
     const m = new MediaCues();
     m.advance('v', 0);
+    m.setCoverage('v', [[0, MAX_MEDIA_CUES + 50]]);
     for (let i = 0; i < MAX_MEDIA_CUES + 50; i++) m.add(cue(`c${i}`, i, i + 0.5));
     expect(m.size).toBeLessThanOrEqual(MAX_MEDIA_CUES);
     expect(ids(m, 0.2)).toEqual(['c0']);
+    // The stretches of cues let go are no longer counted as finished: live lines may show there.
+    expect(m.covered('v', MAX_MEDIA_CUES - 200 + 0.2)).toBe(false);
+    expect(m.covered('v', 10.2)).toBe(true);
   });
 });
 

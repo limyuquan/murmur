@@ -120,7 +120,7 @@ export function startOverlay(): void {
       if (relay) controller.setLookahead(message.lagS);
     } else if (message.type === 'coverage') controller.setCoverage(message.timeline, message.spans);
     else if (message.type === 'drop')
-      controller.dropCues(message.timeline, message.start, message.end);
+      controller.dropCues(message.timeline, message.start, message.end, message.keep ?? false);
     else if (message.type === 'fetch') fetchFor(message);
   };
   const onMessage = (message: OverlayMessage): void => {

@@ -24,6 +24,12 @@ import type { Span } from './types';
 
 /** Decoded audio kept, at most, seconds (16-bit, 16 kHz: 32 KB/s; 10 min ≈ 19 MB). */
 export const PCM_CAP_S = 600;
+/**
+ * Lookahead cues kept here too, at most (those far from the playhead go first, and their stretch
+ * is done again when it comes near): an overlay that comes back (the page reloaded) is given
+ * them again. Below the overlay's own bound (`MAX_MEDIA_CUES`).
+ */
+export const KEPT_CUES = 2500;
 /** Distinct warnings kept, and their length (for diagnostics only). */
 const MAX_WARNINGS = 50;
 const MAX_WARNING_CHARS = 120;
@@ -68,6 +74,8 @@ interface Buffer {
 interface PortState {
   frameUrl: string;
   report: PlayheadReport | null;
+  /** Content keys this overlay was given the kept cues of. */
+  keys: Set<string>;
   /** Answers to `fetch` requests sent to this frame. */
   waiting: Map<number, (wire: Extract<TeeWire, { t: 'fetched' }>) => void>;
 }
@@ -98,6 +106,9 @@ export class LookaheadHost {
   private readonly runner: LookaheadRunner;
   private readonly now: () => number;
   private readonly warnings = new Map<string, number>();
+  /** Lookahead cues by content key, then id (`KEPT_CUES` in all). */
+  private readonly kept = new Map<string, Map<string, Cue>>();
+  private keptCount = 0;
   private target: { port: LookaheadPort; report: PlayheadReport } | null = null;
   private fetchId = 0;
   private announced = false;
@@ -113,11 +124,15 @@ export class LookaheadHost {
       pcm: (timeline) => this.pcm.get(timeline),
       onCue: (cue) => {
         deps.onCue?.(cue);
+        this.keep(cue);
         deps.post({ type: 'cue', cue });
       },
       onCoverage: (key, spans) =>
         deps.post({ type: 'coverage', timeline: key, spans: spans.map(([s, e]) => [s, e]) }),
-      onDrop: (key, start, end) => deps.post({ type: 'drop', timeline: key, start, end }),
+      onDrop: (key, start, end) => {
+        this.unkeep(key, start, end);
+        deps.post({ type: 'drop', timeline: key, start, end });
+      },
       onLivePaused: (paused) => deps.setLivePaused(paused),
       now: this.now,
     });
@@ -165,6 +180,12 @@ export class LookaheadHost {
     if (!report.timeline || !report.key) {
       if (this.target?.port === port) this.retarget(null);
       return;
+    }
+    // An overlay new to this video (the page reloaded, or navigated back to it): what was made
+    // for it before, so the stretches already done don't come up blank.
+    if (!state.keys.has(report.key)) {
+      state.keys.add(report.key);
+      this.replay(port, report.key);
     }
     const current = this.target;
     const keep =
@@ -227,7 +248,7 @@ export class LookaheadHost {
   private portState(port: LookaheadPort, frameUrl: string): PortState {
     let state = this.ports.get(port);
     if (!state) {
-      state = { frameUrl, report: null, waiting: new Map() };
+      state = { frameUrl, report: null, keys: new Set(), waiting: new Map() };
       this.ports.set(port, state);
       if (!this.announced) {
         this.announced = true;
@@ -331,6 +352,73 @@ export class LookaheadHost {
     }
   }
 
+  /** Gives one overlay the kept cues of `key`, then where they are finished. */
+  private replay(port: LookaheadPort, key: string): void {
+    for (const cue of this.kept.get(key)?.values() ?? []) port.postMessage({ type: 'cue', cue });
+    const spans = this.runner.spans(key);
+    if (spans.length > 0) {
+      port.postMessage({ type: 'coverage', timeline: key, spans: spans.map(([s, e]) => [s, e]) });
+    }
+  }
+
+  private keep(cue: Cue): void {
+    const key = cue.media?.timeline;
+    if (!key) return;
+    let cues = this.kept.get(key);
+    if (!cues) {
+      cues = new Map();
+      this.kept.set(key, cues);
+    }
+    if (!cues.has(cue.id)) this.keptCount++;
+    cues.set(cue.id, cue);
+    if (this.keptCount > KEPT_CUES) this.trimKept();
+  }
+
+  /** Drops kept cues of `key` starting in `[start, end)`. */
+  private unkeep(key: string, start: number, end: number): void {
+    const cues = this.kept.get(key);
+    if (!cues) return;
+    for (const [id, cue] of cues) {
+      const at = cue.media?.start ?? 0;
+      if (at >= start && at < end) {
+        cues.delete(id);
+        this.keptCount--;
+      }
+    }
+  }
+
+  /**
+   * Lets the kept cues farthest from the playhead go (other videos first), and has their
+   * stretches done again when the playhead comes near (the overlays drop them as well).
+   */
+  private trimKept(): void {
+    const t = this.target?.report;
+    const key = t?.key ?? null;
+    const playhead = t ? playheadAt(t, this.now()) : 0;
+    const all: Cue[] = [];
+    for (const cues of this.kept.values()) all.push(...cues.values());
+    const distance = (c: Cue) =>
+      c.media?.timeline !== key
+        ? Number.POSITIVE_INFINITY
+        : Math.abs((c.media?.start ?? 0) - playhead);
+    all.sort((a, b) => distance(b) - distance(a));
+    for (const cue of all) {
+      if (this.keptCount <= KEPT_CUES * 0.9) break;
+      const media = cue.media;
+      if (!media) continue;
+      if (!this.runner.forget(media.timeline, media.start, media.end)) continue;
+      this.kept.get(media.timeline)?.delete(cue.id);
+      this.keptCount--;
+      this.deps.post({
+        type: 'drop',
+        timeline: media.timeline,
+        start: media.start,
+        end: media.start + 1e-6,
+      });
+    }
+    for (const [k, cues] of this.kept) if (cues.size === 0) this.kept.delete(k);
+  }
+
   private write(timeline: string, start: number, samples: Float32Array): void {
     let pcm = this.pcm.get(timeline);
     if (!pcm) {
@@ -356,7 +444,11 @@ export class LookaheadHost {
     if (end <= from) return;
     const to = Number.isFinite(end) ? end : Number.MAX_SAFE_INTEGER;
     this.runner.invalidate(t.key, from, to);
-    this.deps.post({ type: 'drop', timeline: t.key, start: from, end: to });
+    // Made again from the new audio. Until then the overlays keep showing what they have:
+    // players that clear their whole buffer on a seek (Shaka, dash.js) append the same audio
+    // again, and seeking back should show kept cues at once.
+    this.unkeep(t.key, from, to);
+    this.deps.post({ type: 'drop', timeline: t.key, start: from, end: to, keep: true });
   }
 
   private feedProgressive(port: LookaheadPort, state: PortState, report: PlayheadReport): void {

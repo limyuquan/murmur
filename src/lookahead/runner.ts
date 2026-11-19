@@ -180,6 +180,24 @@ export class LookaheadRunner {
     this.kick();
   }
 
+  /**
+   * `[start, end)` of `key` is no longer processed (its cues were let go to bound memory): it
+   * will be done again when the playhead comes near. False, and nothing changes, when the job
+   * under way works there.
+   */
+  forget(key: string, start: number, end: number): boolean {
+    const job = this.job;
+    if (job && job.key === key && start * PCM_RATE < job.pushed && end * PCM_RATE > job.from) {
+      return false;
+    }
+    const set = this.processed.get(key);
+    if (set && set.overlap(start, end) > 0) {
+      set.subtract(start, end);
+      this.deps.onCoverage(key, set.list);
+    }
+    return true;
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     await this.dropJob('stopped');

@@ -9,7 +9,10 @@
  * - Live cues (heard through the tab capture) are placed on the timeline too (`MediaClock`, from
  *   the playhead at the time they were heard). One that mostly covers the same speech as a cue
  *   already kept is a duplicate and isn't shown; a lookahead cue replaces the live ones it covers.
- * - `covered()` says where lookahead has finished subtitles: there only lookahead cues show.
+ * - `covered()` says where lookahead has finished subtitles: there only lookahead cues show
+ *   (unless the stretch holds none of them: then live lines may show, a safety net).
+ * - Cues whose audio the player removed but may append again (a player that clears its buffer
+ *   on a seek) are kept, stale, until a new lookahead cue over the same speech replaces them.
  *
  * Pure: the controller passes the media time in.
  */
@@ -37,6 +40,8 @@ export class MediaCues {
   private readonly coverage = new Map<string, SpanSet>();
   private readonly store = new CaptionStore();
   private readonly applied = new Set<string>();
+  /** Lookahead cues whose audio was removed: shown until a new cue over them arrives. */
+  private readonly stale = new Set<string>();
   private lastKey: string | null = null;
   private lastT: number | null = null;
 
@@ -49,9 +54,15 @@ export class MediaCues {
     if (!cue.media) return;
     const media = cue.media;
     for (const other of this.list(media.timeline)) {
-      if (other.origin === 'lookahead' || other.id === cue.id) continue;
+      if (other.id === cue.id) continue;
+      if (other.origin === 'lookahead') {
+        // A stale cue goes once a new one covers any of its speech.
+        if (this.stale.has(other.id) && share(other.media, media) > 0) this.remove(other.id);
+        continue;
+      }
       if (share(other.media, media) > DUPLICATE_SHARE) this.remove(other.id);
     }
+    this.stale.delete(cue.id);
     this.put(cue as MediaCue, true);
   }
 
@@ -74,17 +85,37 @@ export class MediaCues {
     const set = new SpanSet(0.05);
     for (const [s, e] of spans) set.add(s, e);
     this.coverage.set(key, set);
+    // A stretch finished again: its new cues have arrived, so stale ones left there had none
+    // over them (the new audio had no speech there).
+    for (const id of [...this.stale]) {
+      const cue = this.cues.get(id);
+      if (cue?.media.timeline === key && set.at(cue.media.start)) this.remove(id);
+    }
   }
 
+  /**
+   * Whether lookahead has finished subtitles at `t` on `key`: a finished stretch that holds at
+   * least one of its cues (one that holds none, its cues lost, lets live lines show).
+   */
   covered(key: string, t: number): boolean {
-    return this.coverage.get(key)?.at(t) != null;
+    const span = this.coverage.get(key)?.at(t);
+    if (!span) return false;
+    for (const cue of this.list(key)) {
+      if (cue.media.start >= span[1]) break;
+      if (cue.origin === 'lookahead' && cue.media.end > span[0]) return true;
+    }
+    return false;
   }
 
-  /** Lookahead cues of `key` starting in `[start, end)` are void. */
-  drop(key: string, start: number, end: number): void {
+  /**
+   * Lookahead cues of `key` starting in `[start, end)` are void. `keep`: their audio may come back
+   * the same, so they stay (stale) until new cues over them arrive.
+   */
+  drop(key: string, start: number, end: number, keep = false): void {
     for (const cue of this.list(key)) {
       if (cue.origin === 'lookahead' && cue.media.start >= start && cue.media.start < end) {
-        this.remove(cue.id);
+        if (keep) this.stale.add(cue.id);
+        else this.remove(cue.id);
       }
     }
     this.coverage.get(key)?.subtract(start, end);
@@ -143,6 +174,7 @@ export class MediaCues {
   }
 
   reset(): void {
+    this.stale.clear();
     this.cues.clear();
     this.byKey.clear();
     this.coverage.clear();
@@ -171,6 +203,7 @@ export class MediaCues {
   private remove(id: string): void {
     const cue = this.cues.get(id);
     if (!cue) return;
+    this.stale.delete(id);
     this.cues.delete(id);
     this.byKey.set(cue.media.timeline, null);
     if (this.applied.delete(id)) {
@@ -211,7 +244,12 @@ export class MediaCues {
       if (this.cues.size <= MAX_MEDIA_CUES * 0.9) break;
       this.cues.delete(cue.id);
       this.applied.delete(cue.id);
+      this.stale.delete(cue.id);
       this.byKey.set(cue.media.timeline, null);
+      // Its stretch no longer has its subtitles here: live lines may show there.
+      if (cue.origin === 'lookahead') {
+        this.coverage.get(cue.media.timeline)?.subtract(cue.media.start, cue.media.end);
+      }
     }
   }
 }
