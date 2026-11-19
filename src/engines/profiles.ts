@@ -6,6 +6,7 @@
  */
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
 import { checkEngine, type HardwareInfo } from './hardware';
+import { QWEN3_ASR_ID } from './qwen3asr/info';
 import type { EngineRegistry } from './registry';
 import type { EngineInfo } from './types';
 
@@ -26,6 +27,7 @@ export const DEMO_ASR_ID = 'demo-echo';
 export const DEMO_TRANSLATION_ID = 'demo-passthrough';
 export const WHISPER_BASE_ID = 'whisper-base';
 export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
+export { QWEN3_ASR_ID };
 
 /**
  * What runs when an engine turns out not to work here once it loads (EngineUnavailableError):
@@ -33,6 +35,8 @@ export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
  */
 export const RUNTIME_FALLBACKS: Readonly<Record<string, string>> = {
   [CHROME_WEBSPEECH_ID]: WHISPER_BASE_ID,
+  // Its worker found no 16-bit float shaders after all, or its files aren't published.
+  [QWEN3_ASR_ID]: WHISPER_TURBO_ID,
 };
 
 /**
@@ -52,11 +56,13 @@ export const PROFILES: Record<ProfileId, ModelProfile> = {
     translation: [CHROME_TRANSLATOR_ID],
   },
   // Translation stays Chrome's until an in-browser translation model is chosen (benchmarks).
+  // Qwen3-ASR follows language switches best; turbo where it can't run (no 16-bit float shaders,
+  // or its files aren't published in this build).
   balanced: {
     id: 'balanced',
     label: 'Balanced',
     description: 'Medium models on the graphics card. Better accuracy, larger download.',
-    asr: [WHISPER_TURBO_ID, WHISPER_BASE_ID],
+    asr: [QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
     translation: [CHROME_TRANSLATOR_ID],
   },
   // Until the companion app exists, the best the browser runs.

@@ -7,6 +7,7 @@ import {
   DEMO_TRANSLATION_ID,
   PROFILE_ORDER,
   PROFILES,
+  QWEN3_ASR_ID,
   recommendProfile,
   resolveEngines,
   WHISPER_BASE_ID,
@@ -63,6 +64,7 @@ describe('EngineRegistry', () => {
       'chrome-webspeech',
       WHISPER_BASE_ID,
       WHISPER_TURBO_ID,
+      QWEN3_ASR_ID,
     ]);
     expect(r.translationEngines().map((e) => e.id)).toEqual(['chrome-translator']);
     expect(r.hasAsr(DEMO_ASR_ID)).toBe(false);
@@ -147,9 +149,10 @@ describe('profiles', () => {
     }
   });
 
-  it('profiles: Light is Chrome speech, Balanced is Whisper turbo, with Whisper base behind', () => {
+  it('profiles: Light is Chrome speech, Balanced is Qwen3-ASR then Whisper turbo and base', () => {
     expect(PROFILES.light.asr).toEqual(['chrome-webspeech', WHISPER_BASE_ID]);
-    expect(PROFILES.balanced.asr).toEqual([WHISPER_TURBO_ID, WHISPER_BASE_ID]);
+    expect(PROFILES.balanced.asr).toEqual([QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID]);
+    // Qwen3-ASR's files aren't published, so builds that download from Hugging Face skip it.
     const r = createBuiltinRegistry();
     const none = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
     expect(resolveEngines('balanced', none, r, GPU)).toMatchObject({

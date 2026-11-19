@@ -4,6 +4,7 @@
  * engines' code (and the speech model worker) into them would only add megabytes.
  */
 import type { EngineFactories } from './builtin';
+import { QWEN3_ASR_INFO } from './qwen3asr/info';
 import { WHISPER_BASE_INFO, WHISPER_MODELS, WHISPER_TURBO_INFO } from './whisper/info';
 
 export const ENGINE_FACTORIES: EngineFactories = {
@@ -18,6 +19,8 @@ export const ENGINE_FACTORIES: EngineFactories = {
       WHISPER_TURBO_INFO,
       WHISPER_MODELS['whisper-large-v3-turbo'],
     ),
+  'qwen3-asr-0.6b': async () =>
+    new (await import('./qwen3asr/engine')).Qwen3AsrEngine(QWEN3_ASR_INFO),
   'chrome-translator': async () =>
     new (await import('./chrome/translator')).ChromeTranslatorEngine(),
   'demo-echo': async () => new (await import('./demo/echoAsr')).EchoAsrEngine(),

@@ -31,6 +31,8 @@ export interface OffscreenTestLog {
   cues: { at: number; cue: Cue }[];
   /** Chrome speech: which recognizer won each segment, with every candidate's score. */
   arbitrations: { at: number; record: unknown }[];
+  /** Segment decodes of engines that report them (Qwen3-ASR): kind, timing, text. */
+  decodes: { at: number; record: unknown }[];
   engines: { asr: string; translation: string } | null;
 }
 

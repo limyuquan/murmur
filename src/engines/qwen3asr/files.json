@@ -1,0 +1,47 @@
+{
+  "upstream": {
+    "repo": "subtitleking/qwen3-asr-0.6b-onnx",
+    "revision": "29a54e5c3dd0a68dcc7b35eea95946d1cde6c36d",
+    "files": [
+      [
+        "onnx/audio_encoder_fp16.onnx",
+        83779,
+        "sha256:4dc78755a8f8ac54e71746f510ed0743181af06cdf97241ffe8132409ad8a5f7"
+      ],
+      [
+        "onnx/audio_encoder_fp16.onnx_data",
+        372772800,
+        "sha256:233c382466f2b5006738243001d6ff18ef504131198c2115c50a21f934f12bb3"
+      ]
+    ]
+  },
+  "murmur": {
+    "files": [
+      [
+        "onnx/decoder_model_merged_q8.onnx",
+        189775,
+        "sha256:d6aa3bb6341fdc1cc453bacff2db1819dfde239e330852a343dbf6005c837e6e"
+      ],
+      [
+        "onnx/decoder_model_merged_q8.onnx_data",
+        679104512,
+        "sha256:1d66a5ab76d1dbcc492725f480566869aa7d312b3c08a4f59cd12ed52440a187"
+      ],
+      [
+        "onnx/decoder_model_merged_q8.tied.json",
+        326,
+        "sha256:03fea3d84daa4fa8a7353238a0101401a78bd09f1b9cb249f582542d45865a66"
+      ],
+      [
+        "vocab.json",
+        2776833,
+        "sha256:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      ],
+      [
+        "added_tokens.json",
+        1566,
+        "sha256:de40784677cbd1843cabe5fbee078c7e042cd0b62155f0810af5a13842e5722a"
+      ]
+    ]
+  }
+}

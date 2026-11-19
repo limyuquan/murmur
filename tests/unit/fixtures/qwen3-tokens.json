@@ -1,0 +1,68 @@
+{
+  "vocab": {
+    "!": 0,
+    ",": 11,
+    ".": 13,
+    "Ġthere": 1052,
+    "ĠNone": 2240,
+    "ese": 2367,
+    "ĠGerman": 5938,
+    "ĠEnglish": 6364,
+    "ĠChinese": 8453,
+    "ĠRussian": 8522,
+    "ĠFrench": 8585,
+    "Hello": 9707,
+    "ĠJapanese": 10769,
+    "language": 11528,
+    "ĠItalian": 14811,
+    "ĠSpanish": 15154,
+    "ĠKorean": 16134,
+    "ĠGreek": 17860,
+    "ĠDutch": 23234,
+    "ĠTurkish": 23734,
+    "ĠThai": 26392,
+    "ĠSwedish": 30109,
+    "ĠPolish": 31984,
+    "ĠCzech": 33150,
+    "ĠArabic": 34117,
+    "ìĬµëĭĪëĭ¤": 38231,
+    "ĠPortuguese": 42188,
+    "ĠDanish": 43680,
+    "ĠHindi": 43980,
+    "ĠVietnamese": 48477,
+    "ĠPersian": 49861,
+    "ĠMaced": 56452,
+    "ĠHungarian": 56769,
+    "ĠFinnish": 57853,
+    "ĠIndonesian": 58829,
+    "ĠFilipino": 62417,
+    "Ġë°ĺ": 63757,
+    "ĠCanton": 72366,
+    "ĠRomanian": 73597,
+    "onian": 75491,
+    "ĠMalay": 79140,
+    "ãģĵãĤĵãģ«ãģ¡ãģ¯": 89015,
+    "ĠðŁĺĢ": 90316,
+    "íķĺìĦ¸ìļĶ": 91145,
+    "ä¸ĸçķĮ": 99489,
+    "ìķĪ": 126246,
+    "ê°ĳ": 138685,
+    "ëħķ": 144370
+  },
+  "added": { "<asr_text>": 151704, "<|endoftext|>": 151643, "<|im_end|>": 151645 },
+  "cases": [
+    {
+      "text": "language Korean<asr_text>안녕하세요, 반갑습니다.",
+      "ids": [11528, 16134, 151704, 126246, 144370, 91145, 11, 63757, 138685, 38231, 13]
+    },
+    {
+      "text": "language Japanese<asr_text>こんにちは世界",
+      "ids": [11528, 10769, 151704, 89015, 99489]
+    },
+    {
+      "text": "language English<asr_text>Hello there 😀!",
+      "ids": [11528, 6364, 151704, 9707, 1052, 90316, 0]
+    },
+    { "text": "language None", "ids": [11528, 2240] }
+  ]
+}

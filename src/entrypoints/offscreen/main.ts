@@ -26,11 +26,12 @@ const host = new OffscreenHost({
 });
 
 /**
- * e2e builds: every cue (with when it was sent) and every Chrome speech arbitration, on
+ * e2e builds: every cue (with when it was sent), every Chrome speech arbitration and every
+ * segment decode (engines that report them), on
  * `globalThis.__murmurLog`, for real-model checks driven over CDP.
  */
 function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines'> {
-  const log: OffscreenTestLog = { cues: [], arbitrations: [], engines: null };
+  const log: OffscreenTestLog = { cues: [], arbitrations: [], decodes: [], engines: null };
   globalThis.__murmurLog = log;
   const now = () => performance.timeOrigin + performance.now();
   return {
@@ -40,6 +41,10 @@ function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines'> {
       if ('onArbitration' in asr) {
         (asr as { onArbitration: unknown }).onArbitration = (record: unknown) =>
           log.arbitrations.push({ at: now(), record });
+      }
+      if ('onDecode' in asr) {
+        (asr as { onDecode: unknown }).onDecode = (record: unknown) =>
+          log.decodes.push({ at: now(), record });
       }
     },
   };

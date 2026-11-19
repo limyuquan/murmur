@@ -51,6 +51,24 @@ export const MODEL_HOST: string =
   (import.meta.env as Record<string, string | undefined>).WXT_MODEL_HOST ||
   (IS_E2E ? 'http://127.0.0.1:4392/hf' : HUGGING_FACE);
 export const MODEL_CACHE = 'murmur-models';
+
+/**
+ * TODO(publish): the Hugging Face repo and commit that host the model files Murmur makes itself
+ * (re-quantized weights and their sidecars; see each engine's files.json, group `murmur`). They
+ * aren't uploaded yet: upload them, then set `repo` to that repo and `revision` to the commit's
+ * full hash. Until then `isPublished` is false and the engines that need them are unavailable in
+ * builds that download from Hugging Face (e2e builds and `WXT_MODEL_HOST` builds still offer
+ * them; scripts/serve-fixtures.mjs serves the files).
+ */
+export const MURMUR_MODELS: FileOrigin = {
+  repo: 'TODO-owner/murmur-qwen3-asr-0.6b',
+  revision: 'TODO',
+};
+
+/** Whether `origin` names a real repo and commit (not the TODO placeholder). */
+export function isPublished(origin: FileOrigin): boolean {
+  return !origin.repo.startsWith('TODO') && /^[0-9a-f]{40}$/.test(origin.revision);
+}
 /** 64 MiB: a stopped download loses at most this much. */
 export const PART_BYTES = 64 * 1024 * 1024;
 

@@ -14,6 +14,7 @@ import {
   PASSTHROUGH_INFO,
   STALLED_ASR_INFO,
 } from './demo/info';
+import { QWEN3_ASR_INFO } from './qwen3asr/info';
 import { EngineRegistry } from './registry';
 import type { AnyEngine, AsrEngine, TranslationEngine } from './types';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from './whisper/info';
@@ -29,7 +30,12 @@ export function createBuiltinRegistry(factories: EngineFactories = {}): EngineRe
       return (await factory()) as E;
     };
   const registry = new EngineRegistry();
-  for (const info of [CHROME_WEBSPEECH_INFO, WHISPER_BASE_INFO, WHISPER_TURBO_INFO]) {
+  for (const info of [
+    CHROME_WEBSPEECH_INFO,
+    WHISPER_BASE_INFO,
+    WHISPER_TURBO_INFO,
+    QWEN3_ASR_INFO,
+  ]) {
     registry.registerAsr({ info, create: make<AsrEngine>(info.id) });
   }
   registry.registerTranslation({
