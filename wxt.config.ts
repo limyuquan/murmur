@@ -71,10 +71,18 @@ export default defineConfig({
       default_icon: { 16: 'icon/16.png', 32: 'icon/32.png', 48: 'icon/48.png' },
     },
     // `options_ui` comes from the `options` entrypoint (opens in a tab: see its index.html).
+    // Names in src/shared/commands.ts.
     commands: {
       _execute_action: {
         suggested_key: { default: 'Alt+Shift+E' },
         description: 'Open Earshot',
+      },
+      'toggle-subtitles': {
+        suggested_key: { default: 'Alt+Shift+S' },
+        description: 'Subtitles on or off for this tab',
+      },
+      'toggle-original': {
+        description: 'Show or hide the original line',
       },
     },
   }),

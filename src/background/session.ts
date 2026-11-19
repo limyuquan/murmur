@@ -23,6 +23,7 @@ import type {
   OffscreenCommand,
   OffscreenReply,
   SessionConfig,
+  SessionErrorCode,
   SessionStatus,
 } from '@/messaging/protocol';
 import { loadSettings, type Settings } from '@/settings/settings';
@@ -32,8 +33,14 @@ import { showBadge } from './badge';
 const SESSION_KEY = 'session';
 const OVERLAY_SCRIPT = '/overlay.js';
 
-const registry = createBuiltinRegistry();
+export const registry = createBuiltinRegistry();
 let hardware: Promise<HardwareInfo> | null = null;
+
+/** This device's hardware, detected once per worker. */
+export function deviceHardware(): Promise<HardwareInfo> {
+  hardware ??= detectHardware();
+  return hardware;
+}
 /** Serialises start/stop so they never interleave. */
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -57,8 +64,7 @@ async function setStatus(status: SessionStatus): Promise<void> {
 /** Engines a session would use now, from settings and this device. */
 export async function plannedEngines(settings?: Settings): Promise<ResolvedEngines> {
   const s = settings ?? (await loadSettings());
-  hardware ??= detectHardware();
-  return resolveEngines(s.profile, s.custom, registry, await hardware);
+  return resolveEngines(s.profile, s.custom, registry, await deviceHardware());
 }
 
 export function engineLabels(engines: ResolvedEngines): { asr: string; translation: string } {
@@ -106,7 +112,7 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
       if (!reply.ok) throw new Error(reply.error.message);
     } catch (err) {
       console.error(LOG_PREFIX, 'start failed', err);
-      await setStatus({ state: 'error', tabId, sessionId, message: startError(err) });
+      await setStatus({ state: 'error', tabId, sessionId, ...startError(err) });
       await closeOffscreenDocument().catch(() => {});
     }
     return getStatus();
@@ -192,13 +198,23 @@ async function sendToOffscreen(command: OffscreenCommand): Promise<OffscreenRepl
   }
 }
 
-function startError(err: unknown): string {
+function startError(err: unknown): { message: string; code: SessionErrorCode } {
   const message = err instanceof Error ? err.message : String(err);
   if (/Cannot access|cannot be scripted|chrome:\/\/|Missing host permission/i.test(message)) {
-    return "Earshot can't run on this page.";
+    return { message: "Earshot can't run on this page.", code: 'page' };
   }
   if (/activeTab|has not been invoked|Extension has not been invoked/i.test(message)) {
-    return 'Click the Earshot button on this tab first.';
+    return { message: 'Click the Earshot button on this tab first.', code: 'access' };
   }
-  return message;
+  if (/already capturing|active stream/i.test(message)) {
+    return { message: 'Another app or extension is already capturing this tab.', code: 'busy' };
+  }
+  return { message, code: 'unknown' };
+}
+
+/** Turns subtitles on or off for `tabId` (keyboard shortcut). */
+export async function toggleSession(tabId: number): Promise<SessionStatus> {
+  const status = await getStatus();
+  const on = status.state !== 'idle' && status.state !== 'error' && status.tabId === tabId;
+  return on ? stopSession() : startSession(tabId);
 }

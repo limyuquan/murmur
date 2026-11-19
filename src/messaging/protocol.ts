@@ -11,7 +11,9 @@
  * document directly over a port, keeping per-cue traffic off the service worker; the port's
  * disconnect is also how the overlay learns the session ended.
  */
+import type { ProfileChoice } from '@/engines/profiles';
 import type { LanguageTag } from '@/engines/types';
+import type { ModelsView } from '@/models/types';
 import type { Cue } from '@/pipeline/types';
 import type { OverlaySettings } from '@/settings/settings';
 
@@ -93,6 +95,11 @@ export interface TabView {
   thisTab: boolean;
   /** Engines a new session would use, by label. */
   engines: { asr: string; translation: string; notes: string[] };
+  profile: ProfileChoice;
+  /** The profile's models: all downloaded, or how much is left to download. */
+  models: { ready: boolean; missingMB: number; simulated: boolean };
+  /** The tab's site (positions are kept per site), when Earshot can see its address. */
+  site: string | null;
 }
 
 /** op → [args, result]. */
@@ -103,6 +110,12 @@ export interface Ops {
   start: [{ tabId: number }, SessionStatus];
   /** Stops the session, wherever it is. */
   stop: [Record<string, never>, SessionStatus];
+  /** Every model, its download state, and the space they use. */
+  models: [Record<string, never>, ModelsView];
+  /** Queues downloads; progress follows in `storage.session` (models/types.ts). */
+  downloadModels: [{ ids: string[] }, ModelsView];
+  cancelDownload: [{ id: string }, ModelsView];
+  deleteModel: [{ id: string }, ModelsView];
 }
 
 export type Op = keyof Ops;
