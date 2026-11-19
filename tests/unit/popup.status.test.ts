@@ -112,6 +112,15 @@ describe('describeStatus', () => {
     });
   });
 
+  it('says when speech recognition stopped working', () => {
+    const status = { ...running(activity()), problems: ['Speech recognition (fr-FR) stopped.'] };
+    expect(describeStatus(view(status as SessionStatus))).toMatchObject({
+      tone: 'warn',
+      title: 'Speech recognition stopped working',
+      detail: expect.stringContaining('(fr-FR) stopped.'),
+    });
+  });
+
   it('names languages the models lack', () => {
     const s = describeStatus(view(running(activity({ unsupported: ['de'] }))));
     expect(s.title).toMatch(/^Can't translate /);

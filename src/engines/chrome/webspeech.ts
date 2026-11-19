@@ -146,11 +146,25 @@ interface Cursor {
   used: string;
 }
 
+/** First delay before restarting a recognizer that failed; it doubles up to `RESTART_MAX_MS`. */
+export const RESTART_MIN_MS = 250;
+export const RESTART_MAX_MS = 5000;
+/** A recognizer that fails this often within `FAILURE_WINDOW_MS` is given up on. */
+export const MAX_FAILURES = 5;
+export const FAILURE_WINDOW_MS = 60_000;
+/** A recognizer that ends this soon after it started, without an error, counts as failed too. */
+const QUICK_END_MS = 1000;
+
 /**
  * One long-lived recognizer for one language on the track (restarted when Chrome ends it). Its
  * results are numbered across restarts; the session cuts its text into segments with a cursor.
+ *
+ * Chrome ends a recognizer after a long silence: it starts again at once. One that fails
+ * (an error, or ending right after it started) starts again after a growing delay, and after
+ * `MAX_FAILURES` in a minute it stays stopped and `onFatal` says why, so a recognizer that can't
+ * run never spins (and never wears out Chrome's speech service for the others).
  */
-class Listener {
+export class Listener {
   readonly results: { text: string; final: boolean }[] = [];
   /** Distinct texts seen so far (activity). */
   updates = 0;
@@ -159,7 +173,15 @@ class Listener {
   private cursor: Cursor = { index: 0, used: '' };
   private recognizer: Recognizer | null = null;
   private stopped = false;
-  private lastText = '';
+  /** Recognizers created (tests). */
+  created = 0;
+  /** When the current recognizer started, epoch ms. */
+  private startedAt = 0;
+  /** The current recognizer's error, if it had one. */
+  private error: string | null = null;
+  /** When recent recognizers failed, epoch ms. */
+  private failures: number[] = [];
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly api: RecognizerClass,
@@ -197,6 +219,8 @@ class Listener {
 
   stop(): void {
     this.stopped = true;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     try {
       this.recognizer?.abort();
     } catch {
@@ -204,7 +228,40 @@ class Listener {
     }
   }
 
+  /** Stops for good and says why. */
+  private giveUp(reason: string): void {
+    if (this.stopped) return;
+    this.stop();
+    this.onFatal(
+      new EngineUnavailableError(`Speech recognition (${this.locale}) stopped: ${reason}.`),
+    );
+  }
+
+  /** After a recognizer ended: start another, at once or after a delay when it failed. */
+  private restart(): void {
+    if (this.stopped) return;
+    const now = Date.now();
+    const failed = this.error !== null || now - this.startedAt < QUICK_END_MS;
+    let delay = 0;
+    if (failed) {
+      this.failures = this.failures.filter((t) => now - t < FAILURE_WINDOW_MS);
+      this.failures.push(now);
+      if (this.failures.length >= MAX_FAILURES) {
+        this.giveUp(this.error ?? 'it keeps ending');
+        return;
+      }
+      delay = Math.min(RESTART_MAX_MS, RESTART_MIN_MS * 2 ** (this.failures.length - 1));
+    }
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (!this.stopped) this.start();
+    }, delay);
+  }
+
   private start(): void {
+    this.created++;
+    this.startedAt = Date.now();
+    this.error = null;
     const r = new this.api();
     r.lang = this.locale;
     r.continuous = true;
@@ -212,6 +269,7 @@ class Listener {
     r.maxAlternatives = 1;
     r.processLocally = true;
     if (r.processLocally !== true) {
+      this.stop();
       this.onFatal(new EngineUnavailableError("Chrome can't keep speech recognition on device."));
       return;
     }
@@ -223,16 +281,20 @@ class Listener {
         locale: this.locale,
         event,
       });
-    note(this.recognizer ? 'restart' : 'start');
+    note(this.created > 1 ? 'restart' : 'start');
     r.onresult = (event) => {
+      // Only the results from `resultIndex` on can have changed: compare those, not the whole
+      // session's text.
+      let changed = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (result)
-          this.results[offset + i] = { text: result[0]?.transcript ?? '', final: result.isFinal };
+        if (!result) continue;
+        const text = result[0]?.transcript ?? '';
+        const before = this.results[offset + i];
+        if (before?.text !== text) changed = true;
+        this.results[offset + i] = { text, final: result.isFinal };
       }
-      const joined = this.results.map((x) => x?.text ?? '').join(' ');
-      if (joined !== this.lastText) {
-        this.lastText = joined;
+      if (changed) {
         this.updates++;
         this.history.push({ sample: this.now(), length: this.pending().length });
         this.onChange();
@@ -240,32 +302,24 @@ class Listener {
     };
     r.onerror = (event) => {
       note(`error ${event.error}`);
-      if (FATAL_ERRORS.has(event.error)) {
-        this.onFatal(
-          new EngineUnavailableError(`Speech recognition (${this.locale}) failed: ${event.error}.`),
-        );
-      }
+      // `no-speech` is a quiet stretch and `aborted` our own stop: neither is a failure.
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      this.error = event.error;
+      // Starting again won't help a language Chrome doesn't offer.
+      if (event.error === 'language-not-supported') this.giveUp(event.error);
     };
     r.onend = () => {
       note('end');
-      // Chrome ends a recognizer after a long silence: keep listening until the session stops.
-      if (!this.stopped) setTimeout(() => !this.stopped && this.start(), 0);
+      if (this.recognizer === r) this.restart();
     };
+    this.recognizer = r;
     try {
       r.start(this.track);
-      this.recognizer = r;
     } catch (err) {
-      this.onFatal(err instanceof Error ? err : new Error(String(err)));
+      this.giveUp(err instanceof Error ? err.message : String(err));
     }
   }
 }
-
-const FATAL_ERRORS = new Set([
-  'language-not-supported',
-  'service-not-allowed',
-  'not-allowed',
-  'audio-capture',
-]);
 
 /**
  * Time after a segment ends before its text is taken: the recognizers write the last words

@@ -55,7 +55,7 @@ export function describeStatus(view: TabView): StatusLine {
     case 'error':
       return describeError(s.code, s.message, view.profile, (s.missingModels ?? []).length > 0);
     case 'running':
-      return describeRunning(view, s.heard, s.activity, s.setup);
+      return describeRunning(view, s.heard, s.activity, s.setup, s.problems);
   }
 }
 
@@ -64,7 +64,15 @@ function describeRunning(
   heard: boolean,
   a: Extract<TabView['status'], { state: 'running' }>['activity'],
   setup?: readonly SetupAction[],
+  problems?: readonly string[],
 ): StatusLine {
+  if (problems && problems.length > 0) {
+    return {
+      tone: 'warn',
+      title: 'Speech recognition stopped working',
+      detail: `${problems.join(' ')} Turn subtitles off and on to try again.`,
+    };
+  }
   if (a && !a.soundEver && a.silentMs >= NO_SOUND_MS) {
     return {
       tone: 'warn',

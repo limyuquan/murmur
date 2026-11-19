@@ -4,6 +4,7 @@
  * when a player in another frame shows the subtitles.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EngineUnavailableError } from '@/engines/errors';
 import type { ActiveSessionStatus, OverlayMessage, SessionConfig } from '@/messaging/protocol';
 import type { OverlayPort } from '@/offscreen/host';
 
@@ -25,6 +26,17 @@ vi.mock('@/engines/hardware', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/engines/hardware')>();
   return { ...original, detectHardware: async () => original.NO_HARDWARE };
 });
+// The pipeline's callbacks, to play an engine failing while running.
+const pipelines = vi.hoisted(() => ({ last: null as null | { onError(err: Error): void } }));
+vi.mock('@/pipeline/pipeline', () => ({
+  Pipeline: class {
+    constructor(options: { onError(err: Error): void }) {
+      pipelines.last = options;
+    }
+    push() {}
+    async close() {}
+  },
+}));
 // The demo engines (with the failing ones) are registered in e2e builds.
 vi.mock('@/shared/e2e', () => ({ IS_E2E: true }));
 
@@ -72,6 +84,19 @@ describe('OffscreenHost', () => {
     await host.loaded();
     expect(capture.stops).toBe(1);
     expect(sent.some((s) => s.state === 'error')).toBe(false);
+  });
+
+  it('reports an engine part that stopped for good on the running status', async () => {
+    await host.start({ ...CONFIG, asrEngine: 'demo-echo' });
+    await host.loaded();
+    expect(sent.at(-1)?.state).toBe('running');
+    pipelines.last?.onError(new EngineUnavailableError('Speech recognition (fr-FR) stopped.'));
+    pipelines.last?.onError(new EngineUnavailableError('Speech recognition (fr-FR) stopped.'));
+    expect(sent.at(-1)).toMatchObject({
+      state: 'running',
+      problems: ['Speech recognition (fr-FR) stopped.'],
+    });
+    await host.stop();
   });
 
   it('rejects with the reason when the capture fails', async () => {
