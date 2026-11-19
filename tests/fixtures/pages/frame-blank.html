@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Frame without a video</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; background: #222; color: #fff; }
+      #box { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <!-- No video here: the session's audio comes from elsewhere (or a player we can't see). -->
+    <div id="box">
+      <button id="fs-frame" type="button" onclick="document.documentElement.requestFullscreen()">Full screen</button>
+    </div>
+  </body>
+</html>

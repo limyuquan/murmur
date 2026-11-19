@@ -137,7 +137,8 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   test tone, because headless Chromium plays no tab audio; `capture.spec.ts` still exercises the
   real tab-capture handshake (Chromium is started with `--allowlisted-extension-id`).
 - Fixture pages live in `tests/fixtures/pages/`, served on `http://127.0.0.1:4392/` by
-  `scripts/serve-fixtures.mjs`. The same server stands in for Hugging Face at `/hf/`: e2e builds
+  `scripts/serve-fixtures.mjs`, and again on port 4393, another origin, for frames from another
+  site (`frames.html`). The same server stands in for Hugging Face at `/hf/`: e2e builds
   download models from there (every file in `src/engines/whisper/files.json`, at its real size,
   filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40).
 - If `playwright test` hangs before any test starts, the machine may hang on connections to a
@@ -250,7 +251,8 @@ Headless tests can't check these, so ask a human after related changes:
 
 - the real toolbar click, shortcut and badge;
 - that captured tab audio stays audible (playback through the offscreen document);
-- fullscreen placement (container fullscreen and `<video>` fullscreen via a top-layer popover);
+- fullscreen placement (container fullscreen; a top-layer popover for `<video>` fullscreen, a
+  fullscreen frame from another site and a web-component player);
 - real players on real sites, including moving clear of their controls (listed players in
   `src/overlay/sites.ts` are measured; others use pointer activity and pause).
 

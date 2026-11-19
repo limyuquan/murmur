@@ -4,7 +4,7 @@
  * session stopped). Injecting again while one is running is a no-op.
  */
 import { browser } from 'wxt/browser';
-import { OVERLAY_PORT, type OverlayHello, type OverlayMessage } from '@/messaging/protocol';
+import { OVERLAY_PORT, type OverlayMessage, type OverlayToHost } from '@/messaging/protocol';
 import type { Cue } from '@/pipeline/types';
 import { loadPosition, savePosition, siteKey, watchPositions } from '@/settings/positions';
 import { DEFAULT_SETTINGS, loadSettings, watchSettings } from '@/settings/settings';
@@ -26,15 +26,35 @@ export type E2eCommand =
   | { hold: true }
   | { message: OverlayMessage };
 
+/**
+ * The page's site, for dragged positions: the tab's (top frame's) site even in a player inside
+ * a frame from another site, as the popup shows and resets it.
+ */
+export function topSiteKey(
+  loc: Pick<Location, 'href'> & { ancestorOrigins?: DOMStringList },
+): string | null {
+  const ancestors = loc.ancestorOrigins;
+  const top = ancestors && ancestors.length > 0 ? ancestors.item(ancestors.length - 1) : null;
+  return siteKey(top ?? loc.href);
+}
+
 export function startOverlay(): void {
   if (globalThis.__murmurOverlay) return;
-  const site = siteKey(location.href);
+  const site = topSiteKey(location);
+  const port = browser.runtime.connect({ name: OVERLAY_PORT });
   const controller = new OverlayController(window, document, {
     onPositionChange: (offset) => {
       if (site) savePosition(site, offset).catch(() => {});
     },
+    // So the top frame knows a player here shows the subtitles.
+    onVideo: (present) => {
+      try {
+        port.postMessage({ type: 'video', present } satisfies OverlayToHost);
+      } catch {
+        // Disconnected: the overlay is going away.
+      }
+    },
   });
-  const port = browser.runtime.connect({ name: OVERLAY_PORT });
   const unwatch: (() => void)[] = [];
   let held = false;
 
@@ -51,13 +71,15 @@ export function startOverlay(): void {
     if (message.type === 'cue') controller.applyCue(message.cue);
     else if (message.type === 'reset') controller.reset();
     else if (message.type === 'status') controller.setStatus(message.status);
+    else if (message.type === 'frames') controller.setVideoInFrame(message.videoInFrame);
   };
   const onMessage = (message: OverlayMessage): void => {
-    if (!held) apply(message);
+    // A test that holds the session's cues still wants to know about the frames.
+    if (!held || message.type === 'frames') apply(message);
   };
   port.onMessage.addListener(onMessage);
   port.onDisconnect.addListener(stop);
-  port.postMessage({ type: 'hello', frameUrl: location.href } satisfies OverlayHello);
+  port.postMessage({ type: 'hello', frameUrl: location.href } satisfies OverlayToHost);
 
   if (IS_E2E) {
     const onTest = (e: Event): void => {

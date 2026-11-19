@@ -150,8 +150,13 @@ test('subtitles can be dragged, and stay there on this site', async ({ murmur })
   const before = await text.boundingBox();
   if (!before) throw new Error('no subtitle');
 
-  const x = before.x + before.width / 2;
-  const y = before.y + before.height / 2;
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  // Over the player they move up, clear of its controls: press where they settle.
+  await page.waitForTimeout(500);
+  const lifted = await text.boundingBox();
+  if (!lifted) throw new Error('no subtitle');
+  const x = lifted.x + lifted.width / 2;
+  const y = lifted.y + lifted.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x, y - 120, { steps: 6 });

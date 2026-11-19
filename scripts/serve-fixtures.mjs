@@ -9,6 +9,9 @@
  *
  *   FIXTURE_PORT=5000 node scripts/serve-fixtures.mjs
  *
+ * The pages are also served on the next port (FIXTURE_PORT + 1), another origin, so a fixture can
+ * embed a frame from "another site" (frames.html).
+ *
  * `/hf/<repo>/resolve/<revision>/<path>` stands in for Hugging Face in e2e builds (MODEL_HOST in
  * src/models/hub.ts): any file listed in src/engines/whisper/files.json, at its real size, filled
  * with a fixed pattern, with Range support, at `FIXTURE_HF_MBPS` MB/s (default 40) so downloads
@@ -118,3 +121,5 @@ const server = createServer(async (req, res) => {
 server.listen(port, '127.0.0.1', () => {
   console.log(`fixtures: http://127.0.0.1:${port}/`);
 });
+// The same pages on the next port: another origin, for frames from another site.
+createServer((req, res) => server.emit('request', req, res)).listen(port + 1, '127.0.0.1');

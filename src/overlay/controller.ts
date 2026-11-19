@@ -5,9 +5,18 @@
  * Two loops, so fitting text (line breaking, measuring) never runs per frame:
  * - `refresh()` recomputes what to show: on a cue, a settings change, a page turn or expiry, or
  *   when the player's size changes how lines fit.
- * - `follow()` keeps the view over the picture and clear of the player's controls: on events, and
- *   every animation frame while something is on screen (players move without telling anyone).
- * A slow tick re-picks the video and re-attaches the host if a page re-render removed it.
+ * - `follow()` keeps the view over the picture and clear of the player's controls: on scroll,
+ *   resize (of the window or the video), fullscreen, pointer and playback events, and every
+ *   `FOLLOW_MS` while something is on screen (players move without telling anyone). It reads
+ *   layout only then, never every frame.
+ * A slow tick re-picks the video (without walking the whole page, see `VideoFinder`) and
+ * re-attaches the host if a page re-render removed it.
+ *
+ * Fullscreen: the host goes inside the fullscreen element when that is a plain container of the
+ * video; otherwise (the video itself, a player in another frame, a web component whose video is
+ * in its shadow root) it becomes a popover in the top layer, above the fullscreen element.
+ * When a frame inside the page has a video, that frame's overlay shows the subtitles, and the
+ * top frame's stays out of the way.
  */
 import type { OverlayStatus } from '@/messaging/protocol';
 import type { Cue } from '@/pipeline/types';
@@ -24,11 +33,13 @@ import {
   rectChanged,
 } from './geometry';
 import { fitFor } from './measure';
-import { describeVideo, findVideos, pickBest } from './pickVideo';
+import { describeVideo, findVideos, pickBest, VideoFinder } from './pickVideo';
 import { adapterFor, liftToClear, type PlayerAdapter } from './sites';
 import { OverlayView, type StatusChip, type ViewStyle } from './view';
 
 const TICK_MS = 1000;
+/** How often the view checks the player's place while something is on screen. */
+export const FOLLOW_MS = 250;
 /** Pointer activity over the picture counts as "controls showing" for this long. */
 const POINTER_IDLE_MS = 2600;
 /** Players shorter than this show the translation only (the original would be unreadable). */
@@ -39,6 +50,33 @@ export const STACK_WIDTH = 0.92;
 export interface ControllerHooks {
   /** The user dragged the subtitles somewhere (or reset them, `null`). */
   onPositionChange?(offset: CaptionOffset | null): void;
+  /** This frame started or stopped having a video to draw on. */
+  onVideo?(present: boolean): void;
+}
+
+/** Elements whose children are never drawn, or that hold their video in a shadow root. */
+const NO_CHILDREN = new Set([
+  'iframe',
+  'frame',
+  'video',
+  'audio',
+  'canvas',
+  'img',
+  'object',
+  'embed',
+]);
+
+/**
+ * Whether the host shows when appended to the fullscreen element `fs`: a plain container of the
+ * video (or, with no video here, any plain container). Not an iframe or a video, and not a shadow
+ * host, whose shadow root decides what is drawn.
+ */
+export function canHoldOverlay(
+  fs: { localName: string; shadowRoot: unknown; contains(other: unknown): boolean },
+  video: unknown,
+): boolean {
+  if (NO_CHILDREN.has(fs.localName) || fs.shadowRoot) return false;
+  return !video || fs.contains(video);
 }
 
 export class OverlayController {
@@ -50,7 +88,13 @@ export class OverlayController {
   private video: HTMLVideoElement | null = null;
   private readonly resize = new ResizeObserver(() => this.schedule());
   private frame = 0;
+  private poll = 0;
   private tick = 0;
+  private readonly finder: VideoFinder;
+  /** A frame inside this one has a video (and its own overlay shows the subtitles). */
+  private videoInFrame = false;
+  /** A same-origin frame here has a video (checked on the slow tick). */
+  private sameOriginVideo = false;
   private timer = 0;
   private lastBox: Rect | null = null;
   private lastStyle = '';
@@ -73,6 +117,7 @@ export class OverlayController {
     private readonly hooks: ControllerHooks = {},
   ) {
     this.view = new OverlayView(doc);
+    this.finder = new VideoFinder(doc);
     this.adapter = adapterFor(win.location.hostname);
     this.view.setDragHandlers({
       start: (e) => this.dragStart(e),
@@ -111,6 +156,8 @@ export class OverlayController {
     this.doc.removeEventListener('loadedmetadata', this.schedule, { capture: true });
     this.doc.removeEventListener('pointermove', this.onPointer, { capture: true });
     this.win.clearInterval(this.tick);
+    this.win.clearTimeout(this.poll);
+    this.finder.disconnect();
     this.win.clearTimeout(this.timer);
     this.win.clearTimeout(this.chipTimer);
     this.win.cancelAnimationFrame(this.frame);
@@ -156,6 +203,14 @@ export class OverlayController {
     this.follow();
   }
 
+  /** Whether a frame inside this one has a video (the session says, for the top frame). */
+  setVideoInFrame(present: boolean): void {
+    if (present === this.videoInFrame) return;
+    this.videoInFrame = present;
+    this.lastBox = null;
+    this.follow();
+  }
+
   /** The video the overlay follows (tests, debugging). */
   get target(): HTMLVideoElement | null {
     return this.video;
@@ -189,13 +244,17 @@ export class OverlayController {
 
   private readonly onFullscreen = (): void => {
     const fs = this.doc.fullscreenElement;
-    const video = this.video;
-    if (fs && video && fs === video) {
+    if (fs && canHoldOverlay(fs, this.video)) {
+      this.view.setPopover(false);
+      this.view.mount(fs);
+    } else if (fs) {
+      // Children of an iframe or a video aren't drawn, nor light-DOM children of a shadow
+      // host: go above the fullscreen element in the top layer instead.
       this.view.mount(this.doc.documentElement);
       this.view.setPopover(true);
     } else {
       this.view.setPopover(false);
-      this.view.mount(fs ?? this.doc.documentElement);
+      this.view.mount(this.doc.documentElement);
     }
     this.lastBox = null;
     this.schedule();
@@ -204,16 +263,19 @@ export class OverlayController {
   /** Re-picks the video and re-attaches the host if the page removed it. */
   private repick(): void {
     if (this.destroyed) return;
-    const videos = findVideos(this.doc);
+    const videos = this.finder.videos();
     const viewport = this.viewport();
     const best = pickBest(videos.map(describeVideo), viewport);
     const next = best >= 0 ? (videos[best] ?? null) : this.video?.isConnected ? this.video : null;
     if (next !== this.video) {
+      const had = this.video !== null;
       if (this.video) this.resize.unobserve(this.video);
       this.video = next;
       if (next) this.resize.observe(next);
       this.onFullscreen();
+      if (had !== (next !== null)) this.hooks.onVideo?.(next !== null);
     }
+    this.sameOriginVideo = !next && this.win === this.win.top && this.sameOriginFrameHasVideo();
     if (!this.view.host.isConnected) this.onFullscreen();
     this.schedule();
   }
@@ -280,8 +342,9 @@ export class OverlayController {
       this.lastStyle = styleKey;
     }
     this.view.status(this.chip);
-    // Follow the player every frame while something is on screen.
-    if (layout) this.schedule();
+    // Check the player's place now and then while something is on screen.
+    this.win.clearTimeout(this.poll);
+    if (layout) this.poll = this.win.setTimeout(this.schedule, FOLLOW_MS);
   }
 
   /** Line fitting for this layout; re-renders when it changes. */
@@ -407,8 +470,8 @@ export class OverlayController {
         { width: video.videoWidth, height: video.videoHeight },
         parseObjectFit(this.win.getComputedStyle(video).objectFit),
       );
-    } else if (this.win === this.win.top && !this.sameOriginFrameHasVideo()) {
-      // No video here or in a frame we can see into (audio-only page, or a player in a
+    } else if (this.win === this.win.top && !this.videoInFrame && !this.sameOriginVideo) {
+      // No video here or in a frame with its own overlay (audio-only page, or a player in a
       // cross-origin frame we can't inject into): use the bottom of the window.
       picture = { left: 0, top: 0, width: viewport.width, height: viewport.height };
     } else {

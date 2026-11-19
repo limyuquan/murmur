@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Frames fixture</title>
+    <style>
+      body { margin: 0; font: 14px system-ui, sans-serif; }
+      iframe { display: block; margin: 24px; width: 1000px; height: 640px; border: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- A page from one site embedding a frame from another (the fixture server's second port):
+         `?src=player.html` for a player, `?src=frame-blank.html` for a frame with no video. -->
+    <iframe id="frame" allow="fullscreen" title="Embedded"></iframe>
+    <script>
+      const src = new URLSearchParams(location.search).get('src') ?? 'player.html';
+      const other = `${location.protocol}//${location.hostname}:${Number(location.port) + 1}`;
+      document.getElementById('frame').src = `${other}/${src}`;
+    </script>
+  </body>
+</html>
