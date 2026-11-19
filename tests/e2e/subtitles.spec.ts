@@ -28,6 +28,11 @@ function cue(id: string, seq: number, patch: Partial<Cue> = {}): Cue {
   };
 }
 
+/** A cue whose translation is still changing: it stays on screen as long as a test needs. */
+function lasting(id: string, seq: number): Cue {
+  return cue(id, seq, { translation: { text: `Line ${id}`, language: 'en', final: false } });
+}
+
 /** Opens the player fixture with a running session whose cues the test controls. */
 async function player(earshot: import('./fixtures').EarshotHelpers): Promise<Page> {
   const page = await earshot.open('player.html');
@@ -136,9 +141,12 @@ test('only lines in a less common language are tagged', async ({ earshot }) => {
 test('subtitles can be dragged, and stay there on this site', async ({ earshot }) => {
   const page = await player(earshot);
   const host = page.locator('earshot-overlay');
-  await send(page, { cue: cue('a', 1) });
+  await send(page, { cue: lasting('a', 1) });
   const text = host.locator('.line[data-role="main"] .text');
   await expect(text).toBeVisible();
+  // Pointer off the player, so the subtitles aren't lifted for its controls.
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(300);
   const before = await text.boundingBox();
   if (!before) throw new Error('no subtitle');
 
@@ -155,18 +163,21 @@ test('subtitles can be dragged, and stay there on this site', async ({ earshot }
   ).toBe(false);
 
   // Saved for the site; a fresh overlay (new session) uses it.
-  const saved = await earshot.positions();
-  expect(saved['127.0.0.1']?.y).toBeLessThan(0.8);
+  await expect.poll(async () => (await earshot.positions())['127.0.0.1']?.y ?? 1).toBeLessThan(0.8);
   await earshot.stop();
   await expect(host).toHaveCount(0);
   await earshot.start(page);
   await send(page, { hold: true });
-  await send(page, { cue: cue('b', 2) });
+  await send(page, { cue: lasting('b', 2) });
   await expect.poll(async () => (await text.boundingBox())?.y ?? 0).toBeLessThan(before.y - 100);
 
   // Double-click puts them back.
   await text.dblclick();
-  await expect.poll(async () => (await text.boundingBox())?.y ?? 0).toBeCloseTo(before.y, 0);
+  await page.mouse.move(5, 5);
+  await expect
+    .poll(async () => (await text.boundingBox())?.y ?? 0, { timeout: 8000 })
+    .toBeCloseTo(before.y, 0);
+  await expect.poll(async () => (await earshot.positions())['127.0.0.1']).toBeUndefined();
 });
 
 test('subtitles move up while the pointer is over the player', async ({ earshot }) => {
@@ -193,7 +204,7 @@ test('fullscreen: inside a fullscreen player, and above a fullscreen video', asy
 }) => {
   const page = await player(earshot);
   const host = page.locator('earshot-overlay');
-  await send(page, { cue: cue('a', 1) });
+  await send(page, { cue: lasting('a', 1) });
   await page.click('#fs-player');
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement?.id ?? null))
