@@ -79,6 +79,8 @@ export interface HostDeps {
   onSegment?: PipelineOptions['onSegment'];
   /** Sees the speech detector the session uses (`null`: the energy gate). */
   onVad?(vad: SileroVad | null): void;
+  /** A start-up step is done (e2e builds log when, to measure how late the first line is). */
+  onStartup?(step: 'capture' | 'asr' | 'translation' | 'pipeline'): void;
   /** Sees every lookahead cue (e2e builds log them). */
   onLookaheadCue?(cue: Cue): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
@@ -215,6 +217,9 @@ export class OffscreenHost {
 
   private createLookahead(running: Running): LookaheadHost {
     const { config } = running;
+    // Lookahead's own speech detector loads now, alongside the engines, not when its first job
+    // asks for it (that made the first lines ahead of time wait for it).
+    this.loadLookaheadVad(running);
     return new LookaheadHost({
       post: (message) => this.broadcast(config.tabId, message),
       // Only captured tab audio is played back late (the test tone isn't).
@@ -227,6 +232,22 @@ export class OffscreenHost {
         if (paused) running.pipeline?.flush();
       },
       onCue: (cue) => this.deps.onLookaheadCue?.(cue),
+    });
+  }
+
+  /** Starts loading lookahead's speech detector, once, when the speech engine would use one. */
+  private loadLookaheadVad(running: Running): void {
+    if (running.lookaheadVad !== null) return;
+    const chosen = running.asr?.info ?? this.registry.asrInfo(running.config.asrEngine);
+    if (!chosen || !wantsModelVad(chosen)) return;
+    running.lookaheadVad = 'loading';
+    void this.loadVad().then((loaded) => {
+      if (!this.isCurrent(running)) {
+        void loaded?.dispose().catch(() => {});
+        return;
+      }
+      running.lookaheadVad = loaded;
+      running.lookahead?.kick();
     });
   }
 
@@ -244,17 +265,7 @@ export class OffscreenHost {
     if (running.asr.info.audioInput === 'track') return null;
     let vad: SileroVad | null = null;
     if (wantsModelVad(running.asr.info)) {
-      if (running.lookaheadVad === null) {
-        running.lookaheadVad = 'loading';
-        void this.loadVad().then((loaded) => {
-          if (!this.isCurrent(running)) {
-            void loaded?.dispose().catch(() => {});
-            return;
-          }
-          running.lookaheadVad = loaded;
-          running.lookahead?.kick();
-        });
-      }
+      this.loadLookaheadVad(running);
       if (running.lookaheadVad === 'loading') return null;
       vad = running.lookaheadVad;
     }
@@ -330,6 +341,7 @@ export class OffscreenHost {
       await running.capture.stop().catch(() => {});
       return;
     }
+    this.deps.onStartup?.('capture');
     running.loading = this.load(running);
   }
 
@@ -376,6 +388,7 @@ export class OffscreenHost {
         (engine) => engine.load(options(engine.info.label)),
         signal,
       );
+      this.deps.onStartup?.('asr');
       // A translation model that isn't downloaded or doesn't load doesn't stop the session:
       // another translator takes over (and the popup offers the download).
       running.translator = await loadWithFallback(
@@ -395,6 +408,7 @@ export class OffscreenHost {
         await this.teardown(running);
         return;
       }
+      this.deps.onStartup?.('translation');
       this.deps.onEngines?.(running.asr, running.translator);
       running.translator = this.withLineHelpers(running, running.translator, hardware);
       const asrInfo = running.asr.info;
@@ -479,6 +493,7 @@ export class OffscreenHost {
         },
       });
       running.pipeline = pipeline;
+      this.deps.onStartup?.('pipeline');
       running.lookahead?.kick();
       this.reportRunning(running, mtInfo.label);
       running.ticker = setInterval(() => {

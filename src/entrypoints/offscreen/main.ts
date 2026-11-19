@@ -34,7 +34,7 @@ const host = new OffscreenHost({
  */
 function e2eTaps(): Pick<
   OffscreenHostDeps,
-  'onCue' | 'onEngines' | 'onVad' | 'onSegment' | 'onLookaheadCue'
+  'onCue' | 'onEngines' | 'onVad' | 'onSegment' | 'onLookaheadCue' | 'onStartup'
 > {
   const log: OffscreenTestLog = {
     cues: [],
@@ -45,6 +45,7 @@ function e2eTaps(): Pick<
     engines: null,
     segments: [],
     vad: null,
+    startup: {},
   };
   globalThis.__murmurLog = log;
   const now = () => performance.timeOrigin + performance.now();
@@ -52,6 +53,9 @@ function e2eTaps(): Pick<
     onCue: (cue) => log.cues.push({ at: now(), cue }),
     onLookaheadCue: (cue) => log.lookaheadCues.push({ at: now(), cue }),
     onSegment: (event) => log.segments.push({ at: now(), event }),
+    onStartup: (step) => {
+      log.startup[step] = now();
+    },
     onVad: (vad) => {
       log.vad = vad ? { detector: 'silero', cost: vad.cost } : { detector: 'energy', cost: null };
     },

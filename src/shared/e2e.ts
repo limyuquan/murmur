@@ -58,6 +58,11 @@ export interface OffscreenTestLog {
   segments: { at: number; event: SegmentEvent }[];
   /** The session's speech detector, and the time it has spent so far (live). */
   vad: { detector: 'silero' | 'energy'; cost: { frames: number; ms: number } | null } | null;
+  /**
+   * When each start-up step was done, epoch ms (`capture`, `asr`, `translation`: loaded and
+   * warmed up, `pipeline`: live subtitles start), to measure how late the first line is.
+   */
+  startup: Record<string, number>;
 }
 
 /**

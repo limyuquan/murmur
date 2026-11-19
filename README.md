@@ -319,7 +319,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   it has spent so far. The same folder can hold the Gemma files (`<repo>/<file>`), which saves
   a 2–3 GB download (hashes are checked only for downloads from Hugging Face). A line's
   latency is in `__murmurLog.cues`: its cue's `endEpochMs` (end of speech) against the `at` of
-  the first cue with a final translation.
+  the first cue with a final translation. `__murmurLog.startup` says when the capture opened,
+  each engine was loaded and warmed up (`asr`, `translation`) and live subtitles started
+  (`pipeline`): how late the first line is after a start.
 
 ### 8. Known limits
 

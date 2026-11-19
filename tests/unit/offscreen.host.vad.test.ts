@@ -85,4 +85,32 @@ describe('OffscreenHost speech detector', () => {
     warn.mockRestore();
     await host.stop();
   });
+
+  it('loads lookahead’s detector as soon as lookahead starts, not at its first job', async () => {
+    const model = { cost: { frames: 0, ms: 0 }, dispose: async () => {} } as unknown as SileroVad;
+    let loads = 0;
+    const steps: string[] = [];
+    const host = new OffscreenHost({
+      send: async () => {},
+      loadVad: async () => {
+        loads++;
+        return model;
+      },
+      onStartup: (step) => steps.push(step),
+    });
+    await host.start(CONFIG);
+    const inner = host as unknown as {
+      session: { lookahead: unknown; lookaheadVad: unknown };
+      createLookahead(running: unknown): unknown;
+    };
+    // The page's tee spoke before the engines were ready.
+    const before = loads;
+    inner.session.lookahead = inner.createLookahead(inner.session);
+    expect(loads).toBe(before + 1);
+    await host.loaded();
+    expect(inner.session.lookaheadVad).toBe(model);
+    // The start-up steps, in order (e2e builds log when each was done).
+    expect(steps).toEqual(['capture', 'asr', 'translation', 'pipeline']);
+    await host.stop();
+  });
 });
