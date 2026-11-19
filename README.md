@@ -4,9 +4,8 @@ Live translated subtitles over any video in Chrome. Murmur listens to the tab, t
 text, translates it, and draws the subtitles on the video, all on your own machine.
 
 > **Status: early.** Real speech recognition and translation run in the browser: Chrome's own
-> on-device speech recognition and translator (Light), or Whisper on the graphics card with
-> Chrome's translator (Balanced, Best). A dedicated translation model and the optional companion
-> app come next.
+> on-device speech recognition and translator (Light), or speech recognition and a translation
+> model (Gemma 4) on the graphics card (Balanced, Best). The optional companion app comes next.
 
 ## For humans
 
@@ -24,9 +23,15 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   in a different language from the rest gets a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
-  downloads a small pack per language, after one click). Balanced and Best run Whisper on the
-  graphics card (a 1.6 GB download, once; 80 to 210 MB for the small model on devices without a
-  suitable graphics card). Murmur suggests one that suits your device.
+  downloads a small pack per language, after one click). Balanced and Best run speech
+  recognition on the graphics card (Whisper: a 1.6 GB download, once; 80 to 210 MB for the small
+  model on devices without a suitable graphics card) and a translation model that reads the
+  lines before each one: Gemma 4 E2B in Balanced (2.0 GB more), the larger E4B in Best (3.0 GB
+  more, for a graphics card with its own memory). Where the translation model doesn't fit,
+  Chrome's translator translates. Murmur suggests a size that suits your device.
+- **Your names and terms.** List names and terms with how they should be written (Settings →
+  Glossary). The translation model uses your spelling when a line mentions one, or something
+  that sounds close.
 - **Say what you listen to.** Tick the languages in the videos you watch. Each line's language is
   still detected, so videos that switch language work.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
@@ -99,7 +104,8 @@ setting it up for someone. Run commands from the repo root and keep every browse
   host permission requested at runtime. Don't add `tabs`, `webRequest`, `debugger`,
   `desktopCapture` or install-time host permissions. `scripts/verify-zip.mjs` enforces this.
 - **No remote code.** Bundle every script and WebAssembly file (point ONNX Runtime / similar at
-  local `wasmPaths`). Model weights downloaded at runtime are data and are fine, but only after
+  local `wasmPaths`; LiteRT-LM's WebAssembly is copied to `litert/` at build time and the LLM
+  worker names it). Model weights downloaded at runtime are data and are fine, but only after
   the user agrees to the download.
 - **No network otherwise.** No telemetry, no analytics, no calls home.
 - **Plain TypeScript in pages.** `src/overlay/` runs inside other people's pages: no React, no
@@ -158,7 +164,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/entrypoints/offscreen/`, `src/offscreen/host.ts` | Offscreen document (`USER_MEDIA`): capture graph, engines, pipeline, cues to the overlay |
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
 | `src/pipeline/` | Speech detectors (Silero VAD in `silero.ts`, run ahead of the segmenter by `vadstage.ts`; the energy gate in `vad.ts`), segmenter and its sentence-end detector (`sentence.ts`), orchestration (ASR → translation → cues), per-segment language |
-| `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), demo engines (e2e builds only) |
+| `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), Gemma 4 translation (`llm/`), the glossary matcher (`glossary.ts`) and what a session wraps around its translator (`translators.ts`: glossary, per-line fallback), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
@@ -247,6 +253,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
 | `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
 | `qwen3-asr-0.6b` | Qwen3-ASR-0.6B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker | First in Balanced. SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). **Those files aren't published yet**, so production builds show it unavailable and Balanced runs turbo. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; probes and finals decode from scratch, and a probe at the segment's end is its final; decoding stops at a token cap that grows with the audio or on a repetition loop; Whisper's scheduler and guards (`segments.ts`). |
+| `gemma4-e2b`, `gemma4-e4b` | Gemma 4 E2B / E4B (`-web.litertlm`, `litert-community` at pinned commits, `llm/files.json`) on LiteRT-LM.js 0.19.0 (pinned), WebGPU, in a **classic** worker (`entrypoints/llm-worker.ts`: its glue uses `importScripts`) | First in Balanced (E2B) and Best (E4B, then E2B). Only the relaxed-SIMD + JSPI WebAssembly build ships (24 MB; Chrome 137+); older Chrome, no WebGPU or a failed load (out of graphics memory) hands over to Chrome's translator (`RUNTIME_FALLBACKS`). The model loads as a Blob of the cached parts; unloading terminates the worker, the only way to free its graphics memory. Prompt v2 (`llm/prompt.ts`, byte for byte the benchmarked one): earlier lines with their languages, the glossary entries the line uses, the line's own language. One generation at a time, finished lines before previews; drafts stream to the overlay; answers are cleaned and rejected when they repeat a context line or run away (`llm/output.ts`). A finished line gets 3 s (`LINE_BUDGET_MS`), then Chrome's translator does it and the popup says so. Profiles pick it by a graphics-memory guess (`estimateGpuMemoryMB`: WebGPU doesn't report memory). Measured on an RTX 3070: E2B first token ~140 ms, ~90 tokens/s; E4B ~430 ms, ~60 tokens/s. |
 | `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions (`whisper/files.json`), one download per backend, read from the model cache with the network off. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
 
 - **Chrome language packs need a click.** Chrome only starts a speech or translation pack
@@ -262,8 +269,12 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   Chrome translation which packs to check; with `onlySpoken`, Whisper and Qwen3-ASR pick each
   line's language among them only.
 - **No COEP/COOP.** Cross-origin isolation breaks tab capture; threaded WebAssembly works
-  without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime, which ships in the
-  extension.
+  without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime and LiteRT-LM, which
+  ship in the extension.
+- **Glossary** (a setting). `SessionConfig.glossary` carries it to the offscreen document;
+  `withGlossary` (`translators.ts`) gives each request the entries its line or context uses
+  (`glossary.ts`: whole words, or anywhere in unspaced scripts; short Korean names need a
+  boundary; light fuzzy matching for misheard names). Only engines with `usesGlossary` get it.
 - **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
   `pnpm test:e2e`. Build with `WXT_MODEL_HOST=https://huggingface.co pnpm build:e2e` so models
   download from Hugging Face, download them on the options page, then the e2e build's
@@ -277,7 +288,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   `FIXTURE_HF_DIR=<folder> node scripts/serve-fixtures.mjs` and use the plain e2e build, which
   downloads from that server. `__murmurLog.decodes` lists each of its decodes (kind, audio and
   decode ms, tokens, text). `__murmurLog.vad` names the session's speech detector and the time
-  it has spent so far.
+  it has spent so far. The same folder can hold the Gemma files (`<repo>/<file>`), which saves
+  a 2–3 GB download (hashes are checked only for downloads from Hugging Face). A line's
+  latency is in `__murmurLog.cues`: its cue's `endEpochMs` (end of speech) against the `at` of
+  the first cue with a final translation.
 
 ### 8. Known limits
 
@@ -292,6 +306,7 @@ Headless tests can't check these, so ask a human after related changes:
 
 ## License
 
-[MIT](LICENSE). The bundled Silero VAD model is © Silero Team, MIT
+[MIT](LICENSE). Gemma 4 (downloaded on request) is © Google, Apache-2.0; LiteRT-LM.js (bundled)
+is © Google, Apache-2.0 ([NOTICE](NOTICE)). The bundled Silero VAD model is © Silero Team, MIT
 ([src/assets/silero-vad/LICENSE](src/assets/silero-vad/LICENSE)). Test clips carry their own
 licences ([tests/unit/fixtures/vad/README.md](tests/unit/fixtures/vad/README.md)).
