@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EchoAsrEngine } from '@/engines/demo/echoAsr';
 import { PassthroughTranslationEngine } from '@/engines/demo/passthroughTranslator';
+import { SegmentSession } from '@/engines/segments';
 import type {
   AsrEngine,
   AsrSession,
@@ -9,8 +10,10 @@ import type {
   TranslationEngine,
   TranslationRequest,
 } from '@/engines/types';
+import type { DecodeJob } from '@/engines/whisper/scheduler';
 import { sameLanguage } from '@/pipeline/language';
 import { Pipeline, type PipelineOptions } from '@/pipeline/pipeline';
+import type { Segmenter } from '@/pipeline/segmenter';
 import type { Cue } from '@/pipeline/types';
 import { burst, concat } from './helpers';
 
@@ -62,17 +65,17 @@ describe('Pipeline with the demo engines', () => {
     expect(done.map((c) => c.seq)).toEqual([1, 2]);
     const [first, second] = done;
     expect(first?.source.final).toBe(true);
-    expect(first?.source.text).toMatch(/^Sound 1 · 0:00\.\d–0:01\.5 · -\d+ dB$/);
+    expect(first?.source.text).toMatch(/^Sound 1 · 0:00\.\d–0:01\.6 · -\d+ dB$/);
     expect(first?.translation).toEqual({
       text: `[en] ${first?.source.text}`,
       language: 'en',
       final: true,
     });
     expect(first?.untranslated).toBeNull();
-    // Segment 1: pre-roll from 0.3 s, speech ends at 1.5 s.
-    expect(first?.startEpochMs).toBe(T0 + 300);
-    expect(first?.endEpochMs).toBe(T0 + 1500);
-    expect(second?.endEpochMs).toBe(T0 + 3100);
+    // Segment 1: 100 ms pre-roll from 0.4 s, speech ends at 1.5 s, plus 100 ms.
+    expect(first?.startEpochMs).toBe(T0 + 400);
+    expect(first?.endEpochMs).toBe(T0 + 1600);
+    expect(second?.endEpochMs).toBe(T0 + 3200);
   });
 
   it('streams partials before the final, dimmed until final', async () => {
@@ -224,6 +227,99 @@ describe('Pipeline hardening', () => {
       .sort((a, b) => a.seq - b.seq)
       .map((c) => c.id);
     expect(order).toEqual(['s1', 's1.2', 's2']);
+  });
+});
+
+describe('Pipeline with the sentence segmenter', () => {
+  /**
+   * A segment engine whose words end a sentence at 2.0 s ("Hello there.") and go on after that
+   * ("Hello there. And more"): a stand-in for a model that writes punctuation.
+   */
+  function sentenceEngine(decodes: DecodeJob[]): AsrEngine {
+    return {
+      info: { ...new EchoAsrEngine().info, id: 'test-segments' },
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      createSession: (options) =>
+        new SegmentSession(
+          {
+            decode: async (job) => {
+              decodes.push(job);
+              const words =
+                job.startSample >= ms(2000)
+                  ? 'And more words.'
+                  : job.endSample <= ms(2100)
+                    ? 'Hello there.'
+                    : 'Hello there. And more';
+              return {
+                text: words,
+                language: 'fr',
+                languageProb: 0.9,
+                noSpeechProb: 0.01,
+                avgLogprob: -0.2,
+                ms: 50,
+              };
+            },
+          },
+          options,
+          {},
+        ),
+    };
+  }
+
+  /** Pushes 20 ms frames, letting the engine's decodes finish between them. */
+  async function feedLive(pipeline: Pipeline, audio: Float32Array): Promise<void> {
+    for (let i = 0; i < audio.length; i += 320) {
+      pipeline.push({
+        samples: audio.slice(i, i + 320),
+        startSample: i,
+        startEpochMs: T0 + (i / RATE) * 1000,
+      });
+      for (let k = 0; k < 4; k++) await Promise.resolve();
+    }
+  }
+
+  const ms = (n: number) => (n / 1000) * RATE;
+
+  it('ends a line at a short pause after a sentence, reusing the probe as its final', async () => {
+    const decodes: DecodeJob[] = [];
+    const { pipeline, cues, errors } = setup({ asr: sentenceEngine(decodes) });
+    // 1.5 s of speech, a 200 ms pause (shorter than the 250 ms that ends a line), 1.5 s more.
+    await feedLive(
+      pipeline,
+      concat([burst(0.5, 0), burst(1.5, 0.3), burst(0.2, 0), burst(1.5, 0.3), burst(1, 0)]),
+    );
+    await pipeline.close();
+    expect(errors).toEqual([]);
+    const done = latest(cues);
+    expect(done.map((c) => [c.source.text, c.source.final])).toEqual([
+      ['Hello there.', true],
+      ['And more words.', true],
+    ]);
+    expect(done[0]?.endEpochMs).toBe(T0 + 2100);
+    expect(done[1]?.startEpochMs).toBe(T0 + 2100);
+    // The first line's final is its probe: no final decode for s1.
+    expect(decodes.filter((d) => d.segmentId === 's1').map((d) => d.kind)).toEqual([
+      'partial',
+      'probe',
+    ]);
+  });
+
+  it('keeps Chrome-style track engines on the pause strategy', () => {
+    const echo = new EchoAsrEngine();
+    const asr: AsrEngine = {
+      info: { ...echo.info, audioInput: 'track' },
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      createSession: (options) => echo.createSession(options),
+    };
+    const { pipeline } = setup({ asr });
+    expect((pipeline as unknown as { segmenter: Segmenter }).segmenter.config).toMatchObject({
+      strategy: 'pause',
+      maxSegmentMs: 20_000,
+    });
   });
 });
 

@@ -7,9 +7,13 @@
  *   context. Partial lines are only translated when `translatePartials` is on (a preview that the
  *   final replaces); a newer partial aborts the previous preview.
  * - Each change to a segment re-emits its whole cue; the overlay replaces by id.
+ * - Segments: the segmenter's sentence strategy by default. At a short pause it asks the ASR
+ *   session for the text so far (`requestPartial`); the partial that answers goes back to the
+ *   segmenter (`transcript`), which ends the segment there if the text ends a sentence. The
+ *   segmenter knows nothing of engines, and engines nothing of sentences.
  * - Engines that listen to the live track (`audioInput: 'track'`) get the track, and the
- *   segment calls only as pause markers (no audio): their segments run longer before a forced
- *   cut, since cutting a recognizer mid-sentence costs words.
+ *   segment calls only as pause markers (no audio): they get the pause strategy, with segments
+ *   that run longer before a forced cut, since cutting a recognizer mid-sentence costs words.
  * - A translation engine may correct a line's language (it checked the text) and may revise an
  *   earlier line's translation (`TranslationChunk.revises`).
  */
@@ -25,7 +29,7 @@ import type {
 } from '@/engines/types';
 import { UNKNOWN_LANGUAGE } from '@/engines/types';
 import { sameLanguage } from './language';
-import { type SegmentEvent, Segmenter } from './segmenter';
+import { type SegmentEvent, Segmenter, type SegmenterOptions } from './segmenter';
 import type { Cue } from './types';
 import { EnergyVad } from './vad';
 
@@ -36,7 +40,7 @@ export interface PipelineOptions {
   /** Language to suggest to the ASR engine, or `null` to detect per segment. */
   sourceLanguage: LanguageTag | null;
   translatePartials?: boolean;
-  /** Defaults to an energy-gated segmenter. */
+  /** Defaults to an energy-gated segmenter (`TRACK_SEGMENTER` for track engines). */
   segmenter?: Segmenter;
   /** Earlier final lines passed as translation context. Default 3. */
   contextLines?: number;
@@ -58,6 +62,9 @@ export interface PipelineOptions {
 }
 
 export const TRANSLATION_TIMEOUT_MS = 10_000;
+
+/** Segments for engines that listen to the track: pauses only, cut late. */
+export const TRACK_SEGMENTER: SegmenterOptions = { strategy: 'pause', maxSegmentMs: 20_000 };
 
 /** A later line of a split segment: `<parent>.<n>`. */
 const SPLIT_LINE = /^(.+)\.(\d+)$/;
@@ -85,8 +92,7 @@ export class Pipeline {
   constructor(private readonly options: PipelineOptions) {
     this.ownSegments = options.asr.info.audioInput === 'track';
     this.segmenter =
-      options.segmenter ??
-      new Segmenter(new EnergyVad(), this.ownSegments ? { maxSegmentMs: 20_000 } : {});
+      options.segmenter ?? new Segmenter(new EnergyVad(), this.ownSegments ? TRACK_SEGMENTER : {});
     this.session = options.asr.createSession({
       sampleRate: PIPELINE_SAMPLE_RATE,
       languageHint: options.sourceLanguage,
@@ -137,6 +143,9 @@ export class Pipeline {
         case 'end':
           this.session.endSegment(event.segmentId, event.endSample);
           break;
+        case 'probe':
+          this.session.requestPartial?.(event.segmentId, event.endSample);
+          break;
       }
     }
   }
@@ -176,6 +185,17 @@ export class Pipeline {
 
   private onAsrResult(result: AsrResult): void {
     if (this.closing.signal.aborted) return;
+    this.show(result);
+    if (!result.final) {
+      // Tell the segmenter what was said so far: a sentence end lets the segment end now.
+      const language = result.language?.tag ?? null;
+      this.dispatch(
+        this.segmenter.transcript(result.segmentId, result.endSample, result.text, language),
+      );
+    }
+  }
+
+  private show(result: AsrResult): void {
     const state = this.segmentState(result.segmentId, result.startSample, result.endSample);
     const { cue } = state;
     const language = result.language?.tag ?? this.options.sourceLanguage ?? UNKNOWN_LANGUAGE;
