@@ -25,9 +25,13 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
   downloads a small pack per language, after one click). Balanced and Best run Whisper on the
-  graphics card (a 1.6 GB download, once). Murmur suggests one that suits your device.
+  graphics card (a 1.6 GB download, once; 80 to 210 MB for the small model on devices without a
+  suitable graphics card). Murmur suggests one that suits your device.
+- **Say what you listen to.** Tick the languages in the videos you watch. Each line's language is
+  still detected, so videos that switch language work.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
-  network use will be downloading a model you choose, once.
+  network use is downloading a model when you click Download (from Hugging Face; a stopped
+  download picks up where it left off), and Chrome's own language packs.
 
 <a id="install"></a>**Install** (not on the Chrome Web Store)
 
@@ -133,7 +137,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   test tone, because headless Chromium plays no tab audio; `capture.spec.ts` still exercises the
   real tab-capture handshake (Chromium is started with `--allowlisted-extension-id`).
 - Fixture pages live in `tests/fixtures/pages/`, served on `http://127.0.0.1:4392/` by
-  `scripts/serve-fixtures.mjs`.
+  `scripts/serve-fixtures.mjs`. The same server stands in for Hugging Face at `/hf/`: e2e builds
+  download models from there (every file in `src/engines/whisper/files.json`, at its real size,
+  filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40).
 - If `playwright test` hangs before any test starts, the machine may hang on connections to a
   closed localhost port instead of refusing them (seen with WSL mirrored networking). Start
   `node scripts/serve-fixtures.mjs` yourself first; Playwright reuses it.
@@ -152,7 +158,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
-| `src/models/` | Downloadable models: catalog per profile, download manager (runs in the SW), simulated store |
+| `src/models/` | Downloadable models: catalog per profile and device, download manager (runs in the SW), Cache API store (`store.ts`) and the reader model workers use (`hub.ts`) |
 | `src/entrypoints/popup/`, `options/`, `welcome/` | React + Tailwind extension pages (welcome opens on install) |
 | `src/ui/` | Shared React components, hooks and copy for those pages; tokens in `src/styles/app.css` |
 | `tests/unit`, `tests/e2e` | Vitest (pure logic) and Playwright end-to-end |
@@ -189,15 +195,21 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    back down their list, then to the last resorts there, when an engine doesn't fit the device.
    An engine that only finds out at load that it can't run here throws `EngineUnavailableError`
    (`src/engines/errors.ts`); the session then tries its entry in `RUNTIME_FALLBACKS`.
-5. List what it downloads in `info.models` (id, label, size). The options page, welcome page and
-   popup then show and manage those instead of the planned placeholders in
-   `src/models/planned.ts`. Downloads go through a `ModelStore` (`src/models/types.ts`): add the
-   real one (Cache API / OPFS) as `real` in `src/background/models.ts`.
+5. List what it downloads in `info.models`: id, label, size and the exact files (`source`: a
+   Hugging Face repo at a pinned commit, with each file's byte size), one entry per `backend`
+   when the weights differ by backend. The options page, welcome page and popup show and manage
+   those; the service worker downloads them into the Cache API (`src/models/store.ts`) only when
+   the person clicks Download. `load()` must never download: read the files with
+   `modelFileCache(source)` / `readFile` (`src/models/hub.ts`) and throw
+   `ModelError(message, ids, true)` when they aren't there.
 6. Load progress goes through `LoadOptions.onProgress`; the popup and the overlay's chip show it.
-7. Report failures the popup can fix with a `SessionErrorCode` (`companion`, `model`, ...) on the
-   error status, and keep `SessionActivity` honest: the offscreen host feeds `ActivityTracker`
-   (`src/offscreen/activity.ts`) with every frame and cue, which is how "falling behind",
-   "no sound" and unsupported languages reach the popup.
+7. Report failures with the errors in `src/engines/errors.ts`: `ModelError` (code `model`),
+   `CompanionError` (`companion`), `EngineActionRequiredError` (`setup`, Chrome packs),
+   `UnsupportedLanguageError` (a language it can't handle at all). Keep `SessionActivity` honest:
+   the offscreen host feeds `ActivityTracker` (`src/offscreen/activity.ts`) with every frame,
+   cue and `AsrHealth` report (backlog, real-time factor), which is how "falling behind",
+   "no sound" and unsupported languages reach the popup. List `languages` / `sources` / `targets`
+   accurately: they decide what the popup calls untranslatable.
 
 ### 7. The real engines
 
@@ -205,24 +217,28 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 |---|---|---|
 | `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
 | `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
-| `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions, cached in the Cache API. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
+| `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions (`whisper/files.json`), one download per backend, read from the model cache with the network off. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
 
 - **Chrome language packs need a click.** Chrome only starts a speech or translation pack
   download from a user gesture, and reports packs per site (a new origin sees `downloadable`
   even when the pack is on disk; the click then finishes at once). Engines reject loading with
   `EngineActionRequiredError`; the session status says `code: 'setup'` with `setup` actions,
   and a page runs each with `runSetupAction(action)` (`src/engines/chrome/setup.ts`) straight
-  from the click handler, one action per click. A running session lists packs it met later in
+  from the click handler, one action per click (`SetupButtons` in the popup, `ChromePacks` in
+  options and welcome, `src/ui/setup.tsx`). A running session lists packs it met later in
   `setup` too.
-- **Spoken languages.** `SessionConfig.spokenLanguages` tells Chrome speech which recognizers to
-  run (and lets Whisper limit detection). Without it, Chrome speech runs the languages whose
-  packs are downloaded.
+- **Spoken languages** (a setting; empty means the browser's languages).
+  `SessionConfig.spokenLanguages` tells Chrome speech which recognizers to run (the first 4) and
+  Chrome translation which packs to check; with `onlySpoken`, Whisper picks each line's language
+  among them only.
 - **No COEP/COOP.** Cross-origin isolation breaks tab capture; threaded WebAssembly works
   without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime, which ships in the
   extension.
 - **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
-  `pnpm test:e2e`. The e2e build's `__murmur.start(tabId, 'tab', 'settings')` runs the engines
-  the settings choose (the default `'demo'` keeps Playwright offline), and the offscreen
+  `pnpm test:e2e`. Build with `WXT_MODEL_HOST=https://huggingface.co pnpm build:e2e` so models
+  download from Hugging Face, download them on the options page, then the e2e build's
+  `__murmur.start(tabId, 'tab', 'settings')` runs the engines the settings choose (the default
+  `'demo'` keeps Playwright offline), and the offscreen
   document logs every cue and Chrome speech arbitration on `globalThis.__murmurLog`. Drive it
   over CDP from a separate, temporary Chrome profile. With puppeteer over a pipe, send nothing
   else to the browser while `start()` runs: a second CDP call then made Chrome 157 drop the
