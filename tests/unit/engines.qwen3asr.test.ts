@@ -223,7 +223,10 @@ describe('Qwen3-ASR engine info', () => {
     const custom = { asr: 'qwen3-asr-0.6b', translation: 'chrome-translator' };
     expect(resolveEngines('balanced', custom, registry, GPU)).toMatchObject({
       asr: 'whisper-large-v3-turbo',
-      notes: ['Qwen3-ASR 0.6B: model files not published yet'],
+      notes: [
+        'Qwen3-ASR 1.7B: model files not published yet',
+        'Qwen3-ASR 0.6B: model files not published yet',
+      ],
     });
     expect(resolveEngines('custom', custom, registry, GPU).asr).toBe('whisper-base');
   });
@@ -305,15 +308,18 @@ describe('Qwen3-ASR 1.7B', () => {
     expect(QWEN3_ASR_17B_INFO.languages).toEqual(QWEN3_ASR_INFO.languages);
   });
 
-  it('needs a graphics card with its own memory', () => {
+  it('needs about 3 GB of graphics memory by itself', () => {
     const info = { requirements: QWEN3_ASR_17B_INFO.requirements };
     expect(checkEngine(info, NVIDIA)).toEqual({ ok: true });
+    // Apple silicon sharing 8 GB (a 4 GB guess) runs it alone; next to a translator, see profiles.
     expect(checkEngine(info, { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, vendor: 'apple' } })).toEqual(
-      {
-        ok: false,
-        reasons: ['Needs about 6 GB of graphics memory, more than this device seems to have.'],
-      },
+      { ok: true },
     );
+    const intel = { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, vendor: 'intel' } };
+    expect(checkEngine(info, intel)).toEqual({
+      ok: false,
+      reasons: ['Needs about 3 GB of graphics memory, more than this device seems to have.'],
+    });
     expect(
       checkEngine(info, { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, shaderF16: false } }).ok,
     ).toBe(false);

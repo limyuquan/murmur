@@ -14,6 +14,13 @@ export interface HardwareInfo {
     vendor?: string;
     /** `adapter.info.architecture` ("ampere", "gen-12lp", "metal-3"), when Chrome tells. */
     architecture?: string;
+    /**
+     * `adapter.info.description` (or `device`): the card's name, e.g. "NVIDIA GeForce RTX 3050
+     * Laptop GPU". Chrome leaves it empty unless WebGPU developer features are on.
+     */
+    description?: string;
+    /** `adapter.limits.maxStorageBufferBindingSize`, MB, when known. */
+    maxStorageBufferMB?: number;
     /** A software adapter (no graphics card behind it). */
     fallback?: boolean;
   };
@@ -47,9 +54,15 @@ export async function detectHardware(): Promise<HardwareInfo> {
       webgpu = {
         available: true,
         shaderF16: adapter.features.has('shader-f16'),
-        maxBufferMB: Math.floor(adapter.limits.maxBufferSize / (1024 * 1024)),
+        maxBufferMB: Math.floor(adapter.limits.maxBufferSize / MB),
+        ...(adapter.limits.maxStorageBufferBindingSize
+          ? { maxStorageBufferMB: Math.floor(adapter.limits.maxStorageBufferBindingSize / MB) }
+          : {}),
         ...(info?.vendor ? { vendor: info.vendor } : {}),
         ...(info?.architecture ? { architecture: info.architecture } : {}),
+        ...(info?.description || info?.device
+          ? { description: (info.description || info.device) as string }
+          : {}),
         ...(fallback !== undefined ? { fallback } : {}),
       };
     }
@@ -64,21 +77,30 @@ export async function detectHardware(): Promise<HardwareInfo> {
   };
 }
 
+const MB = 1024 * 1024;
+
 interface GpuAdapterLike {
   features: { has(name: string): boolean };
-  limits: { maxBufferSize: number };
-  info?: { vendor?: string; architecture?: string; isFallbackAdapter?: boolean };
+  limits: { maxBufferSize: number; maxStorageBufferBindingSize?: number };
+  info?: {
+    vendor?: string;
+    architecture?: string;
+    description?: string;
+    device?: string;
+    isFallbackAdapter?: boolean;
+  };
   isFallbackAdapter?: boolean;
 }
 
 /**
  * What kind of graphics card this looks like, from what WebGPU tells (it never tells how much
  * memory a card has):
- * - `discrete`: a card with its own memory (NVIDIA; Intel Arc).
+ * - `discrete`: a card with its own memory (NVIDIA; Intel Arc; AMD Radeon RX when named).
  * - `unified`: Apple silicon, sharing the computer's memory with plenty of bandwidth.
  * - `integrated`: other graphics built into the processor (Intel, Qualcomm, Arm), sharing memory.
  * - `software`: no graphics card (a fallback adapter).
- * - `unknown`: AMD (its cards and its processor graphics report alike), and anything else.
+ * - `unknown`: AMD without a name (its cards and its processor graphics report alike), and
+ *   anything else.
  */
 export type GpuKind = 'discrete' | 'unified' | 'integrated' | 'software' | 'unknown';
 
@@ -86,34 +108,122 @@ export function gpuKind(webgpu: HardwareInfo['webgpu']): GpuKind {
   if (!webgpu.available || webgpu.fallback) return 'software';
   const vendor = webgpu.vendor?.toLowerCase() ?? '';
   const arch = webgpu.architecture?.toLowerCase() ?? '';
+  const name = webgpu.description?.toLowerCase() ?? '';
   if (vendor === 'nvidia') return 'discrete';
   if (vendor === 'apple') return 'unified';
-  if (vendor === 'intel') return /^xe(2)?-hp[gc]/.test(arch) ? 'discrete' : 'integrated';
+  if (vendor === 'intel') {
+    return /^xe(2)?-hp[gc]/.test(arch) || /\barc\b.*\b[ab]\d{3}/.test(name)
+      ? 'discrete'
+      : 'integrated';
+  }
   if (vendor === 'qualcomm' || vendor === 'arm' || vendor === 'img-tec') return 'integrated';
+  if (vendor === 'amd') {
+    if (/radeon\s*(\(tm\)\s*)?(rx|pro\s*w)/.test(name)) return 'discrete';
+    if (/radeon\s*(\(tm\)\s*)?(graphics|vega|\d{3}m)\b/.test(name)) return 'integrated';
+  }
   return 'unknown';
 }
 
 /**
+ * Graphics memory a named card has, GB, from its name when the browser gives one: a size in the
+ * name ("RTX 3050 6GB Laptop GPU"), else the size most of that model ship with. Null when the
+ * name says nothing Murmur knows. Only cards that commonly have 8 GB or less are listed: those
+ * are the ones where the estimate matters.
+ */
+export function namedCardGB(description: string | undefined): number | null {
+  if (!description) return null;
+  const name = description.toLowerCase();
+  const stated = /\b(\d{1,2})\s?gb\b/.exec(name);
+  if (stated) return Number(stated[1]);
+  for (const [pattern, gb] of NAMED_CARDS) if (pattern.test(name)) return gb;
+  return null;
+}
+
+const NAMED_CARDS: readonly [RegExp, number][] = [
+  // NVIDIA laptop chips first: the same number has more memory on the desktop.
+  [/\bmx\s?\d{3}\b/, 2],
+  [/\brtx\s?(2050|3050)\b.*\b(laptop|mobile|max-q)\b/, 4],
+  [/\brtx\s?(3050\s?ti|a500|a1000|a2000)\b.*\b(laptop|mobile|max-q)\b/, 4],
+  [/\brtx\s?(3060|4050)\b.*\b(laptop|mobile|max-q)\b/, 6],
+  [/\brtx\s?(3070|3070\s?ti|4060|4070)\b.*\b(laptop|mobile|max-q)\b/, 8],
+  [/\bgtx\s?(1050|1050\s?ti|1650|1650\s?ti|1650\s?super)\b/, 4],
+  [/\bgtx\s?(1060|1660|1660\s?ti|1660\s?super)\b/, 6],
+  [/\brtx\s?(2060)\b/, 6],
+  [/\brtx\s?(3050)\b/, 8],
+  [/\brtx\s?(2070|2080|3060\s?ti|3070|3070\s?ti|4060|4060\s?ti)\b/, 8],
+  // Intel Arc.
+  [/\barc\b.*\ba3\d0m?\b/, 4],
+  [/\barc\b.*\ba5\d0m\b/, 4],
+  [/\barc\b.*\ba380\b/, 6],
+  // AMD Radeon RX.
+  [/\brx\s?(5300|5500|6400|6500|6500\s?xt|6500m|6550m)\b/, 4],
+  [/\brx\s?(5600|5600m|6600m|7600s)\b/, 6],
+];
+
+/**
+ * Graphics memory left for models on a card of `gb`, MB: the desktop, the browser and the driver
+ * keep some (about 0.6 GB on an 8 GB card in Murmur's measurements, more on Windows laptops).
+ */
+function usableMB(gb: number): number {
+  return Math.round(gb * 1024 * 0.85);
+}
+
+/**
  * A rough guess at the graphics memory models may use here, MB. A guess only: WebGPU doesn't say
- * how much memory a card has, so this goes by the kind of card, and the computer's memory for
- * graphics that share it. Engines that ask for more than it finds aren't chosen by a profile; one
- * that runs out anyway fails to load and hands over to its fallback.
+ * how much memory a card has, so this goes by what it does say, as hints:
+ * - the card's name, when the browser gives one (`namedCardGB`);
+ * - the kind of card (`gpuKind`), and for graphics that share the computer's memory, that memory
+ *   (`navigator.deviceMemory`, which Chrome caps at 8 GB);
+ * - a computer reporting under 8 GB of memory rarely has a card with more than 4 GB;
+ * - a card whose largest buffer is under 1 GB (`maxBufferSize`, `maxStorageBufferBindingSize`) is
+ *   an old or small one.
+ * No test allocation: on Windows the driver lets a program allocate past the card's memory (it
+ *   spills into the computer's), so a probe that succeeds proves little, and one that fills the
+ *   card can make the GPU process drop every page's graphics. Profiles go by this guess, then by
+ *   what actually happened on this device: a load that runs out of graphics memory steps down to
+ *   smaller models, and the next session starts there (profiles.ts, `LADDERS`).
  */
 export function estimateGpuMemoryMB(hw: HardwareInfo): number {
   const ramMB = (hw.deviceMemoryGB ?? 4) * 1024;
-  switch (gpuKind(hw.webgpu)) {
-    case 'software':
-      return 0;
+  const kind = gpuKind(hw.webgpu);
+  if (kind === 'software') return 0;
+  const named = namedCardGB(hw.webgpu.description);
+  if (named !== null && (kind === 'discrete' || kind === 'unknown')) return usableMB(named);
+  let mb: number;
+  switch (kind) {
     case 'discrete':
-      return 6144;
+      // Most cards Chrome users run WebGPU on have 6–8 GB or more.
+      mb = 6144;
+      if (hw.deviceMemoryGB !== null && hw.deviceMemoryGB < 8) mb = usableMB(4);
+      break;
     case 'unified':
       // Chrome reports at most 8 GB; about half of it is free for graphics.
-      return ramMB / 2;
+      mb = ramMB / 2;
+      break;
     case 'integrated':
-      return Math.min(2048, ramMB / 4);
+      mb = Math.min(2048, ramMB / 4);
+      break;
     case 'unknown':
-      return hw.webgpu.maxBufferMB >= 2048 ? 3072 : 2048;
+      mb = hw.webgpu.maxBufferMB >= 2048 ? 3072 : 2048;
+      break;
   }
+  const largestBufferMB = Math.min(
+    hw.webgpu.maxBufferMB,
+    hw.webgpu.maxStorageBufferMB ?? Number.POSITIVE_INFINITY,
+  );
+  if (largestBufferMB < 1024) mb = Math.min(mb, 3072);
+  return mb;
+}
+
+/**
+ * Identifies this device's graphics for the per-device record of which models fit
+ * (settings/memoryfit.ts): another card (or another browser profile on another computer) starts
+ * afresh.
+ */
+export function gpuKey(hw: HardwareInfo): string {
+  const w = hw.webgpu;
+  if (!w.available) return 'none';
+  return [w.vendor ?? '?', w.architecture ?? '?', w.description ?? '', w.maxBufferMB].join('|');
 }
 
 export function availableBackends(hw: HardwareInfo): ComputeBackend[] {
@@ -125,8 +235,20 @@ export function availableBackends(hw: HardwareInfo): ComputeBackend[] {
 
 export type RequirementCheck = { ok: true } | { ok: false; reasons: string[] };
 
+export interface CheckOptions {
+  /**
+   * Check the engine's graphics memory against the estimate (default). Profiles with a memory
+   * ladder check the two engines together instead (profiles.ts).
+   */
+  memory?: boolean;
+}
+
 /** Whether `req` fits `hw`, with plain reasons when it doesn't. */
-export function checkRequirements(req: HardwareRequirements, hw: HardwareInfo): RequirementCheck {
+export function checkRequirements(
+  req: HardwareRequirements,
+  hw: HardwareInfo,
+  { memory = true }: CheckOptions = {},
+): RequirementCheck {
   const reasons: string[] = [];
   const have = availableBackends(hw);
   const usable = req.backends.filter((b) => have.includes(b));
@@ -140,7 +262,7 @@ export function checkRequirements(req: HardwareRequirements, hw: HardwareInfo): 
   if (gpuOnly && req.minGpuBufferMB && hw.webgpu.maxBufferMB < req.minGpuBufferMB) {
     reasons.push(`Needs a GPU buffer of ${req.minGpuBufferMB} MB.`);
   }
-  if (gpuOnly && req.minGpuMemoryMB && estimateGpuMemoryMB(hw) < req.minGpuMemoryMB) {
+  if (memory && gpuOnly && req.minGpuMemoryMB && estimateGpuMemoryMB(hw) < req.minGpuMemoryMB) {
     reasons.push(
       gpuKind(hw.webgpu) === 'software'
         ? 'Needs a graphics card.'
@@ -161,12 +283,13 @@ export function checkRequirements(req: HardwareRequirements, hw: HardwareInfo): 
 export function checkEngine(
   info: Pick<EngineInfoBase, 'requirements' | 'unavailable'>,
   hw: HardwareInfo,
+  options: CheckOptions = {},
 ): RequirementCheck {
   if (info.unavailable) return { ok: false, reasons: [info.unavailable] };
-  return checkRequirements(info.requirements, hw);
+  return checkRequirements(info.requirements, hw, options);
 }
 
-function formatGB(mb: number): string {
+export function formatGB(mb: number): string {
   return `${(mb / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
 }
 

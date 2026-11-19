@@ -182,9 +182,11 @@ export const QWEN3_ASR_INFO: AsrEngineInfo = {
   requirements: {
     backends: ['webgpu'],
     shaderF16: true,
-    // The largest single weight is 156 MB; the whole model needs about 1.3 GB of GPU memory.
+    // The largest single weight is 156 MB.
     minGpuBufferMB: 256,
     minDeviceMemoryGB: 8,
+    // 1.3 GB after load and warm-up; 2.0 GB at the peak on 26 s clips (segments are ≤ 5 s).
+    minGpuMemoryMB: 1536,
     downloadMB: downloadMB(QWEN3_ASR_ID),
   },
   models: [
@@ -202,17 +204,16 @@ export const QWEN3_ASR_17B_INFO: AsrEngineInfo = {
   id: QWEN3_ASR_17B_ID,
   label: 'Qwen3-ASR 1.7B',
   description:
-    'The most accurate speech recognition on the graphics card, and it follows language switches. Needs a graphics card with its own memory. 2.3 GB download.',
+    'The most accurate speech recognition on the graphics card, and it follows language switches. Needs about 3 GB of graphics memory. 2.3 GB download.',
   requirements: {
     backends: ['webgpu'],
     shaderF16: true,
     // The largest single weight is 311 MB.
     minGpuBufferMB: 512,
     minDeviceMemoryGB: 8,
-    // Its own 2.4 GB (3.2 GB at the peak), next to the translation model: 5.6 GB measured with
-    // Gemma 4 E4B. More than E4B asks for, so a device that fits only one of them keeps E4B
-    // and gets the 0.6B (profiles.ts).
-    minGpuMemoryMB: 6144,
+    // 2.4 GB after load and warm-up, 3.15 GB at the peak on 26 s clips; 2.7 GB in a session
+    // (5.4 GB with Gemma 4 E4B, 5.6 GB at the peak).
+    minGpuMemoryMB: 3072,
     downloadMB: downloadMB(QWEN3_ASR_17B_ID),
   },
   models: [

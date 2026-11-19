@@ -5,6 +5,7 @@ import {
   PROFILE_ORDER,
   type ProfileChoice,
   type ProfileId,
+  type ResolveOptions,
   resolveEngines,
 } from '@/engines/profiles';
 import type { EngineRegistry } from '@/engines/registry';
@@ -50,14 +51,18 @@ export function knownModels(registry: EngineRegistry): ModelInfo[] {
   return out;
 }
 
-/** Models `choice` needs on this device, de-duplicated, speech first. */
+/**
+ * Models `choice` needs on this device, de-duplicated, speech first: those of the engines a session
+ * starts with (for Balanced and Best, the step of the memory ladder it starts at: `options`).
+ */
 export function modelsFor(
   choice: ProfileChoice,
   custom: { asr: string; translation: string },
   registry: EngineRegistry,
   hardware: HardwareInfo,
+  options: ResolveOptions = {},
 ): ModelInfo[] {
-  const engines = resolveEngines(choice, custom, registry, hardware);
+  const engines = resolveEngines(choice, custom, registry, hardware, options);
   const models = [
     ...engineModels(registry.asrInfo(engines.asr), hardware),
     ...engineModels(registry.translationInfo(engines.translation), hardware),
@@ -71,10 +76,11 @@ export function allModels(
   custom: { asr: string; translation: string },
   registry: EngineRegistry,
   hardware: HardwareInfo,
+  optionsFor: (profile: ProfileId) => ResolveOptions = () => ({}),
 ): { info: ModelInfo; profiles: ProfileId[] }[] {
   const byId = new Map<string, { info: ModelInfo; profiles: ProfileId[] }>();
   for (const profile of PROFILE_ORDER) {
-    for (const info of modelsFor(profile, custom, registry, hardware)) {
+    for (const info of modelsFor(profile, custom, registry, hardware, optionsFor(profile))) {
       const entry = byId.get(info.id) ?? { info, profiles: [] };
       entry.profiles.push(profile);
       byId.set(info.id, entry);

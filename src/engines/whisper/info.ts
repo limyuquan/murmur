@@ -245,6 +245,8 @@ export const WHISPER_TURBO_INFO: AsrEngineInfo = {
     shaderF16: true,
     minGpuBufferMB: 1024,
     minDeviceMemoryGB: 8,
+    // Not measured: its 1.6 GB of weights, and some buffers.
+    minGpuMemoryMB: 1792,
     downloadMB: WHISPER_MODELS['whisper-large-v3-turbo'].webgpu?.downloadMB ?? 0,
   },
   // Large v3 also knows Cantonese.

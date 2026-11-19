@@ -97,10 +97,18 @@ describe('catalog', () => {
       ['qwen3-asr-1.7b-webgpu', '2.3 GB'],
       ['gemma4-e4b-webgpu', '3.0 GB'],
     ]);
+    // Balanced: the 1.7B too where memory allows (2.3 + 2.0 GB), else, or by choice, the 0.6B.
     expect(sized('balanced', NVIDIA)).toEqual([
-      ['qwen3-asr-0.6b-webgpu', '1.1 GB'],
+      ['qwen3-asr-1.7b-webgpu', '2.3 GB'],
       ['gemma4-e2b-webgpu', '2.0 GB'],
     ]);
+    expect(
+      modelsFor('balanced', custom, published, NVIDIA, { smallerSpeech: true }).map((m) => m.id),
+    ).toEqual(['qwen3-asr-0.6b-webgpu', 'gemma4-e2b-webgpu']);
+    // A step down recorded on this device: what it steps down to.
+    expect(
+      modelsFor('balanced', custom, published, NVIDIA, { fit: { step: 1 } }).map((m) => m.id),
+    ).toEqual(['qwen3-asr-0.6b-webgpu', 'gemma4-e2b-webgpu']);
     const apple = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'apple' } };
     expect(sized('best', apple)).toEqual([
       ['qwen3-asr-0.6b-webgpu', '1.1 GB'],

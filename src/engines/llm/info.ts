@@ -75,8 +75,8 @@ export const GEMMA_E2B_INFO: TranslationEngineInfo = {
     backends: ['webgpu'],
     minDeviceMemoryGB: 8,
     minGpuBufferMB: 512,
-    // Its own 1.2 GB, next to the speech model: measured 2.9–4.5 GB together.
-    minGpuMemoryMB: 3072,
+    // 1.16 GB measured. With Qwen3-ASR 0.6B: 2.9–4.5 GB together, depending on the order.
+    minGpuMemoryMB: 1280,
     downloadMB: sizeMB(GEMMA_E2B_ID),
   },
   models: [
@@ -94,13 +94,13 @@ export const GEMMA_E4B_INFO: TranslationEngineInfo = {
   id: GEMMA_E4B_ID,
   label: 'Gemma 4 E4B',
   description:
-    'A larger language model: somewhat better translations, slower, and it needs a graphics card with its own memory. 3.0 GB download.',
+    'A larger language model: somewhat better translations, slower, and it needs about 3 GB of graphics memory. 3.0 GB download.',
   requirements: {
     backends: ['webgpu'],
     minDeviceMemoryGB: 8,
     minGpuBufferMB: 1024,
-    // Its own 2.7 GB, next to the speech model: about 4.5–5.5 GB together.
-    minGpuMemoryMB: 5120,
+    // 2.68 GB measured. With Qwen3-ASR 1.7B: 5.6 GB together at the peak.
+    minGpuMemoryMB: 2816,
     downloadMB: sizeMB(GEMMA_E4B_ID),
   },
   models: [
