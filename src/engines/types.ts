@@ -327,6 +327,13 @@ export interface TranslationRequest {
     translation: string;
     language?: LanguageTag;
   };
+  /**
+   * Finished lines: how long the translator may take before the session's backup translates the
+   * line instead, ms (`LineFallbackTranslator`), and so when it is due. Translators with a queue
+   * take finished lines that are due sooner first. Default `LINE_BUDGET_MS` (a live line, already
+   * late); a line made ahead of time has until shortly before it is shown (`lookaheadBudgetMs`).
+   */
+  budgetMs?: number;
   signal: AbortSignal;
 }
 

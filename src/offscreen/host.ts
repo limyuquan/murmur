@@ -273,6 +273,7 @@ export class OffscreenHost {
       onCue: hooks.onCue,
       onSegment: hooks.onSegment,
       onError: hooks.onError,
+      untilShownMs: hooks.untilShownMs,
     });
   }
 

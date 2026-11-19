@@ -4,7 +4,9 @@
  * graphics memory back.
  *
  * - One generation at a time. A finished line goes before queued previews of unfinished ones
- *   (`sourceFinal: false`) and stops a preview that is running.
+ *   (`sourceFinal: false`) and stops a preview that is running. Finished lines go in the order
+ *   they are due (`request.budgetMs` from when they were asked for): a live line, already late,
+ *   before a line made ahead of time that shows in a while.
  * - Each line's prompt (prompt.ts) has its language as the speech engine heard it, the earlier
  *   lines it was given with their languages, the glossary entries it needs and the session's
  *   languages. Every line is translated, whatever its language. Number words in the lines are
@@ -19,6 +21,7 @@
  */
 import { isComplete } from '@/models/hub';
 import { EngineUnavailableError, ModelError } from '../errors';
+import { LINE_BUDGET_MS } from '../translators';
 import type {
   EngineState,
   LanguageTag,
@@ -115,6 +118,8 @@ interface Job {
   raw: string;
   tokens: number;
   queuedAt: number;
+  /** A finished line: when it is due (`performance.now()` scale). */
+  dueAt: number;
   startedAt: number | null;
   /** Events not yet taken, and the taker waiting for one. */
   events: JobEvent[];
@@ -276,7 +281,14 @@ export class LlmTranslationEngine implements TranslationEngine {
       },
       MAX_NUM_TOKENS - maxTokens - TEMPLATE_TOKENS,
     );
-    const job = this.enqueue(request.segmentId, request.sourceFinal, prompt, maxTokens);
+    const job = this.enqueue(
+      request.segmentId,
+      request.sourceFinal,
+      prompt,
+      maxTokens,
+      false,
+      request.budgetMs,
+    );
     const onAbort = () => this.stop(job);
     request.signal.addEventListener('abort', onAbort, { once: true });
     const labels = [languageName(request.target)];
@@ -389,7 +401,9 @@ export class LlmTranslationEngine implements TranslationEngine {
     prompt: Prompt,
     maxTokens: number,
     revision = false,
+    budgetMs = LINE_BUDGET_MS,
   ): Job {
+    const queuedAt = performance.now();
     const job: Job = {
       id: this.nextId++,
       segmentId,
@@ -399,7 +413,8 @@ export class LlmTranslationEngine implements TranslationEngine {
       maxTokens,
       raw: '',
       tokens: 0,
-      queuedAt: performance.now(),
+      queuedAt,
+      dueAt: queuedAt + budgetMs,
       startedAt: null,
       events: [],
       wake: null,
@@ -407,8 +422,8 @@ export class LlmTranslationEngine implements TranslationEngine {
       stopping: false,
     };
     if (final) {
-      // Before any queued preview, after the finished lines already waiting.
-      const at = this.queue.findIndex((j) => !j.final);
+      // Before any queued preview, and before the finished lines due later.
+      const at = this.queue.findIndex((j) => !j.final || j.dueAt > job.dueAt);
       this.queue.splice(at < 0 ? this.queue.length : at, 0, job);
       if (this.active && !this.active.final) this.stop(this.active);
     } else {

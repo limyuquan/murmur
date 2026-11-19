@@ -412,6 +412,34 @@ describe('LLM translation engine', () => {
     expect(worker.generations.map((g) => g.id)).toHaveLength(3);
   });
 
+  it('takes the finished line due first: a live line before lines made ahead of time', async () => {
+    worker.auto = false;
+    worker.answers = ['running', 'live line', 'later line', 'sooner line'];
+    const running = collect(engine.translate(request('Un', { segmentId: 'r', budgetMs: 15_000 })));
+    await tick();
+    const later = collect(
+      engine.translate(request('Plus tard', { segmentId: 'later', budgetMs: 18_000 })),
+    );
+    const sooner = collect(
+      engine.translate(request('Bientôt', { segmentId: 'sooner', budgetMs: 8_000 })),
+    );
+    const live = collect(engine.translate(request('En direct', { segmentId: 'live' })));
+    await tick();
+    for (let i = 0; i < 4; i++) {
+      worker.finish();
+      await tick();
+    }
+    await Promise.all([running, later, sooner, live]);
+    const order = worker.sent.flatMap((m) => (m.type === 'generate' ? [m.user] : []));
+    // The running line isn't stopped; then by when each is due.
+    expect(order.map((u) => /Un|En direct|Bientôt|Plus tard/.exec(u)?.[0])).toEqual([
+      'Un',
+      'En direct',
+      'Bientôt',
+      'Plus tard',
+    ]);
+  });
+
   it('stops the generation when the request is aborted', async () => {
     worker.auto = false;
     const controller = new AbortController();

@@ -58,6 +58,11 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   pipeline stops recognizing (capture and its activity tracking go on); under `RESUME_LIVE_S`
   (1.5 s) it starts again. A seek out of the job's stretch, or audio removed under it, drops the
   job at once (its unfinished cues are dropped in the overlay too).
+- Translation: a line made ahead of time may take until `LOOKAHEAD_MARGIN_MS` (1 s) before the
+  playhead reaches it, at least a live line's 3 s and at most `LOOKAHEAD_BUDGET_CAP_MS` (20 s),
+  before Chrome's translator does it instead (`lookaheadBudgetMs`, from the runner's
+  `untilShownMs`; paused: the cap). Gemma takes finished lines by when they are due, so live
+  lines (due in 3 s) and the lines nearest the playhead go first.
 - Processed spans and cues are kept per content key: a site's id for the video (YouTube's `v`),
   else the timeline, so a video coming back in a new MediaSource after an ad isn't redone. Ads
   (`.ad-showing`) are never subtitled ahead.

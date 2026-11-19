@@ -4,7 +4,8 @@
  * - The glossary: a translator that uses one (`usesGlossary`) gets, with each line, the entries
  *   that line or its context uses (glossary.ts). The pipeline knows nothing of glossaries.
  * - A fallback per line (`LineFallbackTranslator`): a translator that may be slow or fail on a
- *   line (an LLM) gets a time budget for each finished line. If it fails, gives an answer it
+ *   line (an LLM) gets a time budget for each finished line: 3 s for a live line, until shortly
+ *   before it shows for a line made ahead of time (lookahead). If it fails, gives an answer it
  *   rejects itself, or takes longer than the budget, the backup (Chrome's translator) translates
  *   that line instead, and the session is told why. If it stops for good (its worker crashed),
  *   the backup translates every later line.
@@ -25,6 +26,22 @@ import type {
 
 /** Longest a finished line may take before the backup translates it, ms. */
 export const LINE_BUDGET_MS = 3000;
+/** A line made ahead of time is translated this long before it is shown, at the latest, ms. */
+export const LOOKAHEAD_MARGIN_MS = 1000;
+/** Longest a line made ahead of time may take, however far ahead it is, ms. */
+export const LOOKAHEAD_BUDGET_CAP_MS = 20_000;
+
+/**
+ * The time budget of a line made ahead of time that is shown in `untilMs` (Infinity: paused): up
+ * to `LOOKAHEAD_MARGIN_MS` before it shows, at most `LOOKAHEAD_BUDGET_CAP_MS`, and never less than
+ * a live line gets (a line due now is as late as a live one, and no later for waiting).
+ */
+export function lookaheadBudgetMs(untilMs: number): number {
+  if (Number.isNaN(untilMs)) return LINE_BUDGET_MS;
+  return Math.round(
+    Math.max(LINE_BUDGET_MS, Math.min(LOOKAHEAD_BUDGET_CAP_MS, untilMs - LOOKAHEAD_MARGIN_MS)),
+  );
+}
 
 /** Gives each request the glossary entries its line or context uses. */
 export function withGlossary(
@@ -58,6 +75,7 @@ export interface FallbackEvent {
 export interface LineFallbackOptions {
   /** Makes and loads the backup translator (once, when first needed). */
   backup: () => Promise<TranslationEngine>;
+  /** For lines whose request names none. Default `LINE_BUDGET_MS`. */
   budgetMs?: number;
   onFallback?(event: FallbackEvent): void;
 }
@@ -104,7 +122,7 @@ export class LineFallbackTranslator implements TranslationEngine {
       yield* this.primary.translate(request);
       return;
     }
-    const budget = this.options.budgetMs ?? LINE_BUDGET_MS;
+    const budget = request.budgetMs ?? this.options.budgetMs ?? LINE_BUDGET_MS;
     const timer = new AbortController();
     const signal = AbortSignal.any([request.signal, timer.signal]);
     const timeout = setTimeout(() => timer.abort(new Error('too slow')), budget);

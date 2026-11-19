@@ -52,6 +52,8 @@ export interface PipelineHooks {
   onCue(cue: Cue): void;
   onSegment(event: Extract<SegmentEvent, { type: 'start' | 'end' }>): void;
   onError(error: Error): void;
+  /** How long until the playhead reaches `start` (media seconds), ms; Infinity while paused. */
+  untilShownMs(start: number): number;
 }
 
 export interface RunnerDeps {
@@ -111,6 +113,20 @@ export class LookaheadRunner {
   setTarget(target: RunnerTarget | null): void {
     this.target = target;
     this.kick();
+  }
+
+  /**
+   * How long until the playhead reaches `start` (media seconds) on the video playing, ms:
+   * Infinity while paused or with nothing playing, 0 once reached.
+   */
+  untilShownMs(start: number): number {
+    const target = this.target;
+    if (!target || target.playhead.paused || target.playhead.rate <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const now = this.deps.now();
+    const playhead = playheadAt(target.playhead, now);
+    return Math.max(0, ((start - playhead) / target.playhead.rate) * 1000);
   }
 
   /** Lookahead's lead at the playhead, seconds (last computed). */
@@ -262,6 +278,7 @@ export class LookaheadRunner {
           }
         },
         onError: (err) => console.warn('[murmur] lookahead pipeline', err),
+        untilShownMs: (start) => this.untilShownMs(start),
       },
     );
     if (!pipeline) return null;

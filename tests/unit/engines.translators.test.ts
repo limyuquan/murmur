@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EngineUnavailableError } from '@/engines/errors';
 import { LlmOutputError } from '@/engines/llm/engine';
 import { GEMMA_E2B_INFO } from '@/engines/llm/info';
-import { LineFallbackTranslator, sessionTranslator, withGlossary } from '@/engines/translators';
+import {
+  LINE_BUDGET_MS,
+  LineFallbackTranslator,
+  LOOKAHEAD_BUDGET_CAP_MS,
+  lookaheadBudgetMs,
+  sessionTranslator,
+  withGlossary,
+} from '@/engines/translators';
 import type {
   TranslationChunk,
   TranslationEngine,
@@ -122,6 +129,47 @@ describe('line fallback', () => {
     ]);
     expect(primary.requests[0]?.signal.aborted).toBe(true);
     expect(events).toEqual([{ segmentId: 's1', reason: 'took longer than 3 s', permanent: false }]);
+  });
+
+  it('gives a line made ahead of time until shortly before it shows', async () => {
+    expect(lookaheadBudgetMs(12_000)).toBe(11_000);
+    // Due soon or now: as long as a live line, no less.
+    expect(lookaheadBudgetMs(2_000)).toBe(LINE_BUDGET_MS);
+    expect(lookaheadBudgetMs(0)).toBe(LINE_BUDGET_MS);
+    // Far ahead, or paused: capped.
+    expect(lookaheadBudgetMs(60_000)).toBe(LOOKAHEAD_BUDGET_CAP_MS);
+    expect(lookaheadBudgetMs(Number.POSITIVE_INFINITY)).toBe(LOOKAHEAD_BUDGET_CAP_MS);
+    expect(lookaheadBudgetMs(Number.NaN)).toBe(LINE_BUDGET_MS);
+  });
+
+  it('waits out a request’s own budget before the backup steps in', async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | null = null;
+    const primary = scripted(INFO, async function* (r) {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+        r.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      if (!r.signal.aborted) yield { text: 'Hello', final: true };
+    });
+    const events: unknown[] = [];
+    const t = new LineFallbackTranslator(primary, {
+      backup: async () => backup(),
+      onFallback: (e) => events.push(e),
+    });
+    // Due in a while: slow, but in time.
+    const slow = collect(t.translate(request('Bonjour', { budgetMs: 11_000 })));
+    await vi.advanceTimersByTimeAsync(8_000);
+    (release as (() => void) | null)?.();
+    expect(await slow).toEqual([{ text: 'Hello', final: true }]);
+    expect(events).toEqual([]);
+    // Past its own budget: the backup.
+    const late = collect(t.translate(request('Bonjour', { budgetMs: 11_000 })));
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(await late).toEqual([{ text: 'backup: Bonjour', final: true }]);
+    expect(events).toEqual([
+      { segmentId: 's1', reason: 'took longer than 11 s', permanent: false },
+    ]);
   });
 
   it('has the backup translate a line the translator fails on or rejects', async () => {

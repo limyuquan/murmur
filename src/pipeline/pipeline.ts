@@ -27,6 +27,7 @@
  */
 import { SampleClock } from '@/capture/clock';
 import { type AudioFrame, PIPELINE_SAMPLE_RATE } from '@/capture/types';
+import { LINE_BUDGET_MS, lookaheadBudgetMs } from '@/engines/translators';
 import type {
   AsrEngine,
   AsrHealth,
@@ -99,9 +100,17 @@ export interface PipelineOptions {
    * (`Cue.media`), their ids start with `idPrefix`, and the ASR session runs in batch mode.
    */
   media?: { timeline: string; idPrefix: string };
+  /**
+   * Lookahead: how long until the moment at `start` (media seconds) is shown, ms (Infinity while
+   * paused). A finished line may take until shortly before then to translate
+   * (`lookaheadBudgetMs`) instead of a live line's budget.
+   */
+  untilShownMs?(start: number): number;
 }
 
 export const TRANSLATION_TIMEOUT_MS = 10_000;
+/** Past a line's translation budget, what its backup gets before the line is given up, ms. */
+const BACKUP_SLACK_MS = TRANSLATION_TIMEOUT_MS - LINE_BUDGET_MS;
 
 /** Segments for engines that listen to the track: pauses only, cut late. */
 export const TRACK_SEGMENTER: SegmenterOptions = { strategy: 'pause', maxSegmentMs: 20_000 };
@@ -294,6 +303,13 @@ export class Pipeline {
     return state;
   }
 
+  /** A lookahead line's translation budget (until shortly before it shows); live: the default. */
+  private budgetFor(cue: Cue): number | undefined {
+    const until = this.options.untilShownMs;
+    if (!until || !cue.media) return undefined;
+    return lookaheadBudgetMs(until(cue.media.start));
+  }
+
   /** Times a cue: in epoch ms as heard, or (lookahead) on the video's timeline. */
   private place(cue: Cue, startSample: number, endSample: number): void {
     const media = this.options.media;
@@ -405,16 +421,23 @@ export class Pipeline {
     if (this.closing.signal.aborted) return;
     const timeout = new AbortController();
     const signal = AbortSignal.any([this.closing.signal, timeout.signal]);
+    const budgetMs = this.budgetFor(state.cue);
+    let timeoutMs = this.options.translationTimeoutMs ?? TRANSLATION_TIMEOUT_MS;
+    // The backup still gets its time after a longer budget.
+    if (budgetMs !== undefined) timeoutMs = Math.max(timeoutMs, budgetMs + BACKUP_SLACK_MS);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<void>((resolve) => {
       timer = setTimeout(() => {
         timeout.abort(new Error('The translation took too long.'));
         resolve();
-      }, this.options.translationTimeoutMs ?? TRANSLATION_TIMEOUT_MS);
+      }, timeoutMs);
     });
     const previous = this.previousFor(text, language);
     // A translator that ignores the signal still lets the queue go on.
-    await Promise.race([this.translate(state, text, language, true, signal, previous), expired]);
+    await Promise.race([
+      this.translate(state, text, language, true, signal, previous, budgetMs),
+      expired,
+    ]);
     clearTimeout(timer);
     if (timeout.signal.aborted && !this.closing.signal.aborted) {
       this.lastLine = null;
@@ -432,6 +455,7 @@ export class Pipeline {
     final: boolean,
     signal: AbortSignal = this.closing.signal,
     previous?: TranslationRequest['previous'],
+    budgetMs?: number,
   ): Promise<void> {
     const { cue } = state;
     const target = this.options.targetLanguage;
@@ -449,6 +473,7 @@ export class Pipeline {
           sourceFinal: final,
           context: this.context.slice(-lines),
           ...(previous ? { previous } : {}),
+          ...(budgetMs !== undefined ? { budgetMs } : {}),
           signal,
         })
         [Symbol.asyncIterator]();

@@ -6,6 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { EchoAsrEngine } from '@/engines/demo/echoAsr';
 import { PassthroughTranslationEngine } from '@/engines/demo/passthroughTranslator';
+import { LINE_BUDGET_MS, LOOKAHEAD_BUDGET_CAP_MS } from '@/engines/translators';
+import type { TranslationEngine, TranslationRequest } from '@/engines/types';
 import { PCM_RATE, PcmTimeline } from '@/lookahead/pcm';
 import { LookaheadRunner, type RunnerTarget } from '@/lookahead/runner';
 import type { Playhead } from '@/lookahead/scheduler';
@@ -32,7 +34,7 @@ async function flushAll(t: { runner: LookaheadRunner; advance(ms: number): void 
   }
 }
 
-function setup() {
+function setup(translator: TranslationEngine = new PassthroughTranslationEngine()) {
   const pcm = new PcmTimeline();
   const cues = new Map<string, Cue>();
   const coverage: [number, number][][] = [];
@@ -43,13 +45,14 @@ function setup() {
     createPipeline: (media, hooks) =>
       new Pipeline({
         asr: new EchoAsrEngine(),
-        translator: new PassthroughTranslationEngine(),
+        translator,
         targetLanguage: 'en',
         sourceLanguage: null,
         media,
         onCue: hooks.onCue,
         onSegment: hooks.onSegment,
         onError: hooks.onError,
+        untilShownMs: hooks.untilShownMs,
       }),
     pcm: (t) => (t === 'ms1' ? pcm : undefined),
     onCue: (cue) => cues.set(cue.id, cue),
@@ -141,6 +144,41 @@ describe('LookaheadRunner', () => {
     await flushAll(t);
     expect(t.runner.spans('video')).toEqual([[0, 30]]);
     expect(finished(t.cues).length).toBe(before + 2);
+  });
+
+  it('gives each line until shortly before the playhead reaches it to translate', async () => {
+    const inner = new PassthroughTranslationEngine();
+    const requests: TranslationRequest[] = [];
+    const translator: TranslationEngine = {
+      info: inner.info,
+      get state() {
+        return inner.state;
+      },
+      load: () => inner.load(),
+      unload: () => inner.unload(),
+      translate(request) {
+        requests.push(request);
+        return inner.translate(request);
+      },
+    };
+    const t = setup(translator);
+    t.pcm.write(0, audio());
+    t.runner.setTarget(t.target(0, false));
+    expect(t.runner.untilShownMs(10)).toBe(10_000);
+    expect(t.runner.untilShownMs(-1)).toBe(0);
+    await flushAll(t);
+    const budgets = requests.filter((r) => r.sourceFinal).map((r) => r.budgetMs ?? 0);
+    expect(budgets).toHaveLength(6);
+    // The first line is due at once: a live line's budget. Later ones get more, up to the cap.
+    expect(budgets[0]).toBe(LINE_BUDGET_MS);
+    expect(budgets.at(-1)).toBeGreaterThan(15_000);
+    for (const [i, b] of budgets.entries()) {
+      expect(b).toBeLessThanOrEqual(LOOKAHEAD_BUDGET_CAP_MS);
+      if (i > 0) expect(b).toBeGreaterThanOrEqual(budgets[i - 1] ?? 0);
+    }
+    // Paused: nothing is due.
+    t.runner.setTarget(t.target(0, true));
+    expect(t.runner.untilShownMs(10)).toBe(Number.POSITIVE_INFINITY);
   });
 
   it('never works on an ad', async () => {
