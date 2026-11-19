@@ -141,8 +141,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 - Fixture pages live in `tests/fixtures/pages/`, served on `http://127.0.0.1:4392/` by
   `scripts/serve-fixtures.mjs`, and again on port 4393, another origin, for frames from another
   site (`frames.html`). The same server stands in for Hugging Face at `/hf/`: e2e builds
-  download models from there (every file in `src/engines/whisper/files.json`, at its real size,
-  filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40).
+  download models from there (every file in `src/engines/*/files.json`, at its real size,
+  filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40). With `FIXTURE_HF_DIR=<dir>` it
+  serves real files where `<dir>` has them (`<dir>/<repo>/<path>`, else `<dir>/<path>`).
 - If `playwright test` hangs before any test starts, the machine may hang on connections to a
   closed localhost port instead of refusing them (seen with WSL mirrored networking). Start
   `node scripts/serve-fixtures.mjs` yourself first; Playwright reuses it.
@@ -157,7 +158,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/entrypoints/offscreen/`, `src/offscreen/host.ts` | Offscreen document (`USER_MEDIA`): capture graph, engines, pipeline, cues to the overlay |
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
 | `src/pipeline/` | VAD hook, segmenter, orchestration (ASR → translation → cues), per-segment language |
-| `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), demo engines (e2e builds only) |
+| `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
@@ -208,7 +209,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 5. List what it downloads in `info.models`: id, label, size and the exact files (`source`: a
    Hugging Face repo at a pinned commit, with each file's byte size and its hash on the Hub,
    `sha256:` for Git LFS files and `git-sha1:` for the others, checked after download), one entry
-   per `backend` when the weights differ by backend. The options page, welcome page and popup show
+   per `backend` when the weights differ by backend. A file from another repo names it
+   (`from: { repo, revision }`). Files Murmur makes itself go in `MURMUR_MODELS`
+   (`src/models/hub.ts`); until that repo is published, an engine that needs them sets
+   `info.unavailable` where models come from Hugging Face. The options page, welcome page and popup show
    and manage those; the service worker downloads them into the Cache API (`src/models/store.ts`)
    only when the person clicks Download. `load()` must never download: read the files with
    `modelFileCache(source)` / `readFile` (`src/models/hub.ts`) and throw
@@ -231,6 +235,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 |---|---|---|
 | `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
 | `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
+| `qwen3-asr-0.6b` | Qwen3-ASR-0.6B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker | First in Balanced. SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). **Those files aren't published yet**, so production builds show it unavailable and Balanced runs turbo. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; Whisper's scheduler and guards (`segments.ts`). |
 | `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions (`whisper/files.json`), one download per backend, read from the model cache with the network off. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
 
 - **Chrome language packs need a click.** Chrome only starts a speech or translation pack
@@ -243,8 +248,8 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   `setup` too.
 - **Spoken languages** (a setting; empty means the browser's languages).
   `SessionConfig.spokenLanguages` tells Chrome speech which recognizers to run (the first 4) and
-  Chrome translation which packs to check; with `onlySpoken`, Whisper picks each line's language
-  among them only.
+  Chrome translation which packs to check; with `onlySpoken`, Whisper and Qwen3-ASR pick each
+  line's language among them only.
 - **No COEP/COOP.** Cross-origin isolation breaks tab capture; threaded WebAssembly works
   without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime, which ships in the
   extension.
@@ -257,6 +262,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   over CDP from a separate, temporary Chrome profile. With puppeteer over a pipe, send nothing
   else to the browser while `start()` runs: a second CDP call then made Chrome 157 drop the
   connection.
+  Qwen3-ASR before its files are published: put them in a folder, run
+  `FIXTURE_HF_DIR=<folder> node scripts/serve-fixtures.mjs` and use the plain e2e build, which
+  downloads from that server. `__murmurLog.decodes` lists each of its decodes (kind, audio and
+  decode ms, tokens, text).
 
 ### 8. Known limits
 
