@@ -3,6 +3,9 @@ import type { RoleFit } from './captions';
 import { MAX_LINE_UNITS, type Measure } from './linebreak';
 import { FONT_STACK, MAIN_WEIGHT, ORIGINAL_MIN_PX, ORIGINAL_SCALE } from './styles';
 
+/** Widths kept per measurer. */
+const MEASURE_CACHE = 20_000;
+
 export function createMeasurer(doc: Document, px: number, weight: number): Measure | undefined {
   const ctx = doc.createElement('canvas').getContext('2d');
   if (!ctx) return undefined;
@@ -13,7 +16,8 @@ export function createMeasurer(doc: Document, px: number, weight: number): Measu
     if (w === undefined) {
       ctx.font = font;
       w = ctx.measureText(text).width;
-      if (cache.size > 4000) cache.clear();
+      // Paging a long line measures many thousands of candidate rows.
+      if (cache.size > MEASURE_CACHE) cache.clear();
       cache.set(text, w);
     }
     return w;

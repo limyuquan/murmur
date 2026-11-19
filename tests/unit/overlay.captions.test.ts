@@ -4,6 +4,7 @@ import {
   DEFAULT_VIEW,
   isDone,
   LINGER_MS,
+  STALE_MS,
   type ViewOptions,
 } from '@/overlay/captions';
 import { MIN_DISPLAY_MS, readingMs } from '@/overlay/linebreak';
@@ -158,8 +159,9 @@ describe('CaptionStore timing', () => {
 
   it('keeps a cue that is still changing however old it is', () => {
     const s = new CaptionStore();
-    s.apply(cue('a', 1, { untranslated: 'pending', translation: null }), 0);
-    expect(s.nextChange(0)).toBeNull();
+    for (let at = 0; at <= 50_000; at += 10_000) {
+      s.apply(cue('a', 1, { ...partialSource(`said ${at}`) }), at);
+    }
     expect(texts(s, 60_000)).toHaveLength(1);
   });
 
@@ -253,5 +255,41 @@ describe('CaptionStore language tags', () => {
         .at(-1)
         ?.lines.map((l) => l.tag),
     ).toEqual([null]);
+  });
+});
+
+describe('CaptionStore costs and leftovers', () => {
+  it('lays out a long finished original once, not on every refresh', () => {
+    let measured = 0;
+    const measure = (text: string) => {
+      measured++;
+      return text.length * 8;
+    };
+    const fit = { maxUnits: 42, maxWidth: 336, measure };
+    const s = new CaptionStore();
+    const long = 'une phrase assez longue pour plusieurs lignes, '.repeat(10);
+    s.apply(cue('a', 1, { source: { text: long, language: 'fr', final: true } }), 0);
+    const v = view({ fit: { main: fit, original: fit }, fitKey: 'k' });
+    s.visible(0, v);
+    const first = measured;
+    expect(first).toBeGreaterThan(0);
+    // Partial updates of the next line refresh the picture many times a second.
+    for (let i = 0; i < 20; i++) {
+      s.apply(cue('b', 2, partialSource(`suite ${i}`)), i);
+      s.visible(i, v);
+    }
+    const perRefresh = (measured - first) / 20;
+    expect(perRefresh).toBeLessThan(50);
+    // A different fit lays it out again.
+    s.visible(21, view({ fit: { main: fit, original: fit }, fitKey: 'k2' }));
+    expect(measured - first).toBeGreaterThan(20 * perRefresh);
+  });
+
+  it('drops a cue that stopped changing before it finished', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1, { untranslated: 'pending', translation: null }), 0);
+    expect(s.visible(STALE_MS - 1).length).toBe(1);
+    expect(s.nextChange(0)).toBe(STALE_MS);
+    expect(s.visible(STALE_MS).length).toBe(0);
   });
 });

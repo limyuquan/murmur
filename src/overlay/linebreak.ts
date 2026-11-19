@@ -245,7 +245,9 @@ export function paginate(text: string, o: FitOptions): string[][] {
   cost[n] = 0;
   for (let i = n - 1; i >= 0; i--) {
     for (let j = i + 1; j <= n; j++) {
-      // Pages only get harder to fit as they grow.
+      // Pages only get harder to fit as they grow. Counting units first is cheap, and stops
+      // long before trying every break of a page that can't fit two lines anyway.
+      if (textUnits(join(atoms, i, j)) > MAX_LINES * o.maxUnits) break;
       if (!bestTwo(atoms, i, j, o)) break;
       const end = (atoms[j - 1] as Atom).text;
       const endCost = j === n || SENTENCE_END.test(end) ? 0 : CLAUSE_END.test(end) ? 0.6 : 3;

@@ -7,8 +7,8 @@
  * - Each line is at most two rows (see linebreak.ts). Growing text fills rows greedily and shows
  *   its last two, so words never move as more arrive. Finished text is balanced into two rows, or
  *   paged, each page held for its reading time.
- * - A segment stays while anything in it may still change, then for the reading time of what's
- *   left to read, plus a short linger.
+ * - A segment stays while anything in it may still change (up to `STALE_MS` without a change),
+ *   then for the reading time of what's left to read, plus a short linger.
  * - Lines that may change are marked `final: false` (dimmed); `showPartials: false` hides them.
  * - A line's language is tagged when it differs from the language mostly spoken lately.
  */
@@ -98,6 +98,10 @@ interface Entry {
   doneAt: number | null;
   /** Pages of the main line for the last fit, with the reading time of each. */
   pages: { key: string; pages: string[][]; times: number[] } | null;
+  /** Rows of the finished original line for the last fit (laying it out is costly). */
+  original: { key: string; rows: string[] } | null;
+  /** When the cue last changed. */
+  updatedAt: number;
 }
 
 /**
@@ -105,6 +109,12 @@ interface Entry {
  * the rows) a line gives way as soon as its reading time is up.
  */
 export const LINGER_MS = 800;
+
+/**
+ * A cue that hasn't changed for this long goes, finished or not: its engine stopped sending
+ * (a translation that never came back), and it shouldn't stay on the picture for good.
+ */
+export const STALE_MS = 30_000;
 
 /** Languages of recent finished lines, for the "mostly spoken" language. */
 const LANGUAGE_WINDOW = 12;
@@ -128,6 +138,8 @@ export class CaptionStore {
       translation,
       doneAt: done ? (prev?.doneAt ?? now) : null,
       pages: prev?.pages ?? null,
+      original: prev?.original ?? null,
+      updatedAt: now,
     });
     if (cue.source.final && cue.source.text.trim()) {
       const lang = primaryLanguage(cue.source.language);
@@ -169,8 +181,7 @@ export class CaptionStore {
   visible(now: number, view: ViewOptions = this.view): CaptionBlock[] {
     this.view = view;
     for (const [id, e] of this.entries) {
-      const at = this.expiresAt(e);
-      if (at !== null && now >= at) this.entries.delete(id);
+      if (now >= this.expiresAt(e)) this.entries.delete(id);
     }
     const dominant = view.languageTags ? this.dominantLanguage() : null;
     const recent = [...this.entries.values()]
@@ -220,9 +231,9 @@ export class CaptionStore {
     return this.entries.size;
   }
 
-  /** When `e` should leave the screen, or null while it may still change. */
-  expiresAt(e: Entry): number | null {
-    if (e.doneAt === null) return null;
+  /** When `e` should leave the screen: once read when done, or once it has gone stale. */
+  expiresAt(e: Entry): number {
+    if (e.doneAt === null) return e.updatedAt + STALE_MS;
     const main = this.mainTrack(e, this.view);
     const from = main?.finalAt ?? e.doneAt;
     const reading = e.pages ? sum(e.pages.times) : readingMs(main?.text ?? e.cue.source.text);
@@ -295,17 +306,31 @@ export class CaptionStore {
     } else if (role === 'main') {
       rows = this.pageAt(e, t, now);
     } else {
-      rows = balancedLines(t.text, fit) ?? paginate(t.text, fit).at(-1) ?? [];
+      rows = this.originalRows(e, t, fit);
     }
     return { role, rows, lang: t.lang, final: t.final, tag, revision: t.revision };
+  }
+
+  /** The finished original line's rows: laid out once per text and fit, then reused. */
+  private originalRows(e: Entry, t: Track, fit: FitOptions): string[] {
+    const key = this.fitCacheKey(t, fit);
+    if (e.original?.key !== key) {
+      const rows = balancedLines(t.text, fit) ?? paginate(t.text, fit).at(-1) ?? [];
+      e.original = { key, rows };
+    }
+    return e.original.rows;
+  }
+
+  private fitCacheKey(t: Track, fit: FitOptions): string {
+    return [t.text, fit.maxUnits, fit.maxWidth ?? '', t.lang, this.view.fitKey ?? ''].join(
+      '\u0000',
+    );
   }
 
   /** The page of the main line due at `now`, paging from when it became final. */
   private pageAt(e: Entry, t: Track, now: number): string[] {
     const fit = { ...this.view.fit.main, lang: t.lang };
-    const key = [t.text, fit.maxUnits, fit.maxWidth ?? '', t.lang, this.view.fitKey ?? ''].join(
-      '\u0000',
-    );
+    const key = this.fitCacheKey(t, fit);
     if (e.pages?.key !== key) {
       const pages = paginate(t.text, fit);
       e.pages = { key, pages, times: pages.map((p) => readingMs(p.join(' '))) };
