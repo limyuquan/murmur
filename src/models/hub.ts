@@ -4,7 +4,7 @@
  * transformers.js `modelFileCache(source)` and turn its remote downloads off, so loading a model
  * never fetches anything.
  *
- * Each file is stored in parts of `PART_BYTES` (`<url>?part=<n>`), each fetched with an HTTP
+ * Each file is stored in parts of `PART_BYTES` (`<cacheKey>?part=<n>`), each fetched with an HTTP
  * Range request and written as it streams in. A part is in the cache only once all of it
  * arrived, so a download that stops (cancelled, network gone, worker stopped) resumes from the
  * first missing part. Reading joins the parts' blobs, which stay on disk until read.
@@ -25,17 +25,28 @@ export interface ModelSource {
   files: readonly ModelFile[];
 }
 
+const HUGGING_FACE = 'https://huggingface.co';
+
 /**
- * Where model files come from. e2e builds use the fixture server's stand-in
- * (scripts/serve-fixtures.mjs), so tests never touch the network.
+ * Where model files are downloaded from. e2e builds use the fixture server's stand-in
+ * (scripts/serve-fixtures.mjs), so tests never touch the network; `WXT_MODEL_HOST` at build time
+ * overrides it (`WXT_MODEL_HOST=https://huggingface.co pnpm build:e2e` for real-model checks).
  */
-export const MODEL_HOST = IS_E2E ? 'http://127.0.0.1:4392/hf' : 'https://huggingface.co';
+export const MODEL_HOST: string =
+  (import.meta.env as Record<string, string | undefined>).WXT_MODEL_HOST ||
+  (IS_E2E ? 'http://127.0.0.1:4392/hf' : HUGGING_FACE);
 export const MODEL_CACHE = 'murmur-models';
 /** 64 MiB: a stopped download loses at most this much. */
 export const PART_BYTES = 64 * 1024 * 1024;
 
+/** Where to download `path` of `source`. */
 export function fileUrl(source: ModelSource, path: string, host = MODEL_HOST): string {
   return `${host}/${source.repo}/resolve/${source.revision}/${path}`;
+}
+
+/** The file's key in the model cache: its Hugging Face URL, whatever host it came from. */
+export function cacheKey(source: ModelSource, path: string): string {
+  return fileUrl(source, path, HUGGING_FACE);
 }
 
 /** The repo and path of a Hugging Face file URL (any host, any revision), or null. */
@@ -78,7 +89,7 @@ export async function storedBytes(
   file: ModelFile,
   partBytes = PART_BYTES,
 ): Promise<number> {
-  const url = fileUrl(source, file.path);
+  const url = cacheKey(source, file.path);
   let total = 0;
   for (let i = 0; i < partCount(file.bytes, partBytes); i++) {
     const [start, end] = partRange(file.bytes, i, partBytes);
@@ -94,7 +105,7 @@ export async function readFile(
   file: ModelFile,
   partBytes = PART_BYTES,
 ): Promise<Response | undefined> {
-  const url = fileUrl(source, file.path);
+  const url = cacheKey(source, file.path);
   const blobs: Blob[] = [];
   for (let i = 0; i < partCount(file.bytes, partBytes); i++) {
     const res = await cache.match(partKey(url, i));

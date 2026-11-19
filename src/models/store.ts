@@ -9,6 +9,7 @@
  * and the next download resumes from there.
  */
 import {
+  cacheKey,
   fileUrl,
   MODEL_CACHE,
   type ModelSource,
@@ -72,13 +73,14 @@ export class CacheModelStore implements ModelStore {
     report(true);
     for (const file of source.files) {
       const url = fileUrl(source, file.path);
+      const key = cacheKey(source, file.path);
       const parts = partCount(file.bytes, this.partBytes);
       for (let i = 0; i < parts; i++) {
         const [start, end] = partRange(file.bytes, i, this.partBytes);
-        if ((await storedPart(cache, url, i, end - start)) !== null) continue;
+        if ((await storedPart(cache, key, i, end - start)) !== null) continue;
         const before = received;
         try {
-          await this.fetchPart(cache, url, file.path, i, parts, start, end, signal, (n) => {
+          await this.fetchPart(cache, url, key, file.path, i, parts, start, end, signal, (n) => {
             received = before + n;
             report();
           });
@@ -95,6 +97,7 @@ export class CacheModelStore implements ModelStore {
   private async fetchPart(
     cache: Cache,
     url: string,
+    keyUrl: string,
     path: string,
     index: number,
     parts: number,
@@ -131,7 +134,7 @@ export class CacheModelStore implements ModelStore {
         controller.enqueue(chunk);
       },
     });
-    const key = partKey(url, index);
+    const key = partKey(keyUrl, index);
     await cache.put(
       key,
       new Response(res.body.pipeThrough(counter, { signal }), {
@@ -150,9 +153,11 @@ export class CacheModelStore implements ModelStore {
 
   async remove(model: ModelInfo, keep: readonly ModelInfo[]): Promise<void> {
     const cache = await this.open();
-    const kept = new Set(keep.flatMap((m) => m.source.files.map((f) => fileUrl(m.source, f.path))));
+    const kept = new Set(
+      keep.flatMap((m) => m.source.files.map((f) => cacheKey(m.source, f.path))),
+    );
     for (const file of model.source.files) {
-      const url = fileUrl(model.source, file.path);
+      const url = cacheKey(model.source, file.path);
       if (kept.has(url)) continue;
       for (let i = 0; i < partCount(file.bytes, this.partBytes); i++) {
         await cache.delete(partKey(url, i));
