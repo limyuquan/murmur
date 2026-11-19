@@ -45,6 +45,15 @@ export const RUNTIME_FALLBACKS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * What translates when a translator's model isn't downloaded (or didn't load): the session starts
+ * anyway, and the popup offers the download. E4B goes to E2B first, which may be downloaded.
+ */
+export const MODEL_FALLBACKS: Readonly<Record<string, string>> = {
+  [GEMMA_E4B_ID]: GEMMA_E2B_ID,
+  [GEMMA_E2B_ID]: CHROME_TRANSLATOR_ID,
+};
+
+/**
  * Translators that may be too slow or fail on a single line, and the one that translates such a
  * line instead (engines/translators.ts).
  */

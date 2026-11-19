@@ -28,7 +28,7 @@ import type {
   SessionFailure,
   SessionStatus,
 } from '@/messaging/protocol';
-import { modelsFor } from '@/models/catalog';
+import { modelsFor, splitMissing } from '@/models/catalog';
 import { loadSettings, type Settings, spokenLanguages } from '@/settings/settings';
 import { LOG_PREFIX } from '@/shared/ids';
 import { LANGUAGES } from '@/ui/languages';
@@ -148,7 +148,11 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
           await step(deviceHardware()),
         );
         const downloaded = await step(modelStore.downloaded(needed));
-        const missing = needed.filter((m) => !downloaded.has(m.id));
+        // A missing translation model doesn't stop the start: another translator stands in.
+        const { required: missing } = splitMissing(
+          needed.filter((m) => !downloaded.has(m.id)),
+          engines.translation,
+        );
         if (missing.length > 0) {
           const names = missing.map((m) => m.label).join(' and ');
           return await updateStatus(

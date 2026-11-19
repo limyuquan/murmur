@@ -7,7 +7,7 @@ import {
   ModelError,
 } from '@/engines/errors';
 import { loadWithFallback } from '@/engines/loading';
-import type { AsrEngine, SetupAction } from '@/engines/types';
+import type { AsrEngine, SetupAction, TranslationEngine } from '@/engines/types';
 import { describeError } from '@/offscreen/host';
 
 describe('packsFor', () => {
@@ -153,5 +153,67 @@ describe('loadWithFallback', () => {
     controller.abort(new Error('stopped'));
     await expect(loading).rejects.toThrow('stopped');
     expect(unloaded).toBe(true);
+  });
+});
+
+describe('loadWithFallback for translators', () => {
+  /** Engines that fail to load as `failures` says, by id. */
+  function engines(failures: Record<string, Error>) {
+    const loaded: string[] = [];
+    const create = async (id: string) =>
+      ({
+        info: { id, label: id },
+        load: async () => {
+          loaded.push(id);
+          if (failures[id]) throw failures[id];
+        },
+        unload: async () => {},
+      }) as unknown as TranslationEngine;
+    return { loaded, create };
+  }
+  const missing = (id: string) => new ModelError(`${id} isn’t downloaded yet.`, [id], true);
+
+  it('steps down to E2B, then Chrome’s translator, while models aren’t downloaded', async () => {
+    const { loaded, create } = engines({
+      'gemma4-e4b': missing('gemma4-e4b'),
+      'gemma4-e2b': missing('gemma4-e2b'),
+    });
+    const fell: string[] = [];
+    const engine = await loadWithFallback('gemma4-e4b', create, (e) => e.load(), undefined, {
+      onModelError: true,
+      onFallback: (id) => fell.push(id),
+    });
+    expect(engine.info.id).toBe('chrome-translator');
+    expect(loaded).toEqual(['gemma4-e4b', 'gemma4-e2b', 'chrome-translator']);
+    expect(fell).toEqual(['gemma4-e4b', 'gemma4-e2b']);
+  });
+
+  it('hands a model that doesn’t load over to Chrome’s translator', async () => {
+    const { create } = engines({ 'gemma4-e2b': new ModelError('Couldn’t load Gemma 4 E2B.') });
+    const engine = await loadWithFallback('gemma4-e2b', create, (e) => e.load(), undefined, {
+      onModelError: true,
+    });
+    expect(engine.info.id).toBe('chrome-translator');
+  });
+
+  it('keeps the failure when asked not to, or with nothing to fall back to', async () => {
+    const { create } = engines({
+      'gemma4-e2b': missing('gemma4-e2b'),
+      'whisper-base': missing('whisper-base'),
+    });
+    await expect(loadWithFallback('gemma4-e2b', create, (e) => e.load())).rejects.toThrow(
+      'gemma4-e2b isn’t downloaded yet.',
+    );
+    await expect(
+      loadWithFallback('whisper-base', create, (e) => e.load(), undefined, { onModelError: true }),
+    ).rejects.toThrow('whisper-base isn’t downloaded yet.');
+  });
+
+  it('still asks for Chrome’s pack when the stand-in needs one', async () => {
+    const pack = new EngineActionRequiredError([translationAction('fr', 'en')]);
+    const { create } = engines({ 'gemma4-e2b': missing('gemma4-e2b'), 'chrome-translator': pack });
+    await expect(
+      loadWithFallback('gemma4-e2b', create, (e) => e.load(), undefined, { onModelError: true }),
+    ).rejects.toBe(pack);
   });
 });

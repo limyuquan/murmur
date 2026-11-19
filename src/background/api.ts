@@ -1,7 +1,7 @@
 /** The service worker's dispatcher for popup/options requests. */
 import { browser } from 'wxt/browser';
 import type { Op, Ops } from '@/messaging/protocol';
-import { modelsFor, totalMB } from '@/models/catalog';
+import { modelsFor, splitMissing, totalMB } from '@/models/catalog';
 import { siteKey } from '@/settings/positions';
 import { loadSettings } from '@/settings/settings';
 import { deviceHardware, registry } from './engines';
@@ -23,7 +23,10 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
       const engines = await plannedEngines(settings);
       const needed = modelsFor(settings.profile, settings.custom, registry, await deviceHardware());
       const downloaded = await modelStore.downloaded(needed);
-      const missing = needed.filter((m) => !downloaded.has(m.id));
+      const { required, optional } = splitMissing(
+        needed.filter((m) => !downloaded.has(m.id)),
+        engines.translation,
+      );
       const tab = tabId >= 0 ? await browser.tabs.get(tabId).catch(() => null) : null;
       void reattachOverlay(tabId);
       return {
@@ -33,8 +36,18 @@ export async function dispatch<K extends Op>(op: K, args: Ops[K][0]): Promise<Op
         engines: { ...engineLabels(engines), notes: engines.notes },
         profile: settings.profile,
         models: {
-          ready: missing.length === 0,
-          missingMB: totalMB(missing),
+          ready: required.length === 0,
+          missingMB: totalMB(required),
+          ...(optional.length > 0
+            ? {
+                better: {
+                  ids: optional.map((m) => m.id),
+                  label:
+                    registry.translationInfo(engines.translation)?.label ?? engines.translation,
+                  sizeMB: totalMB(optional),
+                },
+              }
+            : {}),
         },
         site: tab?.url ? siteKey(tab.url) : null,
       };

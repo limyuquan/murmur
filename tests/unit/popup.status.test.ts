@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { describeStatus, isOn, NO_SOUND_MS } from '@/entrypoints/popup/status';
+import {
+  betterState,
+  describeBetter,
+  describeStatus,
+  isOn,
+  NO_SOUND_MS,
+} from '@/entrypoints/popup/status';
 import type { SessionActivity, SessionStatus, TabView } from '@/messaging/protocol';
 
 function view(status: SessionStatus, patch: Partial<TabView> = {}): TabView {
@@ -185,5 +191,46 @@ describe('describeStatus', () => {
       action: { kind: 'settings', label: 'Download', section: 'models' },
     });
     expect(err('anything')).toMatchObject({ tone: 'error', detail: 'm' });
+  });
+});
+
+describe('describeBetter', () => {
+  const better = { ids: ['gemma4-e2b-webgpu'], label: 'Gemma 4 E2B', sizeMB: 2010 };
+
+  it('offers the download plainly, then follows it', () => {
+    expect(describeBetter(better, { state: 'offer' })).toEqual({
+      text: 'Better translations: download Gemma 4 E2B (2.0 GB)',
+      button: 'Download',
+    });
+    expect(describeBetter(better, { state: 'downloading', fraction: 0.5 })).toEqual({
+      text: 'Downloading Gemma 4 E2B…',
+      progress: 0.5,
+    });
+    expect(describeBetter(better, { state: 'done' }).button).toBeUndefined();
+    expect(describeBetter(better, { state: 'error', message: 'No space.' })).toEqual({
+      text: 'Gemma 4 E2B didn’t download: No space.',
+      button: 'Try again',
+    });
+  });
+
+  it('reads the download progress, and notices a download that finished', () => {
+    const offer = { state: 'offer' } as const;
+    expect(betterState(better, {}, offer)).toEqual(offer);
+    expect(betterState(better, { 'gemma4-e2b-webgpu': { state: 'queued' } }, offer)).toEqual({
+      state: 'downloading',
+      fraction: null,
+    });
+    const half = betterState(
+      better,
+      { 'gemma4-e2b-webgpu': { state: 'downloading', receivedMB: 1005 } },
+      offer,
+    );
+    expect(half).toEqual({ state: 'downloading', fraction: 0.5 });
+    expect(betterState(better, {}, half)).toEqual({ state: 'done' });
+    expect(
+      betterState(better, { 'gemma4-e2b-webgpu': { state: 'error', message: 'Offline.' } }, half),
+    ).toEqual({ state: 'error', message: 'Offline.' });
+    // Another model's download says nothing about this one.
+    expect(betterState(better, { other: { state: 'queued' } }, offer)).toEqual(offer);
   });
 });

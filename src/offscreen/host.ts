@@ -102,6 +102,8 @@ interface Running {
   problems: string[];
   /** Lines another translator did instead of the chosen one, and why (each reported). */
   translationNote: string | null;
+  /** Why the chosen translator gave way to another while loading, if it did. */
+  translatorFailure: Error | null;
 }
 
 /**
@@ -182,6 +184,7 @@ export class OffscreenHost {
       setup: [],
       problems: [],
       translationNote: null,
+      translatorFailure: null,
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
@@ -247,11 +250,19 @@ export class OffscreenHost {
         (engine) => engine.load(options(engine.info.label)),
         signal,
       );
+      // A translation model that isn't downloaded or doesn't load doesn't stop the session:
+      // another translator takes over (and the popup offers the download).
       running.translator = await loadWithFallback(
         config.translationEngine,
         (id) => this.registry.createTranslation(id),
         (engine) => engine.load(options(engine.info.label)),
         signal,
+        {
+          onModelError: true,
+          onFallback: (_id, err) => {
+            running.translatorFailure ??= err;
+          },
+        },
       );
       if (!this.isCurrent(running)) {
         // Stopped while loading: the teardown ran before these existed.
@@ -413,8 +424,14 @@ export class OffscreenHost {
   ): TranslationEngine {
     const { config } = running;
     const chosen = this.registry.translationInfo(config.translationEngine);
+    const failure = running.translatorFailure;
     if (translator.info.id !== config.translationEngine && chosen) {
-      running.translationNote = `${chosen.label} couldn’t run here, so ${translator.info.label} translates.`;
+      // Not downloaded: the popup offers the download instead of a note.
+      if (!failure || !isModelError(failure)) {
+        running.translationNote = `${chosen.label} couldn’t run here, so ${translator.info.label} translates.`;
+      } else if (!failure.missing) {
+        running.translationNote = `${chosen.label} didn’t load, so ${translator.info.label} translates.`;
+      }
     }
     const backupId = LINE_FALLBACKS[translator.info.id];
     let fellBack = 0;

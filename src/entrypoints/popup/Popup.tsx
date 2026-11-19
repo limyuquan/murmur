@@ -3,13 +3,21 @@ import { browser } from 'wxt/browser';
 import { PROFILES } from '@/engines/profiles';
 import { call } from '@/messaging/client';
 import type { SessionStatus, TabView } from '@/messaging/protocol';
+import { DOWNLOADS_KEY, type DownloadProgress } from '@/models/types';
 import { loadPosition, savePosition, watchPositions } from '@/settings/positions';
 import { type Settings, SIZE_PRESETS } from '@/settings/settings';
 import { Dot, Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
 import { useSettings } from '@/ui/hooks';
 import { listNames } from '@/ui/languages';
 import { SetupButtons } from '@/ui/setup';
-import { describeStatus, type FixAction, isOn } from './status';
+import {
+  type BetterState,
+  betterState,
+  describeBetter,
+  describeStatus,
+  type FixAction,
+  isOn,
+} from './status';
 
 function openOptions(section?: string): void {
   if (section) {
@@ -18,6 +26,50 @@ function openOptions(section?: string): void {
     void browser.runtime.openOptionsPage();
   }
   window.close();
+}
+
+/**
+ * A translation model the profile would use but runs without (Chrome's translator stands in):
+ * a plain offer to download it, followed here while the popup is open.
+ */
+function BetterTranslations({ better }: { better: NonNullable<TabView['models']['better']> }) {
+  const [state, setState] = useState<BetterState>({ state: 'offer' });
+  useEffect(() => {
+    const apply = (progress: DownloadProgress) =>
+      setState((previous) => betterState(better, progress, previous));
+    browser.storage.session.get(DOWNLOADS_KEY).then(
+      (stored) => apply((stored[DOWNLOADS_KEY] ?? {}) as DownloadProgress),
+      () => {},
+    );
+    const onChanged = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+      const change = changes[DOWNLOADS_KEY];
+      if (area === 'session' && change) apply((change.newValue ?? {}) as DownloadProgress);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
+  }, [better]);
+  const download = () => {
+    setState({ state: 'downloading', fraction: null });
+    call('downloadModels', { ids: better.ids }).catch((err: unknown) =>
+      setState({ state: 'error', message: err instanceof Error ? err.message : String(err) }),
+    );
+  };
+  const line = describeBetter(better, state);
+  return (
+    <div className="mt-3 ml-[18px]" data-testid="better">
+      <p className="text-[12px] text-[var(--color-muted)]">{line.text}</p>
+      {line.progress !== undefined && (
+        <div className="mt-1.5">
+          <ProgressBar value={line.progress} label={line.text} />
+        </div>
+      )}
+      {line.button && (
+        <button type="button" className="btn btn-sm mt-2" onClick={download}>
+          {line.button}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function Popup({
@@ -195,6 +247,9 @@ export function Popup({
               onAllDone={failedForSetup ? () => void start() : undefined}
             />
           </div>
+        )}
+        {view.models.better && view.models.ready && !failedForSetup && (
+          <BetterTranslations better={view.models.better} />
         )}
         {'action' in status && status.action && (
           <div className="mt-3 ml-[18px]">

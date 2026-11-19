@@ -1,6 +1,7 @@
 /** Which models each profile needs on this device, from the engines it resolves to. */
 import type { HardwareInfo } from '@/engines/hardware';
 import {
+  MODEL_FALLBACKS,
   PROFILE_ORDER,
   type ProfileChoice,
   type ProfileId,
@@ -87,4 +88,19 @@ export function allModels(
 
 export function totalMB(models: readonly ModelInfo[]): number {
   return models.reduce((n, m) => n + m.sizeMB, 0);
+}
+
+/**
+ * Splits models a session would use but aren't downloaded: `required` ones stop it from starting
+ * (speech recognition; a translator with nothing to stand in for it), `optional` ones don't (a
+ * translation model with a fallback in `MODEL_FALLBACKS`: Chrome's translator translates until
+ * it's downloaded, and the popup offers the download).
+ */
+export function splitMissing(
+  missing: readonly ModelInfo[],
+  translationEngine: string,
+): { required: ModelInfo[]; optional: ModelInfo[] } {
+  const standIn = MODEL_FALLBACKS[translationEngine] !== undefined;
+  const optional = missing.filter((m) => m.role === 'translation' && standIn);
+  return { required: missing.filter((m) => !optional.includes(m)), optional };
 }

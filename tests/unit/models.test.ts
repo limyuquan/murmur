@@ -5,7 +5,7 @@ import { type HardwareInfo, NO_HARDWARE } from '@/engines/hardware';
 import { GEMMA_E2B_INFO, GEMMA_E4B_INFO } from '@/engines/llm/info';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from '@/engines/whisper/info';
-import { allModels, knownModels, modelsFor, totalMB } from '@/models/catalog';
+import { allModels, knownModels, modelsFor, splitMissing, totalMB } from '@/models/catalog';
 import {
   cacheKey,
   fileUrl,
@@ -63,6 +63,21 @@ describe('catalog', () => {
       'gemma4-e2b-webgpu',
       'gemma4-e4b-webgpu',
     ]);
+  });
+
+  it('lets a session start without a translation model another translator stands in for', () => {
+    const balanced = modelsFor('balanced', custom, registry, GPU);
+    expect(splitMissing(balanced, 'gemma4-e2b')).toEqual({
+      required: [expect.objectContaining({ id: 'whisper-large-v3-turbo-webgpu' })],
+      optional: [expect.objectContaining({ id: 'gemma4-e2b-webgpu' })],
+    });
+    const best = modelsFor('best', custom, registry, NVIDIA);
+    expect(splitMissing(best.slice(1), 'gemma4-e4b').optional.map((m) => m.id)).toEqual([
+      'gemma4-e4b-webgpu',
+    ]);
+    // A translator with nothing to stand in for it is required.
+    const own = balanced.filter((m) => m.role === 'translation');
+    expect(splitMissing(own, 'some-translator')).toEqual({ required: own, optional: [] });
   });
 
   it('declares exact files whose sizes add up to the download', () => {

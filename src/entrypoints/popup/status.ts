@@ -2,7 +2,7 @@
 import type { ProfileChoice } from '@/engines/profiles';
 import type { SetupAction } from '@/engines/types';
 import type { TabView } from '@/messaging/protocol';
-import { formatSize } from '@/models/types';
+import { type DownloadProgress, formatSize } from '@/models/types';
 import type { Tone } from '@/ui/components';
 import { listNames } from '@/ui/languages';
 
@@ -210,4 +210,65 @@ function describeError(
         action: { kind: 'retry', label: 'Try again' },
       };
   }
+}
+
+/** Where the offered download of a better translation model is. */
+export type BetterState =
+  | { state: 'offer' }
+  | { state: 'downloading'; fraction: number | null }
+  | { state: 'done' }
+  | { state: 'error'; message: string };
+
+export interface BetterLine {
+  text: string;
+  /** The button's label (it starts the download), when there is one. */
+  button?: string;
+  /** 0–1, or null for an indeterminate bar; absent for none. */
+  progress?: number | null;
+}
+
+/** The offer of a translation model the session runs without (Chrome's translator stands in). */
+export function describeBetter(
+  better: NonNullable<TabView['models']['better']>,
+  state: BetterState,
+): BetterLine {
+  switch (state.state) {
+    case 'offer':
+      return {
+        text: `Better translations: download ${better.label} (${formatSize(better.sizeMB)})`,
+        button: 'Download',
+      };
+    case 'downloading':
+      return { text: `Downloading ${better.label}…`, progress: state.fraction };
+    case 'done':
+      return { text: `${better.label} is downloaded. It translates from the next start.` };
+    case 'error':
+      return {
+        text: `${better.label} didn’t download: ${state.message}`,
+        button: 'Try again',
+      };
+  }
+}
+
+/**
+ * The offered download's state from the download progress (`DOWNLOADS_KEY`): `previous` is the
+ * state before, so a download that drops out of the progress has finished.
+ */
+export function betterState(
+  better: NonNullable<TabView['models']['better']>,
+  progress: DownloadProgress,
+  previous: BetterState,
+): BetterState {
+  const entries = better.ids.map((id) => progress[id]);
+  const failed = entries.find((e) => e?.state === 'error');
+  if (failed?.state === 'error') return { state: 'error', message: failed.message };
+  if (entries.some((e) => e)) {
+    const received = entries.reduce(
+      (n, e) => n + (e?.state === 'downloading' ? e.receivedMB : 0),
+      0,
+    );
+    const fraction = received > 0 ? Math.min(1, received / better.sizeMB) : null;
+    return { state: 'downloading', fraction };
+  }
+  return previous.state === 'downloading' ? { state: 'done' } : previous;
 }

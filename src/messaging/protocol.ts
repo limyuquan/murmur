@@ -137,8 +137,15 @@ export interface TabView {
   /** Engines a new session would use, by label. */
   engines: { asr: string; translation: string; notes: string[] };
   profile: ProfileChoice;
-  /** The profile's models: all downloaded, or how much is left to download. */
-  models: { ready: boolean; missingMB: number };
+  /**
+   * The profile's models: all it needs downloaded, or how much is left to download. `better`: a
+   * translation model it would use but can do without (another translator stands in), to offer.
+   */
+  models: {
+    ready: boolean;
+    missingMB: number;
+    better?: { ids: string[]; label: string; sizeMB: number };
+  };
   /** The tab's site (positions are kept per site), when Murmur can see its address. */
   site: string | null;
 }
