@@ -21,13 +21,22 @@ export interface ModelFile {
    * `sha256:<hex>` (Git LFS files) or `git-sha1:<hex>` (files kept in Git). See digest.ts.
    */
   hash?: string;
+  /**
+   * The repo and commit this file comes from, when it isn't the source's own: a model can take
+   * some files from another repo (an upstream export) and the rest from its own.
+   */
+  from?: FileOrigin;
 }
 
-export interface ModelSource {
+export interface FileOrigin {
   /** Hugging Face repo: `onnx-community/whisper-base`. */
   repo: string;
   /** Commit, so every install gets the same files. */
   revision: string;
+}
+
+export interface ModelSource extends FileOrigin {
+  /** Each from `repo` at `revision`, unless it says otherwise (`ModelFile.from`). */
   files: readonly ModelFile[];
 }
 
@@ -45,14 +54,22 @@ export const MODEL_CACHE = 'murmur-models';
 /** 64 MiB: a stopped download loses at most this much. */
 export const PART_BYTES = 64 * 1024 * 1024;
 
-/** Where to download `path` of `source`. */
-export function fileUrl(source: ModelSource, path: string, host = MODEL_HOST): string {
-  return `${host}/${source.repo}/resolve/${source.revision}/${path}`;
+/** The repo and commit `file` of `source` comes from. */
+export function fileOrigin(source: ModelSource, file: ModelFile | string): FileOrigin {
+  const f = typeof file === 'string' ? source.files.find((x) => x.path === file) : file;
+  return f?.from ?? { repo: source.repo, revision: source.revision };
+}
+
+/** Where to download `file` (or the file at that path) of `source`. */
+export function fileUrl(source: ModelSource, file: ModelFile | string, host = MODEL_HOST): string {
+  const { repo, revision } = fileOrigin(source, file);
+  const path = typeof file === 'string' ? file : file.path;
+  return `${host}/${repo}/resolve/${revision}/${path}`;
 }
 
 /** The file's key in the model cache: its Hugging Face URL, whatever host it came from. */
-export function cacheKey(source: ModelSource, path: string): string {
-  return fileUrl(source, path, HUGGING_FACE);
+export function cacheKey(source: ModelSource, file: ModelFile | string): string {
+  return fileUrl(source, file, HUGGING_FACE);
 }
 
 /** The repo and path of a Hugging Face file URL (any host, any revision), or null. */
@@ -104,7 +121,7 @@ export async function storedBytes(
   file: ModelFile,
   partBytes = PART_BYTES,
 ): Promise<number> {
-  const url = cacheKey(source, file.path);
+  const url = cacheKey(source, file);
   let total = 0;
   for (let i = 0; i < partCount(file.bytes, partBytes); i++) {
     const [start, end] = partRange(file.bytes, i, partBytes);
@@ -120,7 +137,7 @@ export async function readFile(
   file: ModelFile,
   partBytes = PART_BYTES,
 ): Promise<Response | undefined> {
-  const url = cacheKey(source, file.path);
+  const url = cacheKey(source, file);
   const blobs: Blob[] = [];
   for (let i = 0; i < partCount(file.bytes, partBytes); i++) {
     const res = await cache.match(partKey(url, i));
@@ -159,8 +176,10 @@ export function modelFileCache(source: ModelSource): {
   return {
     async match(key) {
       const parsed = parseFileUrl(key);
-      if (!parsed || parsed.repo !== source.repo) return undefined;
-      const file = source.files.find((f) => f.path === parsed.path);
+      if (!parsed) return undefined;
+      const file = source.files.find(
+        (f) => f.path === parsed.path && fileOrigin(source, f).repo === parsed.repo,
+      );
       if (!file) return undefined;
       cache ??= caches.open(MODEL_CACHE);
       return readFile(await cache, source, file);

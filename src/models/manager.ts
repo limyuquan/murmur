@@ -6,6 +6,7 @@
  */
 import { browser } from 'wxt/browser';
 import type { ProfileId } from '@/engines/profiles';
+import { cacheKey, type ModelFile } from './hub';
 import {
   DOWNLOADS_KEY,
   type DownloadProgress,
@@ -194,15 +195,15 @@ export class ModelManager {
 
 /** `info` with only the files no other model in `known` has. */
 function ownFiles(info: ModelInfo, known: readonly ModelInfo[]): ModelInfo {
-  const key = (m: ModelInfo, path: string) => `${m.source.repo}/${path}`;
+  const key = (m: ModelInfo, f: ModelFile) => cacheKey(m.source, f);
   const shared = new Set(
-    known.filter((m) => m.id !== info.id).flatMap((m) => m.source.files.map((f) => key(m, f.path))),
+    known.filter((m) => m.id !== info.id).flatMap((m) => m.source.files.map((f) => key(m, f))),
   );
   return {
     ...info,
     source: {
       ...info.source,
-      files: info.source.files.filter((f) => !shared.has(key(info, f.path))),
+      files: info.source.files.filter((f) => !shared.has(key(info, f))),
     },
   };
 }

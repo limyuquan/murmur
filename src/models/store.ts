@@ -81,8 +81,8 @@ export class CacheModelStore implements ModelStore {
     };
     report(true);
     for (const file of source.files) {
-      const url = fileUrl(source, file.path);
-      const key = cacheKey(source, file.path);
+      const url = fileUrl(source, file);
+      const key = cacheKey(source, file);
       const parts = partCount(file.bytes, this.partBytes);
       let fetched = false;
       for (let i = 0; i < parts; i++) {
@@ -189,11 +189,9 @@ export class CacheModelStore implements ModelStore {
 
   async remove(model: ModelInfo, keep: readonly ModelInfo[]): Promise<void> {
     const cache = await this.open();
-    const kept = new Set(
-      keep.flatMap((m) => m.source.files.map((f) => cacheKey(m.source, f.path))),
-    );
+    const kept = new Set(keep.flatMap((m) => m.source.files.map((f) => cacheKey(m.source, f))));
     for (const file of model.source.files) {
-      const url = cacheKey(model.source, file.path);
+      const url = cacheKey(model.source, file);
       if (kept.has(url)) continue;
       for (let i = 0; i < partCount(file.bytes, this.partBytes); i++) {
         await cache.delete(partKey(url, i));

@@ -346,6 +346,48 @@ describe('modelFileCache', () => {
     });
     expect(parseFileUrl('/models/a/b/config.json')).toBeNull();
   });
+
+  it('takes a file from another repo and commit where the file says so', async () => {
+    const mixed: ModelSource = {
+      ...SOURCE,
+      files: [
+        { path: 'config.json', bytes: 7 },
+        { path: 'onnx/model.onnx', bytes: 25, from: { repo: 'up/stream', revision: 'def' } },
+      ],
+    };
+    const caches = new FakeCaches();
+    const urls: string[] = [];
+    const s = server();
+    const st = new CacheModelStore({
+      caches,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        urls.push(String(input).replace(/^.*?\/([^/]+\/[^/]+\/resolve\/)/, '$1'));
+        return s.fetch(input, init);
+      }) as typeof fetch,
+      progressMs: 0,
+    });
+    await st.download(model('m', mixed), () => {}, new AbortController().signal);
+    expect([...new Set(urls)]).toEqual([
+      'org/model/resolve/abc/config.json',
+      'up/stream/resolve/def/onnx/model.onnx',
+    ]);
+    expect(cacheKey(mixed, 'onnx/model.onnx')).toBe(
+      'https://huggingface.co/up/stream/resolve/def/onnx/model.onnx',
+    );
+    expect(await st.downloaded([model('m', mixed)])).toEqual(new Set(['m']));
+    const original = globalThis.caches;
+    try {
+      Object.defineProperty(globalThis, 'caches', { value: caches, configurable: true });
+      const reader = modelFileCache(mixed);
+      expect(await reader.match(cacheKey(mixed, 'onnx/model.onnx'))).toBeDefined();
+      expect(
+        await reader.match('https://huggingface.co/org/model/resolve/abc/onnx/model.onnx'),
+      ).toBeUndefined();
+      expect(await isComplete(mixed)).toBe(true);
+    } finally {
+      Object.defineProperty(globalThis, 'caches', { value: original, configurable: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
