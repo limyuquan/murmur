@@ -5,6 +5,7 @@ import { detectHardware, type HardwareInfo } from '@/engines/hardware';
 import { call } from '@/messaging/client';
 import { DOWNLOADS_KEY, type DownloadProgress, type ModelsView } from '@/models/types';
 import {
+  applyPatch,
   loadSettings,
   type Settings,
   type SettingsPatch,
@@ -17,6 +18,8 @@ export function useSettings(initial: Settings): [Settings, (patch: SettingsPatch
   const [settings, setSettings] = useState(initial);
   useEffect(() => watchSettings(setSettings), []);
   const update = useCallback((patch: SettingsPatch) => {
+    // Show the change at once (controls stay in step with the click), then store it.
+    setSettings((s) => applyPatch(s, patch));
     saveSettings(patch).then(setSettings, (err: unknown) => console.error(err));
   }, []);
   return [settings, update];
