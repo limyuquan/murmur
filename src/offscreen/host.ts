@@ -7,16 +7,29 @@
 import { type CaptureHandle, startCapture } from '@/capture/graph';
 import { type AudioSource, tabAudioSource, toneSource } from '@/capture/sources';
 import { createBuiltinRegistry } from '@/engines/builtin';
-import type { AsrEngine, TranslationEngine } from '@/engines/types';
 import type {
-  ActiveSessionStatus,
-  CaptureSourceSpec,
-  OffscreenEvent,
-  OverlayMessage,
-  SessionConfig,
+  AsrEngine,
+  AsrEngineInfo,
+  TranslationEngine,
+  TranslationEngineInfo,
+} from '@/engines/types';
+import {
+  type ActiveSessionStatus,
+  type CaptureSourceSpec,
+  type OffscreenEvent,
+  type OverlayMessage,
+  type OverlayStatus,
+  overlayStatus,
+  type SessionActivity,
+  type SessionConfig,
+  type SessionErrorCode,
 } from '@/messaging/protocol';
 import { Pipeline } from '@/pipeline/pipeline';
 import { LOG_PREFIX } from '@/shared/ids';
+import { ActivityTracker, activityChanged } from './activity';
+
+/** How often the session's activity is checked (and reported, when it changed). */
+const ACTIVITY_MS = 1000;
 
 /** The part of `browser.runtime.Port` the host uses. */
 export interface OverlayPort {
@@ -37,12 +50,17 @@ interface Running {
   asr: AsrEngine | null;
   translator: TranslationEngine | null;
   heard: boolean;
+  activity: ActivityTracker;
+  reported: SessionActivity | undefined;
+  ticker: ReturnType<typeof setInterval> | null;
 }
 
 export class OffscreenHost {
   private readonly registry = createBuiltinRegistry();
   private readonly ports = new Set<OverlayPort>();
   private session: Running | null = null;
+  /** Last chip status per tab, for overlays that connect late. */
+  private overlayStatus: { tabId: number; status: OverlayStatus } | null = null;
 
   constructor(private readonly deps: HostDeps) {}
 
@@ -50,6 +68,14 @@ export class OffscreenHost {
   addOverlay(port: OverlayPort): void {
     this.ports.add(port);
     port.onDisconnect.addListener(() => this.ports.delete(port));
+    const last = this.overlayStatus;
+    if (last && port.sender?.tab?.id === last.tabId) {
+      try {
+        port.postMessage({ type: 'status', status: last.status });
+      } catch {
+        this.ports.delete(port);
+      }
+    }
   }
 
   async start(config: SessionConfig): Promise<void> {
@@ -61,12 +87,18 @@ export class OffscreenHost {
       asr: null,
       translator: null,
       heard: false,
+      activity: new ActivityTracker(Date.now()),
+      reported: undefined,
+      ticker: null,
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
     try {
       const asrInfo = this.registry.asrInfo(config.asrEngine);
       const mtInfo = this.registry.translationInfo(config.translationEngine);
+      running.activity = new ActivityTracker(Date.now(), {
+        supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
+      });
       this.report({
         state: 'loading',
         tabId: config.tabId,
@@ -96,6 +128,7 @@ export class OffscreenHost {
         sourceLanguage: config.sourceLanguage,
         translatePartials: config.translatePartials,
         onCue: (cue) => {
+          running.activity.onCue(cue, Date.now());
           if (!running.heard) {
             running.heard = true;
             this.reportRunning(running);
@@ -105,23 +138,29 @@ export class OffscreenHost {
         onError: (err) => console.error(LOG_PREFIX, 'pipeline', err),
       });
       const pipeline = running.pipeline;
-      running.capture = await startCapture(sourceFor(config.source), (frame) =>
-        pipeline.push(frame),
-      );
+      running.capture = await startCapture(sourceFor(config.source), (frame) => {
+        running.activity.onFrame(frame.samples, Date.now());
+        pipeline.push(frame);
+      });
       if (!this.isCurrent(running)) {
         await running.capture.stop();
         return;
       }
       this.reportRunning(running, mtInfo?.label);
+      running.ticker = setInterval(() => {
+        const next = running.activity.snapshot(Date.now());
+        if (activityChanged(running.reported, next)) this.reportRunning(running);
+      }, ACTIVITY_MS);
     } catch (err) {
       if (!this.isCurrent(running)) return;
-      const message = describeError(err);
+      const { message, code } = describeError(err);
       console.error(LOG_PREFIX, 'session failed', err);
       this.report({
         state: 'error',
         tabId: config.tabId,
         sessionId: config.sessionId,
         message,
+        code,
       });
       await this.teardown(running);
       if (this.session === running) this.session = null;
@@ -136,6 +175,7 @@ export class OffscreenHost {
   }
 
   private async teardown(running: Running): Promise<void> {
+    if (running.ticker) clearInterval(running.ticker);
     await running.capture?.stop().catch(() => {});
     await running.pipeline?.close().catch(() => {});
     await running.asr?.unload().catch(() => {});
@@ -148,6 +188,7 @@ export class OffscreenHost {
 
   private reportRunning(running: Running, translationLabel?: string): void {
     const { config } = running;
+    running.reported = running.activity.snapshot(Date.now());
     this.report({
       state: 'running',
       tabId: config.tabId,
@@ -155,10 +196,14 @@ export class OffscreenHost {
       asr: running.asr?.info.label ?? config.asrEngine,
       translation: translationLabel ?? running.translator?.info.label ?? config.translationEngine,
       heard: running.heard,
+      activity: running.reported,
     });
   }
 
   private report(status: ActiveSessionStatus): void {
+    const chip = overlayStatus(status);
+    this.overlayStatus = { tabId: status.tabId, status: chip };
+    this.broadcast(status.tabId, { type: 'status', status: chip });
     this.deps
       .send({ target: 'background', type: 'session-status', status })
       .catch((err: unknown) => console.warn(LOG_PREFIX, 'status not delivered', err));
@@ -180,12 +225,29 @@ function sourceFor(spec: CaptureSourceSpec): AudioSource {
   return spec.kind === 'tab' ? tabAudioSource(spec.streamId) : toneSource();
 }
 
-function describeError(err: unknown): string {
+function describeError(err: unknown): { message: string; code: SessionErrorCode } {
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
-    return 'Chrome did not allow capturing this tab. Click the Earshot button on the tab and try again.';
+    return {
+      message:
+        'Chrome did not allow capturing this tab. Click the Earshot button on the tab and try again.',
+      code: 'access',
+    };
   }
   if (err instanceof DOMException && err.name === 'AbortError') {
-    return 'Another app or extension is already capturing this tab.';
+    return { message: 'Another app or extension is already capturing this tab.', code: 'busy' };
   }
-  return err instanceof Error ? err.message : String(err);
+  return { message: err instanceof Error ? err.message : String(err), code: 'unknown' };
+}
+
+/** Whether the session's engines handle speech in `language` (a primary subtag). */
+function supports(
+  asr: AsrEngineInfo | undefined,
+  mt: TranslationEngineInfo | undefined,
+  language: string,
+  target: string,
+): boolean {
+  const has = (list: readonly string[] | 'any' | undefined) =>
+    !list || list === 'any' || list.some((l) => l.split('-')[0]?.toLowerCase() === language);
+  const sameAsTarget = target.split('-')[0]?.toLowerCase() === language;
+  return has(asr?.languages) && (sameAsTarget || has(mt?.sources));
 }
