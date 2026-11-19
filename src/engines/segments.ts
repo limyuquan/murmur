@@ -4,6 +4,10 @@
  * once more when it ends for the final (whisper/scheduler.ts decides when, so finals never wait
  * behind partials), and passes every decode through the hallucination guards
  * (whisper/filters.ts). Every result carries the language detected for that segment.
+ *
+ * Probes (`requestPartial`): the segmenter asks for the text up to a short pause; that decode is
+ * from scratch over exactly that span, so when the segment then ends at that sample it is sent as
+ * the final as it is (or as soon as it finishes), instead of decoding the same audio again.
  */
 import type { AsrHealth, AsrResult, AsrSession, AsrSessionOptions } from './types';
 import { filterDecode, peakDb } from './whisper/filters';
@@ -37,6 +41,12 @@ interface Buffered {
   endSample: number | null;
   /** The final result was sent: later partials are stale. */
   finished: boolean;
+  /** The last finished probe: its span's end and its decode. */
+  probe: { endSample: number; out: SegmentDecode; peak: number } | null;
+  /** End of the probe being decoded now, if any. */
+  probing: number | null;
+  /** The segment ended where the running probe ends: that decode is its final. */
+  finalFromProbe: boolean;
 }
 
 export class SegmentSession implements AsrSession {
@@ -58,7 +68,15 @@ export class SegmentSession implements AsrSession {
 
   startSegment(segmentId: string, startSample: number): void {
     if (this.closed) return;
-    this.segments.set(segmentId, { startSample, chunks: [], endSample: null, finished: false });
+    this.segments.set(segmentId, {
+      startSample,
+      chunks: [],
+      endSample: null,
+      finished: false,
+      probe: null,
+      probing: null,
+      finalFromProbe: false,
+    });
     this.scheduler.startSegment(segmentId, startSample);
     this.pump();
   }
@@ -75,7 +93,28 @@ export class SegmentSession implements AsrSession {
     const seg = this.segments.get(segmentId);
     if (!seg) return;
     seg.endSample = endSample;
-    for (const id of this.scheduler.endSegment(segmentId, endSample)) this.giveUp(id);
+    const probe = seg.probe?.endSample === endSample ? seg.probe : null;
+    const probing = seg.probing === endSample;
+    for (const id of this.scheduler.endSegment(segmentId, endSample, probe !== null || probing)) {
+      this.giveUp(id);
+    }
+    if (probe) {
+      this.deliver(
+        { kind: 'final', segmentId, startSample: seg.startSample, endSample },
+        seg,
+        probe.out,
+        probe.peak,
+      );
+    } else if (probing) {
+      seg.finalFromProbe = true;
+    }
+    this.pump();
+  }
+
+  requestPartial(segmentId: string, endSample: number): void {
+    const seg = this.segments.get(segmentId);
+    if (!seg || seg.endSample !== null || this.closed) return;
+    this.scheduler.probe(segmentId, endSample);
     this.pump();
   }
 
@@ -106,33 +145,22 @@ export class SegmentSession implements AsrSession {
     }
     const samples = slice(seg, job.startSample, job.endSample);
     const peak = peakDb(samples, this.options.sampleRate);
+    if (job.kind === 'probe') seg.probing = job.endSample;
+    // A probe whose segment ended right where it does is that segment's final.
+    const asFinal = () => job.kind === 'final' || (job.kind === 'probe' && seg.finalFromProbe);
     this.decoder
       .decode(job, samples)
       .then((out) => {
+        if (job.kind === 'probe') {
+          seg.probing = null;
+          seg.probe = { endSample: job.endSample, out, peak };
+        }
         if (seg.finished) return;
-        const filtered = filterDecode({
-          text: out.text,
-          language: out.language,
-          noSpeechProb: out.noSpeechProb,
-          avgLogprob: out.avgLogprob,
-          peakDb: peak,
-        });
-        const final = job.kind === 'final';
-        if (final) this.measure(out.ms, job.endSample - job.startSample);
-        if (!final && filtered.dropped) return;
-        const result: AsrResult = {
-          segmentId: job.segmentId,
-          final,
-          text: filtered.text,
-          language: filtered.text ? { tag: out.language, confidence: out.languageProb } : null,
-          startSample: job.startSample,
-          endSample: job.endSample,
-        };
-        if (final) this.finish(job.segmentId);
-        this.options.onResult(result);
+        this.deliver(asFinal() ? { ...job, kind: 'final' } : job, seg, out, peak);
       })
       .catch((err: unknown) => {
-        if (job.kind === 'final' && !seg.finished) {
+        if (job.kind === 'probe') seg.probing = null;
+        if (asFinal() && !seg.finished) {
           this.finish(job.segmentId);
           this.options.onResult(emptyFinal(job.segmentId, job.startSample, job.endSample));
         }
@@ -142,6 +170,31 @@ export class SegmentSession implements AsrSession {
         this.scheduler.done();
         this.pump();
       });
+  }
+
+  /** Sends one decode as a partial or final result, through the guards. */
+  private deliver(job: DecodeJob, seg: Buffered, out: SegmentDecode, peak: number): void {
+    if (seg.finished) return;
+    const filtered = filterDecode({
+      text: out.text,
+      language: out.language,
+      noSpeechProb: out.noSpeechProb,
+      avgLogprob: out.avgLogprob,
+      peakDb: peak,
+    });
+    const final = job.kind === 'final';
+    if (final) this.measure(out.ms, job.endSample - job.startSample);
+    if (!final && filtered.dropped) return;
+    const result: AsrResult = {
+      segmentId: job.segmentId,
+      final,
+      text: filtered.text,
+      language: filtered.text ? { tag: out.language, confidence: out.languageProb } : null,
+      startSample: job.startSample,
+      endSample: job.endSample,
+    };
+    if (final) this.finish(job.segmentId);
+    this.options.onResult(result);
   }
 
   /** A segment dropped to keep up: its one final, empty. */

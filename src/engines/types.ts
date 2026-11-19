@@ -260,6 +260,14 @@ export interface AsrSession {
   /** Audio for the open segment; contiguous with the previous chunk. */
   pushAudio(segmentId: string, samples: Float32Array, startSample: number): void;
   endSegment(segmentId: string, endSample: number): void;
+  /**
+   * Optional: decode the open segment up to `endSample` soon, and send the text as a partial
+   * result whose `endSample` is exactly that. The segmenter asks this at a short pause, to learn
+   * whether the words so far end a sentence (and so the segment can end there). If the segment
+   * then ends at that very sample, an engine may send that decode as its final. Engines that
+   * can't decode on request leave it out; segments then end at pauses only.
+   */
+  requestPartial?(segmentId: string, endSample: number): void;
   close(): Promise<void>;
 }
 

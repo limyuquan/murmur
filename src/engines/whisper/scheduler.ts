@@ -8,6 +8,10 @@
  * - When the worker is busy, partials aren't queued up: the next partial simply waits for the
  *   worker and covers all audio so far. Every cadence tick that passed meanwhile counts as a
  *   dropped partial.
+ * - A probe (`probe()`: the segmenter asks whether the words up to a short pause end a sentence)
+ *   decodes the open segment up to that point from scratch, before any partial and after the
+ *   finals. If the segment then ends right there, that decode is its final (`endSegment` with
+ *   `decoded`): no second decode.
  * - Backlog = audio waiting to be decoded (queued finals + the open segment's undecoded tail).
  *   Over `behindMs` the session reports it is falling behind; over `maxBacklogMs` the oldest
  *   queued finals are given up on (the engine sends them as empty finals) so the newest speech
@@ -27,7 +31,8 @@ export interface SchedulerOptions {
 }
 
 export interface DecodeJob {
-  kind: 'partial' | 'final';
+  /** `probe`: a partial up to a given point, decoded in full (it may become the final). */
+  kind: 'partial' | 'probe' | 'final';
   segmentId: string;
   startSample: number;
   /** End of the audio to decode (the segment's end for a final). */
@@ -43,6 +48,8 @@ interface Segment {
   partialAt: number;
   /** Set once the segment ended. */
   endSample: number | null;
+  /** End of a probe asked for and not run yet. */
+  probeAt: number | null;
 }
 
 export class DecodeScheduler {
@@ -72,7 +79,14 @@ export class DecodeScheduler {
 
   startSegment(id: string, startSample: number): void {
     if (this.open) this.endSegment(this.open.id, this.open.received);
-    this.open = { id, startSample, received: startSample, partialAt: startSample, endSample: null };
+    this.open = {
+      id,
+      startSample,
+      received: startSample,
+      partialAt: startSample,
+      endSample: null,
+      probeAt: null,
+    };
   }
 
   /** Audio for the open segment now reaches `endSample`. */
@@ -80,15 +94,24 @@ export class DecodeScheduler {
     if (this.open?.id === id) this.open.received = Math.max(this.open.received, endSample);
   }
 
+  /** Asks for a decode of the open segment up to `endSample`, next time the worker is free. */
+  probe(id: string, endSample: number): void {
+    const seg = this.open;
+    if (seg?.id !== id || endSample <= seg.startSample) return;
+    seg.probeAt = Math.min(endSample, seg.received);
+  }
+
   /**
-   * Ends the open segment and queues its final. Returns segments given up on to keep the
-   * backlog bounded: send each as an empty final.
+   * Ends the open segment and queues its final, unless it is already `decoded` (a probe of
+   * exactly this span). Returns segments given up on to keep the backlog bounded: send each as
+   * an empty final.
    */
-  endSegment(id: string, endSample: number): string[] {
+  endSegment(id: string, endSample: number, decoded = false): string[] {
     const seg = this.open;
     if (!seg || seg.id !== id) return [];
     this.open = null;
     seg.endSample = Math.max(seg.startSample, endSample);
+    if (decoded) return [];
     // A partial that would have been due for the unfinished tail is replaced by the final.
     if (seg.received - seg.partialAt >= this.interval && seg.partialAt > seg.startSample) {
       this.droppedPartials++;
@@ -112,6 +135,17 @@ export class DecodeScheduler {
     }
     const seg = this.open;
     if (!seg) return null;
+    if (seg.probeAt !== null) {
+      this.running = {
+        kind: 'probe',
+        segmentId: seg.id,
+        startSample: seg.startSample,
+        endSample: seg.probeAt,
+      };
+      seg.partialAt = Math.max(seg.partialAt, seg.probeAt);
+      seg.probeAt = null;
+      return this.running;
+    }
     const heard = seg.received - seg.startSample;
     const fresh = seg.received - seg.partialAt;
     const due = seg.partialAt === seg.startSample ? heard >= this.first : fresh >= this.interval;

@@ -9,7 +9,7 @@
  *   guards use, with the text's mean log-probability.
  * - Partials: a re-decode of the growing segment about every 1.5 s. Each one forces the last
  *   partial's answer minus its last few tokens (`rollbackPrefix`), so only the tail is decoded
- *   again. Finals decode the whole segment from scratch.
+ *   again. Finals, and probes (the segmenter asking about a pause), decode from scratch.
  */
 import { isComplete } from '@/models/hub';
 import { EngineUnavailableError, ModelError } from '../errors';
@@ -43,7 +43,7 @@ export const QWEN3_DEFAULTS = {
 
 /** One decode, for real-model checks (e2e builds log these). */
 export interface DecodeRecord {
-  kind: 'partial' | 'final';
+  kind: DecodeJob['kind'];
   segmentId: string;
   audioMs: number;
   ms: number;
@@ -174,7 +174,8 @@ export class Qwen3AsrEngine implements AsrEngine {
           const out = await this.decode(samples, languages, prefix);
           // A language forced by the prefix keeps the probability it was chosen with.
           const languageProb = prefix && last ? last.languageProb : out.languageProb;
-          if (job.kind === 'partial' && out.text) {
+          // A probe (decoded in full) is as good a base for the next partial.
+          if (job.kind !== 'final' && out.text) {
             partials.set(job.segmentId, { ids: out.ids, languageProb });
           }
           this.onDecode?.({
