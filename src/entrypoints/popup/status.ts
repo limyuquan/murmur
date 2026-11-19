@@ -171,6 +171,13 @@ function describeError(
             ? { kind: 'profile', label: 'Use Balanced', profile: 'balanced' }
             : { kind: 'retry', label: 'Try again' },
       };
+    case 'navigated':
+      return {
+        tone: 'warn',
+        title: 'Subtitles stopped',
+        detail: message,
+        action: { kind: 'retry', label: 'Turn on again' },
+      };
     case 'setup':
       return {
         tone: 'warn',

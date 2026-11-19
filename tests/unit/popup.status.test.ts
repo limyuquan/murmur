@@ -121,6 +121,21 @@ describe('describeStatus', () => {
     });
   });
 
+  it('says why the session stopped after the tab went to another site', () => {
+    const status: SessionStatus = {
+      state: 'error',
+      tabId: 1,
+      sessionId: 's',
+      code: 'navigated',
+      message: 'The tab went to another site with no video on the page, so subtitles stopped.',
+    };
+    expect(describeStatus(view(status))).toMatchObject({
+      title: 'Subtitles stopped',
+      detail: expect.stringContaining('no video'),
+      action: { kind: 'retry' },
+    });
+  });
+
   it('names languages the models lack', () => {
     const s = describeStatus(view(running(activity({ unsupported: ['de'] }))));
     expect(s.title).toMatch(/^Can't translate /);

@@ -37,6 +37,10 @@ import { deviceHardware, registry } from './engines';
 import { modelStore } from './models';
 
 const SESSION_KEY = 'session';
+/** The origin the session's tab was on, to notice a navigation to another site. */
+const ORIGIN_KEY = 'sessionOrigin';
+/** How long a page reached by navigation has to show a video before the session stops. */
+export const MEDIA_GRACE_MS = 5000;
 const OVERLAY_SCRIPT = '/overlay.js';
 
 /** Serialises start/stop so they never interleave. */
@@ -184,6 +188,8 @@ export function startSession(tabId: number, options: StartOptions = {}): Promise
         sendToOffscreen({ target: 'offscreen', type: 'start', config }, signal),
       );
       if (!reply.ok) throw new OffscreenFailure(reply.error);
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      await rememberOrigin(sessionId, tab?.url);
     } catch (err) {
       // Stopped: the stop cleans up and sets the status.
       if (signal.aborted) return getStatus();
@@ -252,17 +258,123 @@ export function installSessionListeners(): void {
       void stopIfSessionTab(info.tabId, 'running');
     }
   });
-  // A navigation in the captured tab drops its overlay; put it back when the page has loaded.
-  // Works where the access still holds (same site, or host access granted); otherwise the
-  // subtitles return on the next click.
-  browser.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.status !== 'complete') return;
-    void getStatus().then((s) => {
-      if (s.state !== 'idle' && s.state !== 'error' && s.tabId === tabId) {
-        injectOverlay(tabId).catch(() => {});
-      }
-    });
+  browser.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (change.status === 'complete') void followNavigation(tabId, tab?.url);
   });
+}
+
+/**
+ * A navigation in the captured tab drops its overlay (the capture goes on). Put it back when the
+ * page has loaded. The session stops, and says why, when it can't follow: Murmur has no access to
+ * the new page without a click (`activeTab` ends at another site), or the new site has nothing to
+ * subtitle.
+ */
+async function followNavigation(tabId: number, url: string | undefined): Promise<void> {
+  const status = await getStatus();
+  if (status.state === 'idle' || status.state === 'error' || status.tabId !== tabId) return;
+  const { sessionId } = status;
+  try {
+    await injectOverlay(tabId);
+  } catch {
+    await endAfterNavigation(
+      sessionId,
+      'The tab went to another site, where Murmur needs a click first. Turn subtitles on again to continue there.',
+    );
+    return;
+  }
+  const origin = originOf(url);
+  const before = await rememberedOrigin(sessionId);
+  if (!origin || origin === before) return;
+  await rememberOrigin(sessionId, url);
+  if (before === null) return;
+  // Another site: keep going only if there is something to subtitle (players load late).
+  for (const deadline = Date.now() + MEDIA_GRACE_MS; ; ) {
+    const media = await pageHasMedia(tabId);
+    if (media !== false) return;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 1000));
+    const now = await getStatus();
+    if (now.state === 'idle' || now.state === 'error' || now.sessionId !== sessionId) return;
+  }
+  await endAfterNavigation(
+    sessionId,
+    'The tab went to another site with no video on the page, so subtitles stopped.',
+  );
+}
+
+/** Stops session `sessionId` (if it is still the one) with `message`, code `navigated`. */
+async function endAfterNavigation(sessionId: string, message: string): Promise<void> {
+  await exclusive(async () => {
+    const current = await getStatus();
+    if (current.state === 'idle' || current.state === 'error' || current.sessionId !== sessionId) {
+      return;
+    }
+    await closeOffscreenDocument().catch(() => {});
+    await updateStatus((now) =>
+      now.state !== 'idle' && now.sessionId === sessionId
+        ? { state: 'error', tabId: now.tabId, sessionId, code: 'navigated', message }
+        : null,
+    );
+  });
+}
+
+/**
+ * Whether any frame of the tab has a video or audio element (open shadow roots included), or a
+ * frame big enough to hold a player Murmur can't see into. Null when it can't tell.
+ */
+async function pageHasMedia(tabId: number): Promise<boolean | null> {
+  try {
+    const results = await browser.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        const has = (root: Document | ShadowRoot): boolean => {
+          if (root.querySelector('video, audio')) return true;
+          for (const frame of root.querySelectorAll('iframe')) {
+            const r = frame.getBoundingClientRect();
+            if (r.width >= 200 && r.height >= 120) return true;
+          }
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot && has(el.shadowRoot)) return true;
+          }
+          return false;
+        };
+        return has(document);
+      },
+    });
+    return results.some((r) => r.result === true);
+  } catch {
+    return null;
+  }
+}
+
+function originOf(url: string | undefined): string | null {
+  try {
+    return url ? new URL(url).origin : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberOrigin(sessionId: string, url: string | undefined): Promise<void> {
+  const origin = originOf(url);
+  if (origin) await browser.storage.session.set({ [ORIGIN_KEY]: { sessionId, origin } });
+}
+
+async function rememberedOrigin(sessionId: string): Promise<string | null> {
+  const stored = (await browser.storage.session.get(ORIGIN_KEY))[ORIGIN_KEY] as
+    | { sessionId: string; origin: string }
+    | undefined;
+  return stored?.sessionId === sessionId ? stored.origin : null;
+}
+
+/**
+ * The popup opened on the session's tab (so `activeTab` is fresh): put the overlay back in case a
+ * navigation dropped it. The overlay ignores a second injection.
+ */
+export async function reattachOverlay(tabId: number): Promise<void> {
+  const status = await getStatus();
+  if (status.state === 'idle' || status.state === 'error' || status.tabId !== tabId) return;
+  await injectOverlay(tabId).catch(() => {});
 }
 
 /** After a worker restart: drop a stored session whose offscreen document is gone. */

@@ -75,7 +75,9 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 - **One tab at a time.** Turning Murmur on in another tab stops it in the first.
 - **Protected video (DRM)** is silent to extensions, so there is nothing to transcribe. Most
   paid streaming services are in this group.
-- **After the page navigates** to another site, click the button again to bring subtitles back.
+- **When the tab goes to another site**, subtitles follow if Murmur can reach the new page (or
+  you allowed it on all sites) and it has a video. Otherwise they stop, and the popup says why:
+  turn them on again there.
 - **Players inside frames from another site** show subtitles at the bottom of the window instead
   of on the player, unless you allow Murmur on all sites (coming with the settings for it).
 - **Subtitles arrive after the speech**, by the time the models need. Expect a second or two.

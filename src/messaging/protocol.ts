@@ -59,6 +59,8 @@ export interface SessionActivity {
  * - `busy`: something else is capturing the tab.
  * - `companion`: the profile needs the companion app and it isn't running.
  * - `model`: a model failed to load or isn't downloaded.
+ * - `navigated`: the tab went to another site that the session can't follow (no access without
+ *   a click, or nothing to subtitle there), so it stopped.
  * - `setup`: Chrome needs a click to download a language pack first (`setup` lists them; a page
  *   runs each with `runSetupAction` from engines/chrome/setup.ts, then starts again).
  * - `unknown`: anything else.
@@ -69,6 +71,7 @@ export type SessionErrorCode =
   | 'busy'
   | 'companion'
   | 'model'
+  | 'navigated'
   | 'setup'
   | 'unknown';
 
