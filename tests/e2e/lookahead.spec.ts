@@ -149,6 +149,9 @@ for (const player of PLAYERS) {
       };
       return { shown: w.shown, frames: w.pageFrames };
     });
+    // Two reads of `currentTime` in the same frame can differ by a fraction of a millisecond
+    // (Chrome moves it on between reads), far less than a frame (~16 ms).
+    const SLACK = 0.005;
     // One cue per burst, timed from the media itself.
     const timing = BURSTS.map(([start]) => {
       const cue = cues.find((c) => Math.abs((c.media?.start ?? -9) - start) < 0.4);
@@ -156,7 +159,7 @@ for (const player of PLAYERS) {
       const first = cue ? shown.find((s) => s.ids.includes(cue.id)) : undefined;
       // The page's second frame once the video reached the cue: the overlay, which checks the
       // video's time every frame, draws it by then.
-      const reached = at === null ? -1 : frames.findIndex((t) => t >= at - 0.001);
+      const reached = at === null ? -1 : frames.findIndex((t) => t >= at - SLACK);
       const due = reached >= 0 ? frames[reached + 1] : undefined;
       return {
         burst: start,
@@ -176,11 +179,11 @@ for (const player of PLAYERS) {
       // quarter second or more, which delays the frame, not the overlay's scheduling.
       expect(t.shownAt, `burst at ${t.burst} s shown`).not.toBeNull();
       expect(t.shownAt ?? 0, `burst at ${t.burst} s not early`).toBeGreaterThanOrEqual(
-        (t.cue ?? 0) - 0.001,
+        (t.cue ?? 0) - SLACK,
       );
       expect(t.due, `the page drew a frame after ${t.burst} s`).not.toBeNull();
       expect(t.shownAt ?? 0, `burst at ${t.burst} s by the next frame`).toBeLessThanOrEqual(
-        (t.due ?? 0) + 0.001,
+        (t.due ?? 0) + SLACK,
       );
     }
     // While lookahead was ahead, live recognition stepped aside.
