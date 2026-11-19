@@ -1,7 +1,8 @@
 /**
  * Voice-activity detection hook. The segmenter asks a detector for a speech probability per fixed
- * frame. `EnergyVad` is the dependency-free default (a loudness gate: it also fires on music); a
- * model-based detector (e.g. Silero via ONNX in a worker) can implement the same interface.
+ * frame. `EnergyVad` is a dependency-free loudness gate: it also fires on music and noise. Model
+ * detectors (`SileroVad`, silero.ts) answer asynchronously; `VadStage` (vadstage.ts) scores the
+ * stream with one ahead of the segmenter.
  */
 
 export interface VoiceActivityDetector {
@@ -9,6 +10,16 @@ export interface VoiceActivityDetector {
   readonly frameSamples: number;
   /** Speech probability, 0–1, for one frame of exactly `frameSamples` samples. */
   process(frame: Float32Array): number;
+  reset(): void;
+}
+
+/** A detector that answers asynchronously (a model). Frames are scored in the order given. */
+export interface AsyncVoiceActivityDetector {
+  /** Samples per frame this detector wants (at the pipeline rate). */
+  readonly frameSamples: number;
+  /** Speech probability, 0–1, for one frame of exactly `frameSamples` samples. */
+  process(frame: Float32Array): Promise<number>;
+  /** Starts a new stream (after the frames already given). */
   reset(): void;
 }
 
