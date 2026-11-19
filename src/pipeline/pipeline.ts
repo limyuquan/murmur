@@ -208,6 +208,7 @@ export class Pipeline {
       languageHint: options.sourceLanguage,
       spokenLanguages: options.spokenLanguages ?? [],
       onlySpoken: options.onlySpoken ?? false,
+      targetLanguage: options.targetLanguage,
       track: options.track ?? null,
       currentSample: () => this.position,
       ...(options.media ? { batch: true } : {}),

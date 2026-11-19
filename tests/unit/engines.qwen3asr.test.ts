@@ -14,6 +14,7 @@ import { tiedEmbedding } from '@/engines/qwen3asr/model';
 import {
   ASR_TEXT,
   endsInLoop,
+  keepSecond,
   LANGUAGE,
   LANGUAGE_NAMES,
   LANGUAGE_TOKENS,
@@ -21,9 +22,11 @@ import {
   maxAnswerTokens,
   modelLanguages,
   NONE,
+  otherLanguage,
   parseAnswer,
   promptIds,
   rollbackPrefix,
+  spokenLength,
 } from '@/engines/qwen3asr/prompt';
 import { TokenDecoder } from '@/engines/qwen3asr/tokenizer';
 import { cacheKey, HUGGING_FACE, isPublished, MURMUR_MODELS } from '@/models/hub';
@@ -166,6 +169,42 @@ describe('Qwen3-ASR prompt', () => {
     expect(endsInLoop(text(Array.from({ length: 80 }, (_, i) => 100 + i)), 3)).toBe(false);
     // Only the text counts, not the header.
     expect(endsInLoop([...rep([LANGUAGE], 8)], 8)).toBe(false);
+  });
+});
+
+describe('Qwen3-ASR second opinion on a target-language line', () => {
+  it('measures spoken length in syllables: a wide character each, a word one and a half', () => {
+    expect(spokenLength('깨끗한 bright future, but.')).toBe(3 + 1.5 * 3);
+    expect(spokenLength('ありがとう')).toBe(5);
+    expect(spokenLength('')).toBe(0);
+  });
+
+  it('decodes again in the first spoken language that isn’t the target', () => {
+    const none = new Map<string, number>();
+    expect(otherLanguage('en', ['en', 'ko', 'ja'], none)).toBe('ko');
+    expect(otherLanguage('en', ['en'], none)).toBeNull();
+    // Restricted to the spoken languages: only one of those.
+    expect(otherLanguage('en', ['ko'], none, ['ja', 'en'])).toBeNull();
+  });
+
+  it('else in the language most of the session’s finals were heard in', () => {
+    const heard = (counts: Record<string, number>) => new Map(Object.entries(counts));
+    expect(otherLanguage('en', [], heard({ ko: 3, en: 1 }))).toBe('ko');
+    // Too few finals yet, or no language with half of them.
+    expect(otherLanguage('en', [], heard({ ko: 2, en: 1 }))).toBeNull();
+    expect(otherLanguage('en', [], heard({ ko: 2, ja: 2, en: 2 }))).toBeNull();
+    // English content with a few Korean lines: English is the target, never the other language.
+    expect(otherLanguage('en', [], heard({ en: 9, ko: 2 }))).toBeNull();
+  });
+
+  it('keeps the second answer when the model is surer of it and it says about as much', () => {
+    const first = { text: 'Get a bright future, but.', avgLogprob: -0.32 };
+    expect(keepSecond(first, { text: '깨끗한 브라이트 퓨처, but.', avgLogprob: -0.19 })).toBe(true);
+    expect(keepSecond(first, { text: '깨끗한 브라이트 퓨처, but.', avgLogprob: -0.4 })).toBe(false);
+    expect(keepSecond(first, { text: '', avgLogprob: -0.01 })).toBe(false);
+    // Surer, but the English half is gone.
+    const both = { text: 'Sometimes it’s absolutely chaotic. Yeah, so.', avgLogprob: -0.16 };
+    expect(keepSecond(both, { text: '그리고 이게 뭐라고?', avgLogprob: -0.11 })).toBe(false);
   });
 });
 

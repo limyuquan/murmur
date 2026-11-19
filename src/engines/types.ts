@@ -241,6 +241,11 @@ export interface AsrSessionOptions {
   spokenLanguages?: readonly LanguageTag[];
   /** Nothing else is spoken: detecting engines pick among `spokenLanguages` only. */
   onlySpoken?: boolean;
+  /**
+   * The language subtitles are translated into: a line heard in it is shown as it is, so engines
+   * may check such a line again (Qwen3-ASR decodes it again in the speaker's own language).
+   */
+  targetLanguage?: LanguageTag;
   /** The live audio, for engines with `audioInput: 'track'`. */
   track?: MediaStreamTrack | null;
   /** Index of the newest captured sample, so track engines can place their results in time. */

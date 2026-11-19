@@ -202,3 +202,69 @@ export function endsInLoop(ids: readonly number[], from = 0): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------------------------
+// A second opinion on a line heard as the target language
+//
+// A speaker who mixes a few words of the target language into their own ("깨끗한 bright
+// future?") is often heard as speaking the target language, the rest written as sound-alikes
+// ("Get a bright future"), and such a line is shown untranslated. Decoded again in the speaker's
+// own language, it often keeps both parts ("깨끗한 브라이트 퓨처", "근데 you're supposed to"): the
+// second answer is kept when the model is surer of it and it says about as much (a decode in the
+// other language sometimes leaves out the target-language part). Measured on real K-pop audio
+// with Korean mixed with English: murmur-notes bench/results/summary_mixed_lines.md.
+
+/** The second answer must cover at least this share of the first one's spoken length. */
+export const SECOND_MIN_LENGTH = 0.8;
+/** Finals heard before the most heard language counts as the session's own. */
+export const MAIN_MIN_FINALS = 4;
+
+/** Kana, Han and Hangul syllables. */
+const WIDE_CHAR = /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]/gu;
+
+/**
+ * Rough spoken length of a transcript, in syllables: one per Hangul, kana or Han character, one
+ * and a half per word in another script.
+ */
+export function spokenLength(text: string): number {
+  const wide = text.match(WIDE_CHAR)?.length ?? 0;
+  const words = text.replace(WIDE_CHAR, ' ').match(/[\p{L}\p{N}]+/gu)?.length ?? 0;
+  return wide + 1.5 * words;
+}
+
+/**
+ * The language to decode a target-language line in again: the first spoken language that isn't
+ * the target (among `allowed`, when the person said only those are spoken), or else the language
+ * most heard so far when at least half of the session's finals were in it. Null: none.
+ */
+export function otherLanguage(
+  target: string,
+  spoken: readonly string[],
+  heard: ReadonlyMap<string, number>,
+  allowed: readonly string[] | null = null,
+): string | null {
+  const ok = (l: string) => l !== target && (!allowed || allowed.includes(l));
+  const named = spoken.find(ok);
+  if (named) return named;
+  let total = 0;
+  let best: string | null = null;
+  let most = 0;
+  for (const [language, n] of heard) {
+    total += n;
+    if (ok(language) && n > most) {
+      best = language;
+      most = n;
+    }
+  }
+  return best && total >= MAIN_MIN_FINALS && most * 2 >= total ? best : null;
+}
+
+/** Whether to keep the second answer (`second`, in the other language) over the first. */
+export function keepSecond(
+  first: { text: string; avgLogprob: number },
+  second: { text: string; avgLogprob: number },
+): boolean {
+  if (!second.text.trim()) return false;
+  if (second.avgLogprob <= first.avgLogprob) return false;
+  return spokenLength(second.text) >= SECOND_MIN_LENGTH * spokenLength(first.text);
+}
