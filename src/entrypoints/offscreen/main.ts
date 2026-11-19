@@ -27,21 +27,24 @@ const host = new OffscreenHost({
 
 /**
  * e2e builds: every cue (with when it was sent), every Chrome speech arbitration, every
- * segment decode (engines that report them) and the speech detector with its cost, on
+ * segment decode (engines that report them), every segment boundary and the speech detector
+ * with its cost, on
  * `globalThis.__murmurLog`, for real-model checks driven over CDP.
  */
-function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines' | 'onVad'> {
+function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines' | 'onVad' | 'onSegment'> {
   const log: OffscreenTestLog = {
     cues: [],
     arbitrations: [],
     decodes: [],
     engines: null,
+    segments: [],
     vad: null,
   };
   globalThis.__murmurLog = log;
   const now = () => performance.timeOrigin + performance.now();
   return {
     onCue: (cue) => log.cues.push({ at: now(), cue }),
+    onSegment: (event) => log.segments.push({ at: now(), event }),
     onVad: (vad) => {
       log.vad = vad ? { detector: 'silero', cost: vad.cost } : { detector: 'energy', cost: null };
     },

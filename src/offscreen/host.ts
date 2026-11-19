@@ -40,7 +40,7 @@ import {
   type SessionErrorCode,
   type SessionFailure,
 } from '@/messaging/protocol';
-import { Pipeline } from '@/pipeline/pipeline';
+import { Pipeline, type PipelineOptions } from '@/pipeline/pipeline';
 import type { SileroVad } from '@/pipeline/silero';
 import type { Cue } from '@/pipeline/types';
 import { LOG_PREFIX } from '@/shared/ids';
@@ -63,6 +63,8 @@ export interface HostDeps {
   onCue?(cue: Cue): void;
   /** Sees the session's engines once loaded (e2e builds tap their diagnostics). */
   onEngines?(asr: AsrEngine, translator: TranslationEngine): void;
+  /** Sees each segment start and end (e2e builds log them). */
+  onSegment?: PipelineOptions['onSegment'];
   /** Sees the speech detector the session uses (`null`: the energy gate). */
   onVad?(vad: SileroVad | null): void;
   /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
@@ -289,6 +291,7 @@ export class OffscreenHost {
           this.broadcast(config.tabId, { type: 'cue', cue });
         },
         onHealth: (health) => running.activity.onHealth(health),
+        ...(this.deps.onSegment ? { onSegment: this.deps.onSegment } : {}),
         onError: (err) => {
           if (isActionRequired(err)) {
             const fresh = err.actions.filter((a) => !running.setup.some((b) => b.id === a.id));

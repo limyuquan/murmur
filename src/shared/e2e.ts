@@ -2,6 +2,7 @@
  * Test-only hooks, present only in e2e builds (`import.meta.env.MODE === 'e2e'`). Production
  * builds tree-shake them away. Playwright reaches them through `serviceWorker.evaluate`.
  */
+import type { SegmentEvent } from '@/pipeline/segmenter';
 import type { Cue } from '@/pipeline/types';
 
 /** True in `pnpm build:e2e` builds only. */
@@ -34,6 +35,8 @@ export interface OffscreenTestLog {
   /** Segment decodes of engines that report them (Qwen3-ASR): kind, timing, text. */
   decodes: { at: number; record: unknown }[];
   engines: { asr: string; translation: string } | null;
+  /** Each segment's start and end (with why it ended), with the epoch ms it was sent. */
+  segments: { at: number; event: SegmentEvent }[];
   /** The session's speech detector, and the time it has spent so far (live). */
   vad: { detector: 'silero' | 'energy'; cost: { frames: number; ms: number } | null } | null;
 }

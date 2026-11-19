@@ -67,6 +67,8 @@ export interface PipelineOptions {
   onError(error: Error): void;
   /** How the speech engine is keeping up. */
   onHealth?(health: AsrHealth): void;
+  /** Sees each segment start and end (e2e builds log them, with why each ended). */
+  onSegment?(event: Extract<SegmentEvent, { type: 'start' | 'end' }>): void;
   /**
    * Longest a final line's translation may take before it is given up (marked failed), so one
    * that hangs doesn't hold up every later line. Default `TRANSLATION_TIMEOUT_MS`.
@@ -179,6 +181,7 @@ export class Pipeline {
 
   private dispatch(events: SegmentEvent[]): void {
     for (const event of events) {
+      if (event.type === 'start' || event.type === 'end') this.options.onSegment?.(event);
       switch (event.type) {
         case 'start':
           this.segmentState(event.segmentId, event.startSample, event.startSample);
