@@ -8,6 +8,7 @@
  * `mergeSettings`. Stored objects are merged over the defaults on read, so old data keeps working.
  */
 import { browser } from 'wxt/browser';
+import type { GlossaryEntry } from '@/engines/glossary';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID, type ProfileChoice } from '@/engines/profiles';
 import type { LanguageTag } from '@/engines/types';
 
@@ -57,6 +58,11 @@ export interface Settings {
   custom: { asr: string; translation: string };
   /** Translate partial lines as a preview (more work, earlier text). */
   translatePartials: boolean;
+  /**
+   * Names and terms with the rendering to keep (`source` as said, `target` as written). Engines
+   * that take a glossary get the entries each line uses.
+   */
+  glossary: GlossaryEntry[];
   overlay: OverlaySettings;
 }
 
@@ -67,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   profile: 'balanced',
   custom: { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID },
   translatePartials: false,
+  glossary: [],
   overlay: {
     display: 'both',
     position: 'bottom',
@@ -84,6 +91,9 @@ export const DEFAULT_SETTINGS: Settings = {
 export const MAX_SPOKEN_FOR_CHROME = 4;
 /** Most spoken languages kept. */
 const MAX_SPOKEN = 12;
+/** Most glossary entries kept, and the longest text on either side. */
+export const MAX_GLOSSARY = 500;
+export const MAX_GLOSSARY_TEXT = 100;
 
 /**
  * The languages a session listens for: the chosen ones, or else the browser's own (its language
@@ -135,6 +145,7 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
         typeof c.translation === 'string' && c.translation ? c.translation : d.custom.translation,
     },
     translatePartials: bool(s.translatePartials, d.translatePartials),
+    glossary: Array.isArray(s.glossary) ? cleanGlossary(s.glossary) : d.glossary,
     overlay: {
       display: oneOf(o.display, ['both', 'translation', 'original'] as const, d.overlay.display),
       position: oneOf(o.position, ['bottom', 'top'] as const, d.overlay.position),
@@ -185,6 +196,27 @@ export function watchSettings(listener: (settings: Settings) => void): () => voi
   };
   browser.storage.onChanged.addListener(onChanged);
   return () => browser.storage.onChanged.removeListener(onChanged);
+}
+
+/**
+ * Valid entries of a stored glossary: both sides text, trimmed and not empty, at most
+ * `MAX_GLOSSARY_TEXT` characters, at most `MAX_GLOSSARY` entries, no source twice.
+ */
+export function cleanGlossary(list: readonly unknown[]): GlossaryEntry[] {
+  const out: GlossaryEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (!isObject(item)) continue;
+    const source = typeof item.source === 'string' ? item.source.trim() : '';
+    const target = typeof item.target === 'string' ? item.target.trim() : '';
+    if (!source || !target) continue;
+    if (source.length > MAX_GLOSSARY_TEXT || target.length > MAX_GLOSSARY_TEXT) continue;
+    if (seen.has(source)) continue;
+    seen.add(source);
+    out.push({ source, target });
+    if (out.length >= MAX_GLOSSARY) break;
+  }
+  return out;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
