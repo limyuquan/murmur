@@ -1,5 +1,5 @@
 /**
- * The overlay's DOM: one `<earshot-overlay>` host with a closed shadow root (open in e2e builds so
+ * The overlay's DOM: one `<murmur-overlay>` host with a closed shadow root (open in e2e builds so
  * Playwright can read it), positioned over the visible picture. Pointer events pass through to the
  * player, except on the subtitle text itself, which can be dragged.
  *
@@ -18,7 +18,7 @@ import type { CaptionBlock, CaptionLine } from './captions';
 import type { CaptionLayout } from './geometry';
 import { OVERLAY_CSS } from './styles';
 
-export const OVERLAY_TAG = 'earshot-overlay';
+export const OVERLAY_TAG = 'murmur-overlay';
 
 export interface ViewStyle {
   /** `custom`: anchored at the dragged position (`anchorY`). */

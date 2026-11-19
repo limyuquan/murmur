@@ -1,5 +1,5 @@
 /**
- * The engine registry: every engine Earshot can use, by id, as a factory with static info. Info
+ * The engine registry: every engine Murmur can use, by id, as a factory with static info. Info
  * is readable without loading anything (settings UI, profile resolution); `create()` may
  * dynamic-import the engine's code so heavy runtimes load only when chosen.
  */

@@ -1,5 +1,5 @@
 /**
- * The Whisper models Earshot runs in the browser (transformers.js, WebGPU with a WebAssembly
+ * The Whisper models Murmur runs in the browser (transformers.js, WebGPU with a WebAssembly
  * fallback), and their static engine info. Weights come from Hugging Face at a pinned revision
  * the first time the engine loads, and stay in the Cache API (`transformers-cache`).
  *
@@ -12,7 +12,7 @@ import type { AsrEngineInfo } from '../types';
 
 export type WhisperId = 'whisper-base' | 'whisper-large-v3-turbo';
 
-/** transformers.js weight formats Earshot uses. */
+/** transformers.js weight formats Murmur uses. */
 export type WeightFormat = 'fp32' | 'fp16' | 'q8' | 'q4';
 
 /** transformers.js `dtype`: one per ONNX file. */

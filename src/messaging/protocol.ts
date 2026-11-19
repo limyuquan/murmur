@@ -1,5 +1,5 @@
 /**
- * Every message between Earshot's contexts, typed in one place.
+ * Every message between Murmur's contexts, typed in one place.
  *
  *   popup / options ──Request──▶ service worker            (runtime.sendMessage, `target: 'background'`)
  *   service worker ──OffscreenCommand──▶ offscreen doc     (runtime.sendMessage, `target: 'offscreen'`)
@@ -44,7 +44,7 @@ export interface SessionActivity {
 
 /**
  * Why a session failed, so the popup can offer the fix. `message` stays the words to show.
- * - `page`: Earshot can't run on this page (browser pages, the web store).
+ * - `page`: Murmur can't run on this page (browser pages, the web store).
  * - `access`: Chrome needs the toolbar button clicked on this tab first.
  * - `busy`: something else is capturing the tab.
  * - `companion`: the profile needs the companion app and it isn't running.
@@ -114,7 +114,7 @@ export interface TabView {
   profile: ProfileChoice;
   /** The profile's models: all downloaded, or how much is left to download. */
   models: { ready: boolean; missingMB: number; simulated: boolean };
-  /** The tab's site (positions are kept per site), when Earshot can see its address. */
+  /** The tab's site (positions are kept per site), when Murmur can see its address. */
   site: string | null;
 }
 
@@ -192,7 +192,7 @@ export type OffscreenEvent = {
 // Offscreen document ↔ overlay
 
 /** Name of the runtime.Port the overlay opens to the offscreen document. */
-export const OVERLAY_PORT = 'earshot-overlay';
+export const OVERLAY_PORT = 'murmur-overlay';
 
 /** What the overlay says about the session on the picture (a small chip). */
 export type OverlayStatus =

@@ -7,7 +7,7 @@ import type { Cue } from '@/pipeline/types';
 /** True in `pnpm build:e2e` builds only. */
 export const IS_E2E = import.meta.env.MODE === 'e2e';
 
-/** On the service worker global as `__earshot`. */
+/** On the service worker global as `__murmur`. */
 export interface BackgroundTestHook {
   /**
    * What the popup's switch does for `tabId`, minus the click: inject the overlay and start a
@@ -20,7 +20,7 @@ export interface BackgroundTestHook {
   stop(): Promise<void>;
 }
 
-/** On the offscreen document's global as `__earshotLog` (e2e builds): what the session produced. */
+/** On the offscreen document's global as `__murmurLog` (e2e builds): what the session produced. */
 export interface OffscreenTestLog {
   /** Every cue sent to the overlay, with the epoch ms it was sent. */
   cues: { at: number; cue: Cue }[];
@@ -30,6 +30,6 @@ export interface OffscreenTestLog {
 }
 
 declare global {
-  var __earshot: BackgroundTestHook | undefined;
-  var __earshotLog: OffscreenTestLog | undefined;
+  var __murmur: BackgroundTestHook | undefined;
+  var __murmurLog: OffscreenTestLog | undefined;
 }

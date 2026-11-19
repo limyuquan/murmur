@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 export const FIXTURE_PORT = Number(process.env.FIXTURE_PORT ?? 4392);
 export const FIXTURE_ORIGIN = `http://127.0.0.1:${FIXTURE_PORT}`;
 
-const resultsSuffix = process.env.EARSHOT_E2E_ID ? `-${process.env.EARSHOT_E2E_ID}` : '';
+const resultsSuffix = process.env.MURMUR_E2E_ID ? `-${process.env.MURMUR_E2E_ID}` : '';
 
 /**
  * E2E: the extension (built by `pnpm build:e2e` into .output/chrome-mv3-e2e) is loaded into

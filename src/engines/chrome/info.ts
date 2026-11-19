@@ -12,9 +12,9 @@ export const CHROME_WEBSPEECH_INFO: AsrEngineInfo = {
   id: CHROME_WEBSPEECH_ID,
   label: 'Chrome speech recognition (on this device)',
   description:
-    "Chrome's own on-device speech recognition. Nothing to download from Earshot; Chrome fetches a pack per language.",
+    "Chrome's own on-device speech recognition. Nothing to download from Murmur; Chrome fetches a pack per language.",
   runtime: 'chrome',
-  // Runs in Chrome's speech service, not on Earshot's GPU or CPU budget.
+  // Runs in Chrome's speech service, not on Murmur's GPU or CPU budget.
   requirements: { backends: ['none'] },
   // Locales Chrome offers on-device packs for; each is checked when a session starts.
   languages: [

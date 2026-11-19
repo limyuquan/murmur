@@ -41,7 +41,7 @@ export function Options({ initial }: { initial: Settings }) {
       <nav aria-label="Sections" className="sticky top-8 hidden h-fit w-[168px] flex-none md:block">
         <div className="mb-6 flex items-center gap-2.5">
           <Logo size={26} />
-          <span className="text-[16px] font-semibold tracking-[-0.01em]">Earshot</span>
+          <span className="text-[16px] font-semibold tracking-[-0.01em]">Murmur</span>
         </div>
         <ul className="grid gap-0.5">
           {SECTIONS.map((s) => (
@@ -145,7 +145,7 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
     <Section
       id="models"
       title="Models"
-      intro="Earshot turns speech into text and translates it on this computer. Larger models make fewer mistakes, but need a faster device and a bigger one-time download."
+      intro="Murmur turns speech into text and translates it on this computer. Larger models make fewer mistakes, but need a faster device and a bigger one-time download."
     >
       {simulated && (
         <p className="notice text-[13px]" data-testid="simulated-notice">
@@ -261,7 +261,7 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
             <p className="text-[13px] text-[var(--color-muted)]" data-testid="disk-usage">
               {formatSize(view.storage.modelsMB)} used
               {view.storage.availableMB !== null &&
-                ` · ${formatSize(view.storage.availableMB)} free for Earshot`}
+                ` · ${formatSize(view.storage.availableMB)} free for Murmur`}
             </p>
           )}
         </div>
@@ -626,7 +626,7 @@ function ShortcutsSection() {
       <div className="card divide-y divide-[var(--color-line)] px-4" data-testid="shortcuts">
         {commands.map((c) => (
           <div key={c.name} className="flex items-center justify-between gap-4 py-3">
-            <span>{c.name === '_execute_action' ? 'Open Earshot' : c.description}</span>
+            <span>{c.name === '_execute_action' ? 'Open Murmur' : c.description}</span>
             {c.shortcut ? (
               <span className="flex gap-1">
                 {c.shortcut.split('+').map((k) => (
@@ -676,7 +676,7 @@ function PrivacySection() {
         </ul>
       </div>
       <p className="text-[13px] text-[var(--color-muted)]">
-        Earshot {version} ·{' '}
+        Murmur {version} ·{' '}
         <a className="link" href={REPO_URL} target="_blank" rel="noreferrer">
           Source code
         </a>{' '}

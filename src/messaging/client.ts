@@ -6,7 +6,7 @@ import type { Op, Ops, Request, Response } from './protocol';
 export async function call<K extends Op>(op: K, args: Ops[K][0]): Promise<Ops[K][1]> {
   const request: Request<K> = { target: 'background', op, args };
   const res = (await browser.runtime.sendMessage(request)) as Response<K> | undefined;
-  if (!res) throw new Error('Earshot did not answer. Reload the extension and try again.');
+  if (!res) throw new Error('Murmur did not answer. Reload the extension and try again.');
   if (!res.ok) throw new Error(res.error.message);
   return res.result;
 }

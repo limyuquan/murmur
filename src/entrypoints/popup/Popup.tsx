@@ -113,7 +113,7 @@ export function Popup({
     <main className="flex w-[340px] flex-col text-[13px]">
       <header className="flex items-center gap-2 px-4 pt-3 pb-2">
         <Logo size={20} />
-        <h1 className="text-[14px] font-semibold tracking-[-0.01em]">Earshot</h1>
+        <h1 className="text-[14px] font-semibold tracking-[-0.01em]">Murmur</h1>
         <button
           type="button"
           className="icon-btn ml-auto"

@@ -24,7 +24,7 @@ export default defineBackground(() => {
   models.reconcile().catch(() => {});
   installSessionListeners();
 
-  // First install: the welcome page (what Earshot does, pick a model, download). Not in e2e
+  // First install: the welcome page (what Murmur does, pick a model, download). Not in e2e
   // builds, where a surprise tab would get in the tests' way.
   browser.runtime.onInstalled.addListener(({ reason }) => {
     if (reason !== 'install') return;
@@ -66,7 +66,7 @@ export default defineBackground(() => {
   });
 
   if (IS_E2E) {
-    globalThis.__earshot = {
+    globalThis.__murmur = {
       async start(tabId, source = 'tone', engines = 'demo') {
         const status = await startSession(tabId, {
           source,

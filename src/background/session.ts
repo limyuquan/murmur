@@ -203,10 +203,10 @@ async function sendToOffscreen(command: OffscreenCommand): Promise<OffscreenRepl
 function startError(err: unknown): { message: string; code: SessionErrorCode } {
   const message = err instanceof Error ? err.message : String(err);
   if (/Cannot access|cannot be scripted|chrome:\/\/|Missing host permission/i.test(message)) {
-    return { message: "Earshot can't run on this page.", code: 'page' };
+    return { message: "Murmur can't run on this page.", code: 'page' };
   }
   if (/activeTab|has not been invoked|Extension has not been invoked/i.test(message)) {
-    return { message: 'Click the Earshot button on this tab first.', code: 'access' };
+    return { message: 'Click the Murmur button on this tab first.', code: 'access' };
   }
   if (/already capturing|active stream/i.test(message)) {
     return { message: 'Another app or extension is already capturing this tab.', code: 'busy' };

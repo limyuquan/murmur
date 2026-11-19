@@ -5,24 +5,24 @@
  */
 import { expect, test } from './fixtures';
 
-test('tab capture starts, shows on the tab, and stops when the tab closes', async ({ earshot }) => {
-  const page = await earshot.open('video.html');
-  const tabId = await earshot.start(page, 'tab');
-  await expect.poll(async () => (await earshot.status()).state).toBe('running');
-  expect(await earshot.status()).toMatchObject({ tabId });
-  await expect(page.locator('earshot-overlay')).toHaveCount(1);
+test('tab capture starts, shows on the tab, and stops when the tab closes', async ({ murmur }) => {
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.start(page, 'tab');
+  await expect.poll(async () => (await murmur.status()).state).toBe('running');
+  expect(await murmur.status()).toMatchObject({ tabId });
+  await expect(page.locator('murmur-overlay')).toHaveCount(1);
 
   await page.close();
-  await expect.poll(async () => (await earshot.status()).state).toBe('idle');
+  await expect.poll(async () => (await murmur.status()).state).toBe('idle');
 });
 
-test('a second tab takes over the session', async ({ earshot }) => {
-  const first = await earshot.open('video.html');
-  await earshot.start(first, 'tab');
-  const second = await earshot.open('video.html?second');
-  const secondId = await earshot.start(second, 'tab');
-  await expect.poll(async () => (await earshot.status()).state).toBe('running');
-  expect(await earshot.status()).toMatchObject({ tabId: secondId });
-  await expect(first.locator('earshot-overlay')).toHaveCount(0);
-  await expect(second.locator('earshot-overlay')).toHaveCount(1);
+test('a second tab takes over the session', async ({ murmur }) => {
+  const first = await murmur.open('video.html');
+  await murmur.start(first, 'tab');
+  const second = await murmur.open('video.html?second');
+  const secondId = await murmur.start(second, 'tab');
+  await expect.poll(async () => (await murmur.status()).state).toBe('running');
+  expect(await murmur.status()).toMatchObject({ tabId: secondId });
+  await expect(first.locator('murmur-overlay')).toHaveCount(0);
+  await expect(second.locator('murmur-overlay')).toHaveCount(1);
 });

@@ -3,7 +3,7 @@
  * Checks a release zip before it ships: its manifest keeps the public `key`, so Chrome gives the
  * unpacked extension the fixed ID in src/shared/ids.ts (which a future companion app's
  * native-messaging `allowed_origins` names), its version matches package.json, and it asks for no
- * more than the expected permissions. Usage: node scripts/verify-zip.mjs .output/earshot-<version>-chrome.zip
+ * more than the expected permissions. Usage: node scripts/verify-zip.mjs .output/murmur-<version>-chrome.zip
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -36,7 +36,7 @@ const expected = /EXTENSION_ID\s*=\s*'([a-p]{32})'/.exec(ids)?.[1];
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 if (!expected) fail('could not read EXTENSION_ID from src/shared/ids.ts');
-if (!manifest.key) fail('manifest.json has no "key" (built with `zip:store`?); use `pnpm zip`');
+if (!manifest.key) fail('manifest.json has no "key" ; build it with `pnpm zip`');
 // Chrome's ID: the first 32 hex digits of SHA-256(public key), with 0-f written as a-p.
 const id = [...createHash('sha256').update(Buffer.from(manifest.key, 'base64')).digest('hex')]
   .slice(0, 32)
@@ -49,4 +49,4 @@ const extra = (manifest.permissions ?? []).filter((p) => !PERMISSIONS.includes(p
 if (extra.length > 0) fail(`unexpected permissions: ${extra.join(', ')}`);
 if (manifest.host_permissions?.length)
   fail(`host_permissions must be empty (asked for at runtime)`);
-console.log(`${zip}: Earshot ${manifest.version}, ID ${id}`);
+console.log(`${zip}: Murmur ${manifest.version}, ID ${id}`);

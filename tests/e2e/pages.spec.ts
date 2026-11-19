@@ -15,11 +15,11 @@ async function overlaySettings(sw: Worker) {
 }
 
 test('popup quick settings change subtitles, from the keyboard too', async ({
-  earshot,
+  murmur,
   serviceWorker,
 }) => {
-  const page = await earshot.open('video.html');
-  const tabId = await earshot.tabId(page);
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
   const popup = await page.context().newPage();
   await popup.goto(url(`popup.html?tab=${tabId}`));
   await expect(popup.getByTestId('status')).toHaveText(/^Off/);
@@ -66,7 +66,7 @@ test('options: pick a model size, download it, delete it', async ({ context }) =
 test('options: the preview follows the subtitle settings', async ({ context }) => {
   const page = await context.newPage();
   await page.goto(url('options.html#subtitles'));
-  const host = page.getByTestId('preview').locator('earshot-overlay');
+  const host = page.getByTestId('preview').locator('murmur-overlay');
   await expect(host.locator('.line[data-role="main"]').last()).toHaveText(
     'Yes, but I might be a little late.',
   );
@@ -90,7 +90,7 @@ test('options: shortcuts are listed', async ({ context }) => {
   const page = await context.newPage();
   await page.goto(url('options.html#shortcuts'));
   const list = page.getByTestId('shortcuts');
-  await expect(list).toContainText('Open Earshot');
+  await expect(list).toContainText('Open Murmur');
   await expect(list).toContainText('Subtitles on or off for this tab');
   await expect(list).toContainText('Show or hide the original line');
 });

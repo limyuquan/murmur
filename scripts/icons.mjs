@@ -1,8 +1,8 @@
 /**
  * Renders assets/icon.svg to public/icon/{16,32,48,128}.png with headless Chromium.
  * Run after editing the SVG: `pnpm icons`. The PNGs are committed.
- * 128 px is the store/install icon: 96 px of art in 16 px of transparent padding, as the Chrome Web
- * Store asks. The toolbar sizes use the full square.
+ * 128 px is the install icon: 96 px of art in 16 px of transparent padding, as Chrome's icon
+ * guidelines ask. The toolbar sizes use the full square.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { chromium } from '@playwright/test';

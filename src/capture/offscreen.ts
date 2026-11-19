@@ -2,7 +2,7 @@
  * Service-worker side of capture: the single offscreen document and the tab stream ID.
  *
  * Only one offscreen document can exist per extension (per profile). It hosts the audio graph and
- * the models, so Earshot runs one session at a time. Create the document first, then mint the
+ * the models, so Murmur runs one session at a time. Create the document first, then mint the
  * stream ID: an ID is single-use and expires a few seconds after it's minted.
  */
 import { browser } from 'wxt/browser';

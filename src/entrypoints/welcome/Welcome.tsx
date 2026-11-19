@@ -1,5 +1,5 @@
 /**
- * First run, opened on install: what Earshot does → language → model size → download → done.
+ * First run, opened on install: what Murmur does → language → model size → download → done.
  * Every choice is saved as it's made, so leaving part way keeps what was chosen; the download
  * carries on in the background if the page is closed.
  */
@@ -131,7 +131,7 @@ export function Welcome({ initial }: { initial: Settings }) {
             {formatSize(selected.totalMB)} in all, downloaded once and kept on this computer. You
             can close this page: the download carries on.
             {view?.storage.availableMB != null &&
-              ` ${formatSize(view.storage.availableMB)} is free for Earshot.`}
+              ` ${formatSize(view.storage.availableMB)} is free for Murmur.`}
           </p>
           {selected.downloading !== null && (
             <div>
@@ -184,7 +184,7 @@ export function Welcome({ initial }: { initial: Settings }) {
     <div className="mx-auto flex min-h-screen max-w-[720px] flex-col px-6 py-8 text-[14px] leading-[1.55]">
       <header className="flex items-center gap-2.5">
         <Logo size={28} />
-        <span className="text-[16px] font-semibold tracking-[-0.01em]">Earshot</span>
+        <span className="text-[16px] font-semibold tracking-[-0.01em]">Murmur</span>
         <ol className="ml-auto flex items-center gap-1.5" aria-label="Steps">
           {STEPS.map((s, i) => (
             <li key={s.id} aria-current={s.id === step ? 'step' : undefined}>
@@ -332,11 +332,11 @@ function LanguageStep({
 function Done({ ready }: { ready: boolean }) {
   const steps: ReactNode[] = [
     <>
-      <strong>Pin Earshot</strong> so it’s one click away: click the puzzle piece in the toolbar,
-      then the pin next to Earshot.
+      <strong>Pin Murmur</strong> so it’s one click away: click the puzzle piece in the toolbar,
+      then the pin next to Murmur.
     </>,
     <>
-      On a tab with a video, click Earshot and turn on <strong>Subtitles on this tab</strong>. Or
+      On a tab with a video, click Murmur and turn on <strong>Subtitles on this tab</strong>. Or
       press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>S</kbd>.
     </>,
     <>Drag subtitles to move them. Double-click to put them back.</>,

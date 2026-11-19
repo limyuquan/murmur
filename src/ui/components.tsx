@@ -160,7 +160,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   );
 }
 
-/** The Earshot mark (assets/icon.svg), drawn inline. */
+/** The Murmur mark (assets/icon.svg), drawn inline. */
 export function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 128 128" aria-hidden="true" focusable="false">

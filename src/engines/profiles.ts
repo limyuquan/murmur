@@ -43,7 +43,7 @@ const ASR_LAST_RESORT = [WHISPER_BASE_ID, DEMO_ASR_ID];
 const TRANSLATION_LAST_RESORT = [CHROME_TRANSLATOR_ID, DEMO_TRANSLATION_ID];
 
 export const PROFILES: Record<ProfileId, ModelProfile> = {
-  // Chrome's own on-device speech and translation: nothing for Earshot to download.
+  // Chrome's own on-device speech and translation: nothing for Murmur to download.
   light: {
     id: 'light',
     label: 'Light',

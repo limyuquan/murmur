@@ -77,7 +77,7 @@ export class WhisperAsrEngine implements AsrEngine {
             });
           } else if (m.type === 'ready') {
             this.device = m.device;
-            console.debug('[earshot]', this.info.id, 'ready on', m.device, m);
+            console.debug('[murmur]', this.info.id, 'ready on', m.device, m);
             resolve();
           } else if (m.type === 'error' && m.id === null) {
             reject(new Error(`Couldn't load ${this.info.label}: ${m.message}`));

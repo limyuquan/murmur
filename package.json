@@ -1,6 +1,6 @@
 {
-  "name": "earshot",
-  "displayName": "Earshot",
+  "name": "murmur",
+  "displayName": "Murmur",
   "description": "Live translated subtitles over any video, made on your own machine.",
   "version": "0.1.0",
   "author": "Lim Yu Quan",
@@ -15,13 +15,13 @@
     "on-device",
     "webgpu"
   ],
-  "homepage": "https://github.com/limyuquan/earshot#readme",
+  "homepage": "https://github.com/limyuquan/murmur#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/limyuquan/earshot.git"
+    "url": "git+https://github.com/limyuquan/murmur.git"
   },
   "bugs": {
-    "url": "https://github.com/limyuquan/earshot/issues"
+    "url": "https://github.com/limyuquan/murmur/issues"
   },
   "type": "module",
   "packageManager": "pnpm@10.0.0",
@@ -33,7 +33,6 @@
     "build": "wxt build",
     "build:e2e": "wxt build --mode e2e",
     "zip": "wxt zip",
-    "zip:store": "wxt zip --mode store",
     "icons": "node scripts/icons.mjs",
     "typecheck": "wxt prepare && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "biome check .",

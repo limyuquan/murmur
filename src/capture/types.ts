@@ -8,7 +8,7 @@
 export const PIPELINE_SAMPLE_RATE = 16_000;
 
 /** Name of the AudioWorklet processor in capture/worklet.ts. */
-export const CAPTURE_PROCESSOR = 'earshot-capture';
+export const CAPTURE_PROCESSOR = 'murmur-capture';
 
 /** Samples per frame posted by the capture worklet: 20 ms at 16 kHz. */
 export const FRAME_SAMPLES = 320;

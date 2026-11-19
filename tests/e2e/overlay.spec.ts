@@ -9,18 +9,18 @@ import { expect, test } from './fixtures';
 const PICTURE = { x: 40, y: 100, width: 640, height: 360 };
 
 test('subtitles attach over the video picture, follow it, and go away on stop', async ({
-  earshot,
+  murmur,
 }) => {
-  const page = await earshot.open('video.html');
+  const page = await murmur.open('video.html');
   await page.waitForFunction(() => {
     const v = document.querySelector('video');
     return !!v && v.readyState >= 2 && v.videoWidth > 0;
   });
 
-  await earshot.start(page);
-  await expect.poll(async () => (await earshot.status()).state).toBe('running');
+  await murmur.start(page);
+  await expect.poll(async () => (await murmur.status()).state).toBe('running');
 
-  const host = page.locator('earshot-overlay');
+  const host = page.locator('murmur-overlay');
   await expect(host).toHaveCount(1);
   // The echo engine's text, through the passthrough translator: original and translation lines.
   const main = host.locator('.line[data-role="main"]').first();
@@ -48,7 +48,7 @@ test('subtitles attach over the video picture, follow it, and go away on stop', 
   await expect.poll(async () => (await host.boundingBox())?.y ?? 0).toBeCloseTo(40 - 30, 0);
 
   // The popup shows the running session on this tab.
-  const tabId = await earshot.tabId(page);
+  const tabId = await murmur.tabId(page);
   const popup = await page.context().newPage();
   await popup.goto(`chrome-extension://${EXTENSION_ID}/popup.html?tab=${tabId}`);
   await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'true');
@@ -59,15 +59,15 @@ test('subtitles attach over the video picture, follow it, and go away on stop', 
   await expect(popup.getByTestId('toggle')).toHaveAttribute('aria-checked', 'false');
   await expect(popup.getByTestId('status')).toHaveText(/^Off/);
   await expect(host).toHaveCount(0);
-  expect((await earshot.status()).state).toBe('idle');
+  expect((await murmur.status()).state).toBe('idle');
 });
 
-test('the overlay is injected once per frame, however often it is started', async ({ earshot }) => {
-  const page = await earshot.open('video.html');
-  await earshot.start(page);
-  await earshot.start(page);
-  await expect.poll(async () => (await earshot.status()).state).toBe('running');
-  await expect(page.locator('earshot-overlay')).toHaveCount(1);
-  await earshot.stop();
-  await expect(page.locator('earshot-overlay')).toHaveCount(0);
+test('the overlay is injected once per frame, however often it is started', async ({ murmur }) => {
+  const page = await murmur.open('video.html');
+  await murmur.start(page);
+  await murmur.start(page);
+  await expect.poll(async () => (await murmur.status()).state).toBe('running');
+  await expect(page.locator('murmur-overlay')).toHaveCount(1);
+  await murmur.stop();
+  await expect(page.locator('murmur-overlay')).toHaveCount(0);
 });

@@ -293,7 +293,7 @@ function describeError(err: unknown): { message: string; code: SessionErrorCode 
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
     return {
       message:
-        'Chrome did not allow capturing this tab. Click the Earshot button on the tab and try again.',
+        'Chrome did not allow capturing this tab. Click the Murmur button on the tab and try again.',
       code: 'access',
     };
   }

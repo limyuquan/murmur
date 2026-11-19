@@ -1,9 +1,9 @@
 /**
- * Playwright fixtures for Earshot e2e tests. Import `test` and `expect` from here.
+ * Playwright fixtures for Murmur e2e tests. Import `test` and `expect` from here.
  *
  * - `context`: persistent headless Chromium context with the e2e build loaded (fresh profile).
- * - `serviceWorker`: the extension's service worker (`__earshot` test hooks live on it).
- * - `earshot`: helpers to open fixtures, start/stop sessions and read the session status.
+ * - `serviceWorker`: the extension's service worker (`__murmur` test hooks live on it).
+ * - `murmur`: helpers to open fixtures, start/stop sessions and read the session status.
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -19,15 +19,15 @@ import type { SessionStatus } from '@/messaging/protocol';
 import { EXTENSION_ID } from '@/shared/ids';
 import { FIXTURE_ORIGIN } from '../../playwright.config';
 
-/** Built by `pnpm build:e2e`. `EARSHOT_E2E_ID` must match the one used for the build. */
+/** Built by `pnpm build:e2e`. `MURMUR_E2E_ID` must match the one used for the build. */
 export const EXTENSION_PATH = path.resolve(
-  `.output/chrome-mv3-e2e${process.env.EARSHOT_E2E_ID ? `-${process.env.EARSHOT_E2E_ID}` : ''}`,
+  `.output/chrome-mv3-e2e${process.env.MURMUR_E2E_ID ? `-${process.env.MURMUR_E2E_ID}` : ''}`,
 );
 
 /** `chrome` and the test hook inside `serviceWorker.evaluate` callbacks. */
-type SwGlobal = { chrome: typeof Browser; __earshot: import('@/shared/e2e').BackgroundTestHook };
+type SwGlobal = { chrome: typeof Browser; __murmur: import('@/shared/e2e').BackgroundTestHook };
 
-export interface EarshotHelpers {
+export interface MurmurHelpers {
   /** Opens a fixture page (`tests/fixtures/pages/<name>`) in a new tab. */
   open(name: string): Promise<Page>;
   /** Chrome tab id of `page`. */
@@ -43,7 +43,7 @@ export interface EarshotHelpers {
 interface Fixtures {
   context: BrowserContext;
   serviceWorker: Worker;
-  earshot: EarshotHelpers;
+  murmur: MurmurHelpers;
 }
 
 export const test = base.extend<Fixtures>({
@@ -80,8 +80,8 @@ export const test = base.extend<Fixtures>({
     await use(sw);
   },
 
-  earshot: async ({ context, serviceWorker }, use) => {
-    const helpers: EarshotHelpers = {
+  murmur: async ({ context, serviceWorker }, use) => {
+    const helpers: MurmurHelpers = {
       async open(name) {
         const page = await context.newPage();
         await page.goto(`${FIXTURE_ORIGIN}/${name}`);
@@ -99,13 +99,13 @@ export const test = base.extend<Fixtures>({
       async start(page) {
         const tabId = await helpers.tabId(page);
         await serviceWorker.evaluate(
-          (id) => (globalThis as unknown as SwGlobal).__earshot.start(id),
+          (id) => (globalThis as unknown as SwGlobal).__murmur.start(id),
           tabId,
         );
         return tabId;
       },
       async stop() {
-        await serviceWorker.evaluate(() => (globalThis as unknown as SwGlobal).__earshot.stop());
+        await serviceWorker.evaluate(() => (globalThis as unknown as SwGlobal).__murmur.stop());
       },
       async status() {
         return serviceWorker.evaluate(async () => {

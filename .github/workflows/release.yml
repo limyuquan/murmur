@@ -2,8 +2,8 @@
 # (git tag v0.1.0 && git push origin v0.1.0), or by hand from the Actions tab for an existing tag.
 #
 # Assets (each also reachable at releases/latest/download/<name>):
-#   earshot-chrome.zip            the extension, stable name
-#   earshot-<version>-chrome.zip  the same file, versioned name
+#   murmur-chrome.zip            the extension, stable name
+#   murmur-<version>-chrome.zip  the same file, versioned name
 #   SHA256SUMS
 name: Release
 
@@ -42,15 +42,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - run: pnpm check
       # `pnpm zip` is the production build, which keeps the manifest `key` (fixed extension ID).
-      # Never `zip:store` here: that build is for a Chrome Web Store upload only.
       - run: pnpm zip
       - name: Check the zip keeps the fixed extension ID and minimal permissions
-        run: node scripts/verify-zip.mjs ".output/earshot-$VERSION-chrome.zip"
+        run: node scripts/verify-zip.mjs ".output/murmur-$VERSION-chrome.zip"
       - name: Collect the assets
         run: |
           mkdir release
-          cp ".output/earshot-$VERSION-chrome.zip" release/
-          cp ".output/earshot-$VERSION-chrome.zip" release/earshot-chrome.zip
+          cp ".output/murmur-$VERSION-chrome.zip" release/
+          cp ".output/murmur-$VERSION-chrome.zip" release/murmur-chrome.zip
           (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
       - name: Publish the release
         env:
@@ -58,13 +57,13 @@ jobs:
         run: |
           repo="https://github.com/${{ github.repository }}"
           cat > notes.md <<EOF
-          Download **earshot-$VERSION-chrome.zip**, unzip it somewhere permanent, then in Chrome open
+          Download **murmur-$VERSION-chrome.zip**, unzip it somewhere permanent, then in Chrome open
           \`chrome://extensions\`, turn on **Developer mode**, click **Load unpacked** and choose the
-          unzipped folder. To update, replace the folder's contents and click ↻ on Earshot's card.
+          unzipped folder. To update, replace the folder's contents and click ↻ on Murmur's card.
           Full steps: [README]($repo#install).
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
           else
-            gh release create "$TAG" release/* --title "Earshot $TAG" --notes-file notes.md
+            gh release create "$TAG" release/* --title "Murmur $TAG" --notes-file notes.md
           fi

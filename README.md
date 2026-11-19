@@ -1,6 +1,6 @@
-# Earshot
+# Murmur
 
-Live translated subtitles over any video in Chrome. Earshot listens to the tab, turns speech into
+Live translated subtitles over any video in Chrome. Murmur listens to the tab, turns speech into
 text, translates it, and draws the subtitles on the video, all on your own machine.
 
 > **Status: early.** Real speech recognition and translation run in the browser: Chrome's own
@@ -12,11 +12,11 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 
 **What it does**
 
-- **Any video, any site.** Earshot hears the tab's audio, so it works with whatever player the
+- **Any video, any site.** Murmur hears the tab's audio, so it works with whatever player the
   page uses, in any frame layout, without site-specific code.
 - **Subtitles on the picture.** They sit over the video itself (not the black bars), scale with
   it, and follow it through scrolling, resizing and fullscreen. They move up while the player
-  shows its controls, and you can drag them anywhere; Earshot remembers the spot for each site.
+  shows its controls, and you can drag them anywhere; Murmur remembers the spot for each site.
 - **Laid out like TV subtitles.** Two lines at most, broken at natural points, each held long
   enough to read. Box, shadow or outline, in the size you like.
 - **Original and translation.** Show both lines, only the translation, or only what was said.
@@ -25,20 +25,20 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
   downloads a small pack per language, after one click). Balanced and Best run Whisper on the
-  graphics card (a 1.6 GB download, once). Earshot suggests one that suits your device.
+  graphics card (a 1.6 GB download, once). Murmur suggests one that suits your device.
 - **Stays on your machine.** No account, no telemetry. Audio never leaves your computer. The only
   network use will be downloading a model you choose, once.
 
 <a id="install"></a>**Install** (not on the Chrome Web Store)
 
-1. Download `earshot-chrome.zip` from the
-   [latest release](https://github.com/limyuquan/earshot/releases/latest) and unzip it. Keep the
+1. Download `murmur-chrome.zip` from the
+   [latest release](https://github.com/limyuquan/murmur/releases/latest) and unzip it. Keep the
    folder somewhere permanent: Chrome loads the extension from it.
 2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked** and
    choose the unzipped folder.
-3. Pin Earshot to the toolbar.
+3. Pin Murmur to the toolbar.
 
-To update, download the new zip, replace the folder's contents, then click ↻ on Earshot's card in
+To update, download the new zip, replace the folder's contents, then click ↻ on Murmur's card in
 `chrome://extensions`. Works in Chrome 120+ and other Chromium browsers.
 
 <details>
@@ -47,11 +47,11 @@ To update, download the new zip, replace the folder's contents, then click ↻ o
 Install [Node.js](https://nodejs.org) 22 or newer, then:
 
 ```sh
-git clone https://github.com/limyuquan/earshot.git && cd earshot
+git clone https://github.com/limyuquan/murmur.git && cd murmur
 corepack enable && pnpm install && pnpm build
 ```
 
-Load `earshot/.output/chrome-mv3` the same way. On a Mac, press `⌘⇧.` in the file picker to show
+Load `murmur/.output/chrome-mv3` the same way. On a Mac, press `⌘⇧.` in the file picker to show
 the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 
 </details>
@@ -60,20 +60,20 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 
 | | |
 |---|---|
-| Open Earshot | Click the toolbar icon, or press `Alt+Shift+E` (change it at `chrome://extensions/shortcuts`) |
-| Subtitles on this tab | Turn on the switch, or press `Alt+Shift+S`. Chrome shows its "sharing this tab" indicator while Earshot listens |
+| Open Murmur | Click the toolbar icon, or press `Alt+Shift+E` (change it at `chrome://extensions/shortcuts`) |
+| Subtitles on this tab | Turn on the switch, or press `Alt+Shift+S`. Chrome shows its "sharing this tab" indicator while Murmur listens |
 | Stop | Turn the switch off, press `Alt+Shift+S` again, or close the tab |
 | Move subtitles | Drag them. Double-click to put them back |
 | Languages, model size, how subtitles look | **Settings** in the popup |
 
 **Limits**
 
-- **One tab at a time.** Turning Earshot on in another tab stops it in the first.
+- **One tab at a time.** Turning Murmur on in another tab stops it in the first.
 - **Protected video (DRM)** is silent to extensions, so there is nothing to transcribe. Most
   paid streaming services are in this group.
 - **After the page navigates** to another site, click the button again to bring subtitles back.
 - **Players inside frames from another site** show subtitles at the bottom of the window instead
-  of on the player, unless you allow Earshot on all sites (coming with the settings for it).
+  of on the player, unless you allow Murmur on all sites (coming with the settings for it).
 - **Subtitles arrive after the speech**, by the time the models need. Expect a second or two.
 
 ---
@@ -109,8 +109,7 @@ node -v                     # must be >= 22
 corepack enable             # provides pnpm 10 (pinned in package.json)
 pnpm install                # also runs `wxt prepare`
 pnpm build                  # production build → .output/chrome-mv3 (fixed ID via manifest key)
-pnpm zip                    # release zip → .output/earshot-<version>-chrome.zip
-pnpm zip:store              # Chrome Web Store zip (no key) → .output/earshot-<version>-chrome-store.zip
+pnpm zip                    # release zip → .output/murmur-<version>-chrome.zip
 ```
 
 Loading the extension into the person's own Chrome has to be done by the person: branded Chrome
@@ -129,7 +128,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 - One-time setup: `pnpm exec playwright install chromium`.
 - A change is done when both are green.
 - The e2e build (`pnpm build:e2e` → `.output/chrome-mv3-e2e`) adds `<all_urls>` and the
-  `__earshot` service-worker hooks (`src/shared/e2e.ts`), and opens the overlay's shadow root so
+  `__murmur` service-worker hooks (`src/shared/e2e.ts`), and opens the overlay's shadow root so
   tests can read it. All of that is stripped from other builds. Its sessions capture a synthetic
   test tone, because headless Chromium plays no tab audio; `capture.spec.ts` still exercises the
   real tab-capture handshake (Chromium is started with `--allowlisted-extension-id`).
@@ -139,7 +138,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   closed localhost port instead of refusing them (seen with WSL mirrored networking). Start
   `node scripts/serve-fixtures.mjs` yourself first; Playwright reuses it.
 - Don't run `pkill -f "playwright test"`: it kills other agents' runs too. To run suites in
-  parallel, set `EARSHOT_E2E_ID=<x>` so each gets its own e2e build folder.
+  parallel, set `MURMUR_E2E_ID=<x>` so each gets its own e2e build folder.
 
 ### 4. Repo map
 
@@ -222,9 +221,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   without it. The manifest adds only `'wasm-unsafe-eval'` for ONNX Runtime, which ships in the
   extension.
 - **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
-  `pnpm test:e2e`. The e2e build's `__earshot.start(tabId, 'tab', 'settings')` runs the engines
+  `pnpm test:e2e`. The e2e build's `__murmur.start(tabId, 'tab', 'settings')` runs the engines
   the settings choose (the default `'demo'` keeps Playwright offline), and the offscreen
-  document logs every cue and Chrome speech arbitration on `globalThis.__earshotLog`. Drive it
+  document logs every cue and Chrome speech arbitration on `globalThis.__murmurLog`. Drive it
   over CDP from a separate, temporary Chrome profile. With puppeteer over a pipe, send nothing
   else to the browser while `start()` runs: a second CDP call then made Chrome 157 drop the
   connection.

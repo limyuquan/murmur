@@ -8,7 +8,7 @@ export const ECHO_ASR_INFO: AsrEngineInfo = {
   kind: 'asr',
   id: 'demo-echo',
   label: 'Demo (no speech recognition)',
-  description: 'Shows when sound was heard instead of words. For trying Earshot without a model.',
+  description: 'Shows when sound was heard instead of words. For trying Murmur without a model.',
   runtime: 'demo',
   requirements: { backends: ['none'] },
   languages: 'any',

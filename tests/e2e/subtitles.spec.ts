@@ -10,7 +10,7 @@ import { expect, test } from './fixtures';
 
 async function send(page: Page, command: E2eCommand): Promise<void> {
   await page.evaluate(
-    (detail) => document.dispatchEvent(new CustomEvent('earshot-e2e', { detail })),
+    (detail) => document.dispatchEvent(new CustomEvent('murmur-e2e', { detail })),
     JSON.stringify(command),
   );
 }
@@ -34,14 +34,14 @@ function lasting(id: string, seq: number): Cue {
 }
 
 /** Opens the player fixture with a running session whose cues the test controls. */
-async function player(earshot: import('./fixtures').EarshotHelpers): Promise<Page> {
-  const page = await earshot.open('player.html');
+async function player(murmur: import('./fixtures').MurmurHelpers): Promise<Page> {
+  const page = await murmur.open('player.html');
   await page.waitForFunction(() => {
     const v = document.querySelector('video');
     return !!v && v.readyState >= 2 && v.videoWidth > 0;
   });
-  await earshot.start(page);
-  await expect(page.locator('earshot-overlay')).toHaveCount(1);
+  await murmur.start(page);
+  await expect(page.locator('murmur-overlay')).toHaveCount(1);
   await send(page, { hold: true });
   return page;
 }
@@ -52,10 +52,10 @@ const PARTIAL_WORDS =
   );
 
 test('a growing line stays put, then settles; the translation keeps its place', async ({
-  earshot,
+  murmur,
 }) => {
-  const page = await player(earshot);
-  const host = page.locator('earshot-overlay');
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
   const original = host.locator('.line[data-role="original"] .text');
 
   const lefts: number[] = [];
@@ -105,15 +105,15 @@ test('a growing line stays put, then settles; the translation keeps its place', 
   await expect.poll(async () => (await mains.last().boundingBox())?.y ?? 0).toBeCloseTo(bottom, 0);
 });
 
-test('lines keep to two rows; long text is paged', async ({ earshot }) => {
-  const page = await player(earshot);
+test('lines keep to two rows; long text is paged', async ({ murmur }) => {
+  const page = await player(murmur);
   const long =
     'We should go now. The last train leaves at midnight and I really do not want to miss it again, ' +
     'because the night bus takes almost two hours and stops everywhere along the way.';
   await send(page, {
     cue: cue('a', 1, { translation: { text: long, language: 'en', final: true } }),
   });
-  const main = page.locator('earshot-overlay .line[data-role="main"]');
+  const main = page.locator('murmur-overlay .line[data-role="main"]');
   await expect(main).toHaveText('We should go now.');
   // Next page after its reading time.
   await expect(main).toContainText('The last train', { timeout: 5000 });
@@ -124,9 +124,9 @@ test('lines keep to two rows; long text is paged', async ({ earshot }) => {
   expect(rows).toBeLessThanOrEqual(2);
 });
 
-test('only lines in a less common language are tagged', async ({ earshot }) => {
-  const page = await player(earshot);
-  const host = page.locator('earshot-overlay');
+test('only lines in a less common language are tagged', async ({ murmur }) => {
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
   await send(page, { cue: cue('a', 1) });
   await send(page, { cue: cue('b', 2) });
   await expect(host.locator('.tag')).toHaveCount(0);
@@ -138,9 +138,9 @@ test('only lines in a less common language are tagged', async ({ earshot }) => {
   await expect(host.locator('.tag')).toHaveCount(1);
 });
 
-test('subtitles can be dragged, and stay there on this site', async ({ earshot }) => {
-  const page = await player(earshot);
-  const host = page.locator('earshot-overlay');
+test('subtitles can be dragged, and stay there on this site', async ({ murmur }) => {
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
   await send(page, { cue: lasting('a', 1) });
   const text = host.locator('.line[data-role="main"] .text');
   await expect(text).toBeVisible();
@@ -163,10 +163,10 @@ test('subtitles can be dragged, and stay there on this site', async ({ earshot }
   ).toBe(false);
 
   // Saved for the site; a fresh overlay (new session) uses it.
-  await expect.poll(async () => (await earshot.positions())['127.0.0.1']?.y ?? 1).toBeLessThan(0.8);
-  await earshot.stop();
+  await expect.poll(async () => (await murmur.positions())['127.0.0.1']?.y ?? 1).toBeLessThan(0.8);
+  await murmur.stop();
   await expect(host).toHaveCount(0);
-  await earshot.start(page);
+  await murmur.start(page);
   await send(page, { hold: true });
   await send(page, { cue: lasting('b', 2) });
   await expect.poll(async () => (await text.boundingBox())?.y ?? 0).toBeLessThan(before.y - 100);
@@ -177,16 +177,16 @@ test('subtitles can be dragged, and stay there on this site', async ({ earshot }
   await expect
     .poll(async () => (await text.boundingBox())?.y ?? 0, { timeout: 8000 })
     .toBeCloseTo(before.y, 0);
-  await expect.poll(async () => (await earshot.positions())['127.0.0.1']).toBeUndefined();
+  await expect.poll(async () => (await murmur.positions())['127.0.0.1']).toBeUndefined();
 });
 
-test('subtitles move up while the pointer is over the player', async ({ earshot }) => {
-  const page = await player(earshot);
+test('subtitles move up while the pointer is over the player', async ({ murmur }) => {
+  const page = await player(murmur);
   // Still changing, so it stays on screen as long as the test needs.
   await send(page, {
     cue: cue('a', 1, { translation: { text: 'Line a', language: 'en', final: false } }),
   });
-  const text = page.locator('earshot-overlay .line[data-role="main"] .text');
+  const text = page.locator('murmur-overlay .line[data-role="main"] .text');
   await expect(text).toBeVisible();
   await page.mouse.move(5, 5);
   const resting = (await text.boundingBox())?.y ?? 0;
@@ -199,18 +199,16 @@ test('subtitles move up while the pointer is over the player', async ({ earshot 
     .toBeCloseTo(resting, 0);
 });
 
-test('fullscreen: inside a fullscreen player, and above a fullscreen video', async ({
-  earshot,
-}) => {
-  const page = await player(earshot);
-  const host = page.locator('earshot-overlay');
+test('fullscreen: inside a fullscreen player, and above a fullscreen video', async ({ murmur }) => {
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
   await send(page, { cue: lasting('a', 1) });
   await page.click('#fs-player');
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement?.id ?? null))
     .toBe('player');
   await expect
-    .poll(() => page.evaluate(() => document.querySelector('earshot-overlay')?.parentElement?.id))
+    .poll(() => page.evaluate(() => document.querySelector('murmur-overlay')?.parentElement?.id))
     .toBe('player');
   const viewport = page.viewportSize();
   await expect
@@ -224,16 +222,16 @@ test('fullscreen: inside a fullscreen player, and above a fullscreen video', asy
     .toBe('video');
   await expect
     .poll(() =>
-      page.evaluate(() => document.querySelector('earshot-overlay')?.matches(':popover-open')),
+      page.evaluate(() => document.querySelector('murmur-overlay')?.matches(':popover-open')),
     )
     .toBe(true);
   await expect(host.locator('.line[data-role="main"]')).toBeVisible();
   await page.evaluate(() => document.exitFullscreen());
 });
 
-test('small players show the translation only', async ({ earshot }) => {
-  const page = await player(earshot);
-  const host = page.locator('earshot-overlay');
+test('small players show the translation only', async ({ murmur }) => {
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
   await send(page, { cue: cue('a', 1) });
   await expect(host.locator('.line[data-role="original"]')).toHaveCount(1);
   await page.click('#small');
@@ -241,9 +239,9 @@ test('small players show the translation only', async ({ earshot }) => {
   await expect(host.locator('.line[data-role="main"]')).toHaveText('Line a');
 });
 
-test('the session status shows on the picture', async ({ earshot }) => {
-  const page = await player(earshot);
-  const pill = page.locator('earshot-overlay .pill');
+test('the session status shows on the picture', async ({ murmur }) => {
+  const page = await player(murmur);
+  const pill = page.locator('murmur-overlay .pill');
   await send(page, {
     message: {
       type: 'status',

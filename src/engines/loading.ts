@@ -24,7 +24,7 @@ export async function loadWithFallback<E extends AsrEngine | TranslationEngine>(
     } catch (err) {
       await engine.unload().catch(() => {});
       if (!isUnavailable(err)) throw err;
-      console.warn('[earshot]', `${engine.info.label} can't run here:`, err.message);
+      console.warn('[murmur]', `${engine.info.label} can't run here:`, err.message);
       lastError = err;
       current = RUNTIME_FALLBACKS[current];
     }

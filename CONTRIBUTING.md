@@ -24,13 +24,13 @@ pnpm test:e2e   # extension in headless Chromium
 
 ## Builds and releases
 
-Every push to `main` uploads a build as a workflow artifact (`earshot-<sha>`), so you can try a
+Every push to `main` uploads a build as a workflow artifact (`murmur-<sha>`), so you can try a
 change without a release.
 
 Releases are cut by the maintainer: bump `version` in `package.json`, commit, tag `v<version>` and
-push the tag. `.github/workflows/release.yml` checks, builds and attaches `earshot-chrome.zip`,
-`earshot-<version>-chrome.zip` and `SHA256SUMS`. Release zips come from `pnpm zip`, which keeps
+push the tag. `.github/workflows/release.yml` checks, builds and attaches `murmur-chrome.zip`,
+`murmur-<version>-chrome.zip` and `SHA256SUMS`. Release zips come from `pnpm zip`, which keeps
 the manifest `key` (fixed extension ID); `node scripts/verify-zip.mjs <zip>` checks that and the
-permissions. `pnpm zip:store` drops the key and is only for a store upload.
+permissions. Murmur isn't on the Chrome Web Store, so there is no store build.
 
 By contributing you agree that your work is released under the [MIT License](LICENSE).
