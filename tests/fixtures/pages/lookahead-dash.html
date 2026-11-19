@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lookahead: dash.js</title>
+    <style>body { margin: 0; } video { display: block; width: 640px; height: 360px; background: #000; }</style>
+  </head>
+  <body>
+    <video id="player" muted playsinline></video>
+    <script src="lookahead-common.js"></script>
+    <script src="/lib/dash.all.min.js"></script>
+    <script>
+      const player = dashjs.MediaPlayer().create();
+      player.on(dashjs.MediaPlayer.events.ERROR, (e) => playback.errors.push(`dash:${e.error?.code}`));
+      player.initialize(video, 'lookahead/dash-mp4/manifest.mpd', true);
+    </script>
+  </body>
+</html>

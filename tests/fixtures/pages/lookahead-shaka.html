@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lookahead: Shaka (WebM)</title>
+    <style>body { margin: 0; } video { display: block; width: 640px; height: 360px; background: #000; }</style>
+  </head>
+  <body>
+    <video id="player" muted playsinline></video>
+    <script src="lookahead-common.js"></script>
+    <script src="/lib/shaka-player.compiled.js"></script>
+    <script>
+      shaka.polyfill.installAll();
+      const player = new shaka.Player();
+      player.addEventListener('error', (e) => playback.errors.push(`shaka:${e.detail?.code}`));
+      player
+        .attach(video)
+        .then(() => player.load('lookahead/dash-webm/manifest.mpd'))
+        .then(() => video.play())
+        .catch((e) => playback.errors.push(`shaka:${e?.code ?? e}`));
+    </script>
+  </body>
+</html>
