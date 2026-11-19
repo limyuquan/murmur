@@ -39,6 +39,7 @@ import {
   type SessionFailure,
 } from '@/messaging/protocol';
 import { Pipeline } from '@/pipeline/pipeline';
+import type { SileroVad } from '@/pipeline/silero';
 import type { Cue } from '@/pipeline/types';
 import { LOG_PREFIX } from '@/shared/ids';
 import { ActivityTracker, activityChanged } from './activity';
@@ -60,6 +61,10 @@ export interface HostDeps {
   onCue?(cue: Cue): void;
   /** Sees the session's engines once loaded (e2e builds tap their diagnostics). */
   onEngines?(asr: AsrEngine, translator: TranslationEngine): void;
+  /** Sees the speech detector the session uses (`null`: the energy gate). */
+  onVad?(vad: SileroVad | null): void;
+  /** Loads the model speech detector (tests replace it). Default: Silero from the extension. */
+  loadVad?(): Promise<SileroVad>;
 }
 
 interface Running {
@@ -72,6 +77,8 @@ interface Running {
   pipeline: Pipeline | null;
   asr: AsrEngine | null;
   translator: TranslationEngine | null;
+  /** The model speech detector, loading alongside the engines (null: none wanted). */
+  vad: Promise<SileroVad | null> | null;
   heard: boolean;
   activity: ActivityTracker;
   reported: SessionActivity | undefined;
@@ -80,6 +87,15 @@ interface Running {
   setup: SetupAction[];
   /** Engine failures the session carries on despite (each reported once). */
   problems: string[];
+}
+
+/**
+ * Engines that take segments get the model speech detector. Engines that listen to the track keep
+ * the energy gate (segments are only pause markers for them), and so do the demo engines, which
+ * hear a test tone a speech detector rightly ignores.
+ */
+function wantsModelVad(info: AsrEngineInfo): boolean {
+  return info.audioInput !== 'track' && info.runtime !== 'demo';
 }
 
 /** A failure to report as it is (the start command's reply carries it). */
@@ -142,6 +158,7 @@ export class OffscreenHost {
       pipeline: null,
       asr: null,
       translator: null,
+      vad: null,
       heard: false,
       activity: new ActivityTracker(Date.now()),
       reported: undefined,
@@ -196,7 +213,10 @@ export class OffscreenHost {
           progress: p?.fraction ?? null,
           detail: loadingDetail(label, p),
         });
-      loading(this.registry.asrInfo(config.asrEngine)?.label ?? config.asrEngine, null);
+      const chosen = this.registry.asrInfo(config.asrEngine);
+      loading(chosen?.label ?? config.asrEngine, null);
+      // The speech detector loads alongside the engines; it is small.
+      if (chosen && wantsModelVad(chosen)) running.vad = this.loadVad();
       // Engines that can't run here at all hand over to their fallback (profiles.ts).
       const options = (label: string) => ({
         hardware,
@@ -223,6 +243,19 @@ export class OffscreenHost {
       }
       this.deps.onEngines?.(running.asr, running.translator);
       const asrInfo = running.asr.info;
+      // A fallback engine may want the detector when the chosen one didn't, or not want it.
+      if (wantsModelVad(asrInfo)) running.vad ??= this.loadVad();
+      else if (running.vad) {
+        const unwanted = running.vad;
+        running.vad = null;
+        void unwanted.then((vad) => vad?.dispose()).catch(() => {});
+      }
+      const vad = (await running.vad) ?? null;
+      if (!this.isCurrent(running)) {
+        await this.teardown(running);
+        return;
+      }
+      this.deps.onVad?.(vad);
       const mtInfo = running.translator.info;
       running.activity = new ActivityTracker(Date.now(), {
         supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
@@ -237,6 +270,9 @@ export class OffscreenHost {
         onlySpoken: config.onlySpoken ?? false,
         translatePartials: config.translatePartials,
         track: running.capture?.track ?? null,
+        vad,
+        onVadFailure: (err) =>
+          console.warn(LOG_PREFIX, 'speech detector failed, using loudness', err),
         onCue: (cue) => {
           running.activity.onCue(cue, Date.now());
           this.deps.onCue?.(cue);
@@ -313,6 +349,21 @@ export class OffscreenHost {
     await running.pipeline?.close().catch(() => {});
     await running.asr?.unload().catch(() => {});
     await running.translator?.unload().catch(() => {});
+    const vad = await running.vad;
+    running.vad = null;
+    await vad?.dispose().catch(() => {});
+  }
+
+  /** The model speech detector, or null (the energy gate) when it can't load. Never throws. */
+  private async loadVad(): Promise<SileroVad | null> {
+    try {
+      const load =
+        this.deps.loadVad ?? (async () => (await import('@/pipeline/silero-load')).loadSileroVad());
+      return await load();
+    } catch (err) {
+      console.warn(LOG_PREFIX, 'speech detector unavailable, using loudness', err);
+      return null;
+    }
   }
 
   private isCurrent(running: Running): boolean {

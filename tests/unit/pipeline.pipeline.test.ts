@@ -15,6 +15,7 @@ import { sameLanguage } from '@/pipeline/language';
 import { Pipeline, type PipelineOptions } from '@/pipeline/pipeline';
 import type { Segmenter } from '@/pipeline/segmenter';
 import type { Cue } from '@/pipeline/types';
+import type { AsyncVoiceActivityDetector } from '@/pipeline/vad';
 import { burst, concat } from './helpers';
 
 const RATE = 16_000;
@@ -320,6 +321,65 @@ describe('Pipeline with the sentence segmenter', () => {
       strategy: 'pause',
       maxSegmentMs: 20_000,
     });
+  });
+});
+
+describe('Pipeline with a model speech detector', () => {
+  /** Says "speech" where a frame is loud, after a delay, like a model would; can be made to fail. */
+  class FakeModel implements AsyncVoiceActivityDetector {
+    readonly frameSamples = 512;
+    calls = 0;
+    constructor(private readonly failAt = Infinity) {}
+    process(frame: Float32Array): Promise<number> {
+      if (this.calls++ >= this.failAt) return Promise.reject(new Error('model gone'));
+      const loud = frame.some((v) => Math.abs(v) > 0.1);
+      return new Promise((resolve) => setTimeout(() => resolve(loud ? 0.99 : 0.02), 1));
+    }
+    reset(): void {}
+  }
+  const audio = () =>
+    concat([burst(0.5, 0), burst(1, 0.3), burst(1, 0), burst(0.6, 0.3), burst(1, 0)]);
+
+  it('segments on the model probabilities, and close() waits for the frames in flight', async () => {
+    const vad = new FakeModel();
+    const { pipeline, cues, errors } = setup({ vad });
+    feed(pipeline, audio());
+    await pipeline.close();
+    expect(errors).toEqual([]);
+    expect(vad.calls).toBe(Math.floor(audio().length / 512));
+    const done = latest(cues);
+    expect(done.map((c) => c.source.final)).toEqual([true, true]);
+    // Speech from 0.5 s to 1.5 s, in 32 ms frames: the line ends after 1.5 s, plus 100 ms.
+    expect(done[0]?.endEpochMs).toBeGreaterThanOrEqual(T0 + 1600);
+    expect(done[0]?.endEpochMs).toBeLessThan(T0 + 1650);
+    expect((pipeline as unknown as { segmenter: Segmenter }).segmenter.config.minSpeechMs).toBe(32);
+  });
+
+  it('carries on with the energy gate when the model fails', async () => {
+    const failures: Error[] = [];
+    const { pipeline, cues } = setup({
+      vad: new FakeModel(20),
+      onVadFailure: (err) => failures.push(err),
+    });
+    feed(pipeline, audio());
+    await pipeline.close();
+    expect(failures.map((e) => e.message)).toEqual(['model gone']);
+    expect(latest(cues).filter((c) => c.source.final)).toHaveLength(2);
+  });
+
+  it('is not used for engines that listen to the track', () => {
+    const echo = new EchoAsrEngine();
+    const asr: AsrEngine = {
+      info: { ...echo.info, audioInput: 'track' },
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      createSession: (options) => echo.createSession(options),
+    };
+    const vad = new FakeModel();
+    const { pipeline } = setup({ asr, vad });
+    feed(pipeline, audio());
+    expect(vad.calls).toBe(0);
   });
 });
 

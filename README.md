@@ -157,7 +157,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/entrypoints/background.ts`, `src/background/` | Service worker: the one session (start/stop, state in `storage.session`), badge, popup dispatcher |
 | `src/entrypoints/offscreen/`, `src/offscreen/host.ts` | Offscreen document (`USER_MEDIA`): capture graph, engines, pipeline, cues to the overlay |
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
-| `src/pipeline/` | VAD hook, segmenter and its sentence-end detector (`sentence.ts`), orchestration (ASR → translation → cues), per-segment language |
+| `src/pipeline/` | Speech detectors (Silero VAD in `silero.ts`, run ahead of the segmenter by `vadstage.ts`; the energy gate in `vad.ts`), segmenter and its sentence-end detector (`sentence.ts`), orchestration (ASR → translation → cues), per-segment language |
 | `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), demo engines (e2e builds only) |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
@@ -180,12 +180,18 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    20 ms frames stamped with the epoch time they are heard. It answers `start` once the capture is
    open, then loads the engines, reporting progress and any failure (with its code, pack buttons
    or missing models) as `session-status` events, so a stop never waits for a load.
-4. The segmenter cuts speech segments (`src/pipeline/segmenter.ts`, every parameter in one
-   `SegmenterConfig`). By default a segment ends at a 250 ms pause once it is 1 s long, already
-   at a 150 ms pause when the words so far end a sentence (it asks the ASR session to decode up
-   to the pause, `requestPartial`, and `sentence.ts` judges the text), and at 6 s at the quietest
-   moment of its last second, the rest carrying over into the next segment. Engines that listen
-   to the track get the older pause-only rule (`PAUSE_SEGMENTER`). The ASR session streams
+4. A speech detector scores each 32 ms of audio: Silero VAD (`src/pipeline/silero.ts`, 2.3 MB,
+   bundled in `src/assets/silero-vad/`, on ONNX Runtime's WebAssembly in the offscreen document,
+   about 1% of a core), which tells speech from music. It loads alongside the engines; if it
+   can't, or fails later, the loudness gate (`vad.ts`) takes over. Engines that listen to the
+   track, and the demo engines, always get the loudness gate.
+   The segmenter cuts speech segments from those scores (`src/pipeline/segmenter.ts`, every
+   parameter in one `SegmenterConfig`). By default a segment ends at a 250 ms pause once it is
+   1 s long, already at a 150 ms pause when the words so far end a sentence (it asks the ASR
+   session to decode up to the pause, `requestPartial`, and `sentence.ts` judges the text), and
+   at 6 s at the least speech-like moment of its last second (a gap between words), the rest
+   carrying over into the next segment. Engines that listen to the track get the older
+   pause-only rule (`PAUSE_SEGMENTER`). The ASR session streams
    partial and final results, each with its own language. Finals are translated in order with
    recent lines as context; a segment already in the target language isn't translated.
 5. Each change to a segment is sent as a whole `Cue` over the overlay's port. The overlay replaces
@@ -270,7 +276,8 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   Qwen3-ASR before its files are published: put them in a folder, run
   `FIXTURE_HF_DIR=<folder> node scripts/serve-fixtures.mjs` and use the plain e2e build, which
   downloads from that server. `__murmurLog.decodes` lists each of its decodes (kind, audio and
-  decode ms, tokens, text).
+  decode ms, tokens, text). `__murmurLog.vad` names the session's speech detector and the time
+  it has spent so far.
 
 ### 8. Known limits
 
@@ -285,4 +292,6 @@ Headless tests can't check these, so ask a human after related changes:
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The bundled Silero VAD model is © Silero Team, MIT
+([src/assets/silero-vad/LICENSE](src/assets/silero-vad/LICENSE)). Test clips carry their own
+licences ([tests/unit/fixtures/vad/README.md](tests/unit/fixtures/vad/README.md)).

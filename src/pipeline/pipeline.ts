@@ -7,6 +7,8 @@
  *   context. Partial lines are only translated when `translatePartials` is on (a preview that the
  *   final replaces); a newer partial aborts the previous preview.
  * - Each change to a segment re-emits its whole cue; the overlay replaces by id.
+ * - Speech: a model detector (`vad`, Silero) scores the stream ahead of the segmenter
+ *   (vadstage.ts); without one, or for engines that listen to the track, the energy gate does.
  * - Segments: the segmenter's sentence strategy by default. At a short pause it asks the ASR
  *   session for the text so far (`requestPartial`); the partial that answers goes back to the
  *   segmenter (`transcript`), which ends the segment there if the text ends a sentence. The
@@ -31,7 +33,8 @@ import { UNKNOWN_LANGUAGE } from '@/engines/types';
 import { sameLanguage } from './language';
 import { type SegmentEvent, Segmenter, type SegmenterOptions } from './segmenter';
 import type { Cue } from './types';
-import { EnergyVad } from './vad';
+import { type AsyncVoiceActivityDetector, EnergyVad } from './vad';
+import { VadStage } from './vadstage';
 
 export interface PipelineOptions {
   asr: AsrEngine;
@@ -40,7 +43,17 @@ export interface PipelineOptions {
   /** Language to suggest to the ASR engine, or `null` to detect per segment. */
   sourceLanguage: LanguageTag | null;
   translatePartials?: boolean;
-  /** Defaults to an energy-gated segmenter (`TRACK_SEGMENTER` for track engines). */
+  /**
+   * The speech detector for engines that take segments (Silero). Without one the energy gate
+   * decides; engines that listen to the track always get the energy gate.
+   */
+  vad?: AsyncVoiceActivityDetector | null;
+  /** Told once if `vad` fails while running (the energy gate takes over). */
+  onVadFailure?(error: Error): void;
+  /**
+   * Defaults to the sentence segmenter (`MODEL_VAD_SEGMENTER` over it with a `vad`), or
+   * `TRACK_SEGMENTER` for track engines. With a `vad`, its frames must be the vad's size.
+   */
   segmenter?: Segmenter;
   /** Earlier final lines passed as translation context. Default 3. */
   contextLines?: number;
@@ -66,6 +79,12 @@ export const TRANSLATION_TIMEOUT_MS = 10_000;
 /** Segments for engines that listen to the track: pauses only, cut late. */
 export const TRACK_SEGMENTER: SegmenterOptions = { strategy: 'pause', maxSegmentMs: 20_000 };
 
+/**
+ * With a model detector, a segment opens on one frame at the threshold, as in the benchmark: the
+ * model's probabilities are already smooth, and a blip under 250 ms of speech is still dropped.
+ */
+export const MODEL_VAD_SEGMENTER: SegmenterOptions = { minSpeechMs: 32 };
+
 /** A later line of a split segment: `<parent>.<n>`. */
 const SPLIT_LINE = /^(.+)\.(\d+)$/;
 
@@ -78,6 +97,8 @@ interface SegmentState {
 export class Pipeline {
   private readonly clock = new SampleClock(PIPELINE_SAMPLE_RATE);
   private readonly segmenter: Segmenter;
+  /** Scores the stream with the model detector, when there is one. */
+  private readonly vadStage: VadStage | null;
   private readonly session: AsrSession;
   private readonly segments = new Map<string, SegmentState>();
   private readonly context: { source: string; translation: string; language: LanguageTag }[] = [];
@@ -91,8 +112,26 @@ export class Pipeline {
 
   constructor(private readonly options: PipelineOptions) {
     this.ownSegments = options.asr.info.audioInput === 'track';
-    this.segmenter =
-      options.segmenter ?? new Segmenter(new EnergyVad(), this.ownSegments ? TRACK_SEGMENTER : {});
+    const model = this.ownSegments ? null : (options.vad ?? null);
+    if (model) {
+      // The segmenter's own detector only sets the frame size: the stage scores every frame.
+      this.segmenter =
+        options.segmenter ??
+        new Segmenter(new EnergyVad({ frameSamples: model.frameSamples }), MODEL_VAD_SEGMENTER);
+      this.vadStage = new VadStage(
+        model,
+        (samples, startSample, prob) => {
+          if (this.closing.signal.aborted) return;
+          this.dispatch(this.segmenter.pushScored(samples, startSample, prob));
+        },
+        (error) => options.onVadFailure?.(error),
+      );
+    } else {
+      this.segmenter =
+        options.segmenter ??
+        new Segmenter(new EnergyVad(), this.ownSegments ? TRACK_SEGMENTER : {});
+      this.vadStage = null;
+    }
     this.session = options.asr.createSession({
       sampleRate: PIPELINE_SAMPLE_RATE,
       languageHint: options.sourceLanguage,
@@ -111,17 +150,27 @@ export class Pipeline {
     if (this.closing.signal.aborted) return;
     this.clock.anchor(frame.startSample, frame.startEpochMs);
     this.position = frame.startSample + frame.samples.length;
-    this.dispatch(this.segmenter.push(frame.samples, frame.startSample));
+    if (this.vadStage) this.vadStage.push(frame.samples, frame.startSample);
+    else this.dispatch(this.segmenter.push(frame.samples, frame.startSample));
   }
 
-  /** Ends the open segment now (capture paused, video seeked). */
+  /**
+   * Ends the open segment now (capture paused, video seeked). With a model detector, once the
+   * frames already pushed are scored.
+   */
   flush(): void {
-    this.dispatch(this.segmenter.flush());
+    if (!this.vadStage) {
+      this.dispatch(this.segmenter.flush());
+      return;
+    }
+    this.vadStage.after(() => this.dispatch(this.segmenter.flush()));
+    this.vadStage.reset();
   }
 
   /** Ends the open segment, waits for queued final translations, then closes the ASR session. */
   async close(): Promise<void> {
     this.flush();
+    await this.vadStage?.drain();
     await this.finals;
     this.closing.abort();
     for (const s of this.segments.values()) s.preview?.abort();

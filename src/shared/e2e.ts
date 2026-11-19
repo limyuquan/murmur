@@ -34,9 +34,24 @@ export interface OffscreenTestLog {
   /** Segment decodes of engines that report them (Qwen3-ASR): kind, timing, text. */
   decodes: { at: number; record: unknown }[];
   engines: { asr: string; translation: string } | null;
+  /** The session's speech detector, and the time it has spent so far (live). */
+  vad: { detector: 'silero' | 'energy'; cost: { frames: number; ms: number } | null } | null;
 }
+
+/**
+ * On the options page's global as `__murmurVadCheck` (e2e builds): loads the bundled Silero VAD
+ * the way the offscreen document does and scores `samples` (16 kHz), for checks in a real browser.
+ */
+export type VadCheck = (samples: number[]) => Promise<{
+  probs: number[];
+  loadMs: number;
+  /** Time in the model per frame: mean (includes warm-up) and median. */
+  msPerFrame: number;
+  medianMs: number;
+}>;
 
 declare global {
   var __murmur: BackgroundTestHook | undefined;
   var __murmurLog: OffscreenTestLog | undefined;
+  var __murmurVadCheck: VadCheck | undefined;
 }
