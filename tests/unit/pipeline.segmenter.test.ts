@@ -424,3 +424,69 @@ describe('Segmenter, sentence strategy (default)', () => {
     expect(c.filter((e) => e.type !== 'probe')).toEqual(a.filter((e) => e.type !== 'probe'));
   });
 });
+
+describe('Segmenter on scored frames (a model detector)', () => {
+  const FRAME = 512;
+  const frameMs = (FRAME / RATE) * 1000;
+  type Spec = { prob: number; amp: number };
+
+  /** Scored 32 ms frames: `spec(t)` gives each frame's probability and level from its start, s. */
+  function scored(seconds: number, spec: (t: number) => Spec) {
+    const seg = new Segmenter(new EnergyVad({ frameSamples: FRAME }), { minSpeechMs: 32 });
+    const events: SegmentEvent[] = [];
+    for (let at = 0; at + FRAME <= seconds * RATE; at += FRAME) {
+      const { prob, amp } = spec(at / RATE);
+      events.push(...seg.pushScored(burst(FRAME / RATE, amp), at, prob));
+    }
+    return events;
+  }
+  const firstCut = (events: SegmentEvent[]) => {
+    const end = events.find((e) => e.type === 'end');
+    expect(end).toMatchObject({ reason: 'max-length' });
+    return ((end as { endSample: number }).endSample / RATE) * 1000;
+  };
+  const near = (t: number, from: number) => t >= from && t < from + 0.1;
+
+  it('cuts at the gap between words, even where the music is louder than a soft syllable', () => {
+    const events = scored(7, (t) =>
+      near(t, 5.4)
+        ? { prob: 0.1, amp: 0.3 } // a beat of music between two words
+        : near(t, 5.7)
+          ? { prob: 0.92, amp: 0.004 } // a soft syllable
+          : { prob: 0.99, amp: 0.3 },
+    );
+    const cut = firstCut(events);
+    expect(cut).toBeGreaterThanOrEqual(5400 - frameMs);
+    expect(cut).toBeLessThan(5500);
+  });
+
+  it('cuts at the quietest moment when every frame of the last second is speech', () => {
+    const events = scored(7, (t) =>
+      near(t, 5.2)
+        ? { prob: 0.6, amp: 0.3 } // less sure, but still speech
+        : near(t, 5.7)
+          ? { prob: 0.9, amp: 0.004 }
+          : { prob: 0.99, amp: 0.3 },
+    );
+    const cut = firstCut(events);
+    expect(cut).toBeGreaterThanOrEqual(5700 - frameMs);
+    expect(cut).toBeLessThan(5800);
+  });
+
+  it('ends at a pause in the probabilities, whatever the level', () => {
+    // Loud all along (music under the talk); the talk stops for 0.4 s at 2 s.
+    const events = scored(4, (t) => ({ prob: t >= 2 && t < 2.4 ? 0.05 : 0.98, amp: 0.3 }));
+    expect(events.find((e) => e.type === 'end')).toMatchObject({ reason: 'silence' });
+  });
+
+  it('takes frames of its size only, and restarts at a gap', () => {
+    const seg = new Segmenter(new EnergyVad({ frameSamples: FRAME }), { minSpeechMs: 32 });
+    expect(() => seg.pushScored(new Float32Array(320), 0, 1)).toThrow(RangeError);
+    for (let at = 0; at < RATE; at += FRAME) seg.pushScored(burst(FRAME / RATE, 0.3), at, 0.99);
+    expect(seg.inSegment).toBe(true);
+    const events = seg.pushScored(burst(FRAME / RATE, 0.3), 10 * RATE, 0.99);
+    // The open segment ends; one frame opens the next (it starts once it has 250 ms of speech).
+    expect(events.filter((e) => e.type !== 'audio').map((e) => e.type)).toEqual(['end']);
+    expect(seg.inSegment).toBe(true);
+  });
+});

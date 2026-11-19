@@ -14,18 +14,21 @@
  *   (shorter ones wait for a 1 s pause, so a lone word isn't cut off), or already at a 150 ms
  *   pause when the words so far end a sentence. For that it asks the ASR session for a decode up
  *   to the pause (a `probe` event) and is told the text (`transcript()`); sentence.ts decides. A
- *   segment that reaches 6 s is cut at the quietest moment of its last second rather than on the
- *   spot, and the audio after the cut carries over into the next segment, so nothing is lost and
- *   words are rarely split. A segment with under 250 ms of speech is dropped (a cough, a blip):
- *   its events are held back until it has that much. Speech/silence uses hysteresis: a frame
- *   below `negThreshold` starts a pause, one at or above `threshold` ends it.
+ *   segment that reaches 6 s is cut in its last second rather than on the spot, at the frame
+ *   least likely to be speech (a gap between words), then the quietest; the audio after the cut
+ *   carries over into the next segment. Nothing is lost and none is heard twice, so no text needs
+ *   merging at the cut. A segment with under 250 ms of speech is dropped (a cough, a blip): its
+ *   events are held back until it has that much. Speech/silence uses hysteresis: a frame below
+ *   `negThreshold` starts a pause, one at or above `threshold` ends it.
  * - `pause` (`PAUSE_SEGMENTER`): the original rule, a 500 ms pause or a hard cut at the maximum.
  *   Engines that listen to the track themselves (Chrome speech) use it: cutting their recognizer
  *   mid-sentence costs words, and they can't decode on request.
  *
- * The benchmark measured these rules with a speech detector (Silero VAD). With the energy gate
+ * The benchmark measured these rules with a speech detector (Silero VAD), and the pipeline uses
+ * the same one (silero.ts, fed through `pushScored()` by vadstage.ts). With the energy gate
  * (vad.ts), speech over music or noise rarely shows a pause, so on such audio most segments end at
- * the 6 s cut: a model-based `VoiceActivityDetector` is what lets the pause and sentence rules act.
+ * the 6 s cut: the model is what lets the pause and sentence rules act. The energy gate stays for
+ * when the model can't load, and for engines that listen to the track.
  *
  * Shorter segments also keep most segments to one language, which matters for engines that pick
  * one language per segment. A cut where the language changes (a language-ID model on a sliding
@@ -66,7 +69,10 @@ export interface SegmenterConfig {
   longHangoverMs: number;
   /** Longest segment before a forced cut, ms. */
   maxSegmentMs: number;
-  /** The forced cut goes at the quietest frame in the last this-many ms (0: a hard cut). */
+  /**
+   * The forced cut goes at the least speech-like, then quietest, frame in the last this-many ms
+   * (0: a hard cut).
+   */
   cutSearchMs: number;
   /** ...but never in a segment's first this-many ms. */
   cutMinHeadMs: number;
@@ -135,6 +141,9 @@ export function segmenterConfig(options: SegmenterOptions = {}): SegmenterConfig
   }
   return config;
 }
+
+/** A forced cut picks the quietest frame among those this close to the least speech-like. */
+const CUT_PROB_SLACK = 0.05;
 
 export type SegmentEndReason = 'silence' | 'sentence' | 'max-length' | 'flush';
 
@@ -279,6 +288,26 @@ export class Segmenter {
   }
 
   /**
+   * Feeds one frame already scored by a detector outside the segmenter (a model that answers
+   * asynchronously: `VadStage`). `samples` is exactly `vad.frameSamples` long and follows the
+   * previous samples (a gap or overlap flushes and restarts there). Don't mix with `push()`.
+   */
+  pushScored(samples: Float32Array, startSample: number, prob: number): SegmentEvent[] {
+    if (samples.length !== this.vad.frameSamples) {
+      throw new RangeError(`A scored frame has ${this.vad.frameSamples} samples.`);
+    }
+    const events: SegmentEvent[] = [];
+    if (startSample !== this.position) {
+      events.push(...this.flush());
+      this.history = [];
+      this.pendingLen = 0;
+    }
+    this.position = startSample + samples.length;
+    this.frame({ samples, startSample, prob, db: levelDb(samples) }, events);
+    return events;
+  }
+
+  /**
    * The ASR's text for segment `segmentId` decoded up to `endSample`. When that answers one of
    * this segment's probes and the text ends a sentence, the segment ends there (any speech since
    * starts the next one). Returns the events that produced.
@@ -382,26 +411,41 @@ export class Segmenter {
     }
   }
 
-  /** Where a forced cut goes: the quietest frame start in the search window, or right here. */
+  /**
+   * Where a forced cut goes: between words if the search window has a gap. Each frame's speech
+   * probability and level are smoothed over it and its neighbours (one odd frame inside a
+   * syllable doesn't count). The cut goes at the frame least likely to be speech; among frames
+   * within `CUT_PROB_SLACK` of that, the quietest. When every frame is speech (no gap between
+   * words to find), the probability says nothing and the quietest frame wins. Ties go to the
+   * earliest frame. With no window, the cut is right here.
+   */
   private cutPoint(open: Open, frame: Frame): number {
     const frameEnd = frame.startSample + frame.samples.length;
     const s = this.s;
     if (s.cutSearch <= 0) return frameEnd;
     const from = Math.max(frameEnd - s.cutSearch, open.startSample + s.cutMinHead);
     const frames = open.frames;
-    let best = -1;
-    let bestDb = Infinity;
+    const window: { start: number; prob: number; db: number }[] = [];
     for (let i = frames.length - 1; i >= 0; i--) {
       const f = frames[i] as Frame;
       if (f.startSample < from) break;
-      // Level smoothed over the frame and its neighbours, so a single quiet frame inside a
-      // syllable doesn't win.
       const near = [frames[i - 1], f, frames[i + 1]].filter((x): x is Frame => x !== undefined);
-      const db = near.reduce((sum, x) => sum + x.db, 0) / near.length;
-      // Ties go to the earliest frame (scanning backwards).
-      if (db <= bestDb) {
-        bestDb = db;
-        best = f.startSample;
+      window.push({
+        start: f.startSample,
+        prob: near.reduce((sum, x) => sum + x.prob, 0) / near.length,
+        db: near.reduce((sum, x) => sum + x.db, 0) / near.length,
+      });
+    }
+    if (window.length === 0) return frameEnd;
+    const least = Math.min(...window.map((w) => w.prob));
+    const ceiling = least < this.config.threshold ? least + CUT_PROB_SLACK : Infinity;
+    let best = -1;
+    let bestDb = Infinity;
+    // `window` runs backwards: `<=` leaves the earliest of equals.
+    for (const w of window) {
+      if (w.prob <= ceiling && w.db <= bestDb) {
+        bestDb = w.db;
+        best = w.start;
       }
     }
     return best > open.startSample ? best : frameEnd;
