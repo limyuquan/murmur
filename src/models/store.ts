@@ -26,7 +26,7 @@ import {
   storedPart,
   verifiedKey,
 } from './hub';
-import { MB, type ModelInfo, type ModelStore } from './types';
+import { DISK_RESERVE_MB, DiskSpaceError, MB, type ModelInfo, type ModelStore } from './types';
 
 export interface StoreDeps {
   caches: Pick<CacheStorage, 'open'>;
@@ -35,6 +35,8 @@ export interface StoreDeps {
   partBytes?: number;
   /** Least time between progress reports, ms. */
   progressMs?: number;
+  /** Disk space downloads leave free, MB. Default `DISK_RESERVE_MB`. */
+  reserveMB?: number;
   /**
    * Check each file against its pinned hash once all of it arrived (until it passes once: see
    * `verifiedKey`). Off for the e2e stand-in for Hugging Face, whose files are a pattern.
@@ -45,10 +47,12 @@ export interface StoreDeps {
 export class CacheModelStore implements ModelStore {
   private readonly partBytes: number;
   private readonly progressMs: number;
+  private readonly reserveMB: number;
 
   constructor(private readonly deps: StoreDeps) {
     this.partBytes = deps.partBytes ?? PART_BYTES;
     this.progressMs = deps.progressMs ?? 250;
+    this.reserveMB = deps.reserveMB ?? DISK_RESERVE_MB;
   }
 
   private open(): Promise<Cache> {
@@ -83,6 +87,10 @@ export class CacheModelStore implements ModelStore {
       else onProgress(received / MB, checking);
     };
     report(true);
+    const size = source.files.reduce((n, f) => n + f.bytes, 0);
+    // Refused up front when it can't fit: the browser would stop saving part-way, with an error
+    // that reads like a network fault.
+    await this.ensureSpace(size - received);
     for (const file of source.files) {
       const url = fileUrl(source, file);
       const key = cacheKey(source, file);
@@ -100,7 +108,7 @@ export class CacheModelStore implements ModelStore {
           });
         } catch (err) {
           received = before;
-          throw err;
+          throw await this.saveError(err, size - before, signal);
         }
         report(true);
       }
@@ -180,15 +188,21 @@ export class CacheModelStore implements ModelStore {
     });
     const key = partKey(keyUrl, index);
     const pending = pendingPartKey(keyUrl, index);
-    await cache.put(
-      pending,
-      new Response(res.body.pipeThrough(counter, { signal }), {
-        headers: {
-          'content-length': String(expected),
-          'content-type': 'application/octet-stream',
-        },
-      }),
-    );
+    try {
+      await cache.put(
+        pending,
+        new Response(res.body.pipeThrough(counter, { signal }), {
+          headers: {
+            'content-length': String(expected),
+            'content-type': 'application/octet-stream',
+          },
+        }),
+      );
+    } catch (err) {
+      // Whatever was written of it (a full disk) goes.
+      await cache.delete(pending).catch(() => false);
+      throw err;
+    }
     if (count !== expected) {
       await cache.delete(pending);
       signal.throwIfAborted();
@@ -197,8 +211,11 @@ export class CacheModelStore implements ModelStore {
     // Whole: only now under its real key.
     const whole = await cache.match(pending);
     if (!whole) throw new Error(`Downloading ${name} failed: the part wasn't kept.`);
-    await cache.put(key, whole);
-    await cache.delete(pending);
+    try {
+      await cache.put(key, whole);
+    } finally {
+      await cache.delete(pending);
+    }
   }
 
   async remove(model: ModelInfo, keep: readonly ModelInfo[]): Promise<void> {
@@ -252,6 +269,33 @@ export class CacheModelStore implements ModelStore {
     }
   }
 
+  /** Throws a `DiskSpaceError` when `bytes` more won't fit with the reserve left free. */
+  private async ensureSpace(bytes: number): Promise<void> {
+    if (bytes <= 0) return;
+    const available = await this.availableMB();
+    const neededMB = bytes / MB;
+    if (available !== null && neededMB + this.reserveMB > available) {
+      throw new DiskSpaceError(neededMB, available);
+    }
+  }
+
+  /**
+   * What a failed part becomes: running out of space when the browser says so
+   * (`QuotaExceededError`) or when the disk is now too full for the rest of the model (Chrome
+   * reports a write it refused as "Cache.put() encountered a network error", like a dropped
+   * connection); otherwise `err` as it is.
+   */
+  private async saveError(err: unknown, bytesLeft: number, signal: AbortSignal): Promise<unknown> {
+    if (signal.aborted || err instanceof DiskSpaceError) return err;
+    const neededMB = bytesLeft / MB;
+    if (isQuotaError(err)) return new DiskSpaceError(neededMB, await this.availableMB());
+    const available = await this.availableMB();
+    if (available !== null && neededMB + this.reserveMB > available) {
+      return new DiskSpaceError(neededMB, available);
+    }
+    return err;
+  }
+
   private async storedBytes(source: ModelSource, cache?: Cache): Promise<number> {
     const c = cache ?? (await this.open());
     let total = 0;
@@ -267,6 +311,16 @@ export class CacheModelStore implements ModelStore {
     }
     return true;
   }
+}
+
+/** The browser's own "out of space" (a `QuotaExceededError` DOMException, or one like it). */
+function isQuotaError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name: unknown }).name === 'QuotaExceededError'
+  );
 }
 
 /** Whether `Content-Range` says bytes [start, end) of a `size`-byte file. */

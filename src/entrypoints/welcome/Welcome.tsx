@@ -7,7 +7,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { PROFILES, type ProfileId, recommendProfile } from '@/engines/profiles';
-import { formatSize } from '@/models/types';
+import { formatSize, freeSpaceText } from '@/models/types';
 import type { Settings } from '@/settings/settings';
 import { Icon, type IconName, Logo, ProgressBar } from '@/ui/components';
 import { useHardware, useMemoryFit, useModels, useSettings } from '@/ui/hooks';
@@ -175,8 +175,9 @@ export function Welcome({ initial }: { initial: Settings }) {
           <p className="text-[var(--color-muted)]">
             {formatSize(selected.totalMB)} in all, from Hugging Face, downloaded once and kept on
             this computer. You can close this page: the download carries on.
-            {view?.storage.availableMB != null &&
-              ` ${formatSize(view.storage.availableMB)} is free for Murmur.`}
+            {view &&
+              freeSpaceText(view.storage.availableMB) !== null &&
+              ` This disk has ${freeSpaceText(view.storage.availableMB)}.`}
           </p>
           {selected.downloading !== null && (
             <div>

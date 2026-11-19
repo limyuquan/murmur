@@ -3,7 +3,7 @@ import { browser } from 'wxt/browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { CHROME_WEBSPEECH_ID } from '@/engines/chrome/info';
 import { PROFILES, type ProfileId, recommendProfile, resolveEngines } from '@/engines/profiles';
-import { formatSize } from '@/models/types';
+import { formatSize, freeSpaceText } from '@/models/types';
 import { SubtitlePreview } from '@/overlay/preview';
 import { clearPositions, loadPositions, watchPositions } from '@/settings/positions';
 import type { CaptionBackground, CaptionDisplay, Settings } from '@/settings/settings';
@@ -290,8 +290,8 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
           {view && (
             <p className="text-[13px] text-[var(--color-muted)]" data-testid="disk-usage">
               {formatSize(view.storage.modelsMB)} used
-              {view.storage.availableMB !== null &&
-                ` · ${formatSize(view.storage.availableMB)} free for Murmur`}
+              {freeSpaceText(view.storage.availableMB) !== null &&
+                ` · ${freeSpaceText(view.storage.availableMB)}`}
             </p>
           )}
         </div>

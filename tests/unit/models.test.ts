@@ -22,7 +22,16 @@ import {
 } from '@/models/hub';
 import { ModelManager } from '@/models/manager';
 import { CacheModelStore, rangeMatches } from '@/models/store';
-import { DOWNLOADS_KEY, formatSize, type ModelInfo } from '@/models/types';
+import {
+  DISK_RESERVE_MB,
+  DiskSpaceError,
+  DOWNLOADS_KEY,
+  diskSpaceMessage,
+  formatSize,
+  freeSpaceText,
+  type ModelInfo,
+  spaceForModelsMB,
+} from '@/models/types';
 
 const custom = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
 const GPU: HardwareInfo = {
@@ -230,7 +239,7 @@ function store(caches: FakeCaches, s = server()) {
     fetch: s.fetch,
     partBytes: PART,
     progressMs: 0,
-    estimate: async () => ({ quota: 5e9, usage: 1e9 }),
+    estimate: async () => ({ quota: 10e9, usage: 1e9 }),
   });
 }
 
@@ -253,7 +262,7 @@ describe('CacheModelStore', () => {
     expect(await st.downloaded([A, B])).toEqual(new Set(['a']));
     expect(await st.storedMB(A)).toBeCloseTo(32 / 1e6);
     expect(await st.usageMB()).toBeCloseTo(32 / 1e6);
-    expect(await st.availableMB()).toBe(4000);
+    expect(await st.availableMB()).toBe(9000);
     expect(partCount(25, PART)).toBe(3);
   });
 
@@ -449,6 +458,116 @@ describe('CacheModelStore', () => {
     await st.remove(A, [B]);
     expect(await st.downloaded([A, B])).toEqual(new Set(['b']));
     expect(Math.round((await st.usageMB()) * 1e6)).toBe(19);
+  });
+});
+
+describe('disk space', () => {
+  /** A store whose disk has `freeMB` free (the browser's figure), changeable as it fills. */
+  function onDisk(caches: FakeCaches, free: { mb: number }, s = server()) {
+    return new CacheModelStore({
+      caches,
+      fetch: s.fetch,
+      partBytes: PART,
+      progressMs: 0,
+      estimate: async () => ({ quota: free.mb * 1e6, usage: 0 }),
+    });
+  }
+
+  it('shows the free space less what downloads leave free', () => {
+    expect(DISK_RESERVE_MB).toBe(5000);
+    expect(spaceForModelsMB(9300)).toBe(4300);
+    expect(spaceForModelsMB(3000)).toBe(0);
+    expect(spaceForModelsMB(null)).toBeNull();
+    expect(freeSpaceText(9300)).toBe('about 4.3 GB of disk space for more models');
+    expect(freeSpaceText(null)).toBeNull();
+    expect(diskSpaceMessage(2969, 7000)).toBe(
+      'Not enough disk space: need 8.0 GB (3.0 GB for the model, 5.0 GB kept free for the system), 7.0 GB free. Free up space on this disk or remove models you don’t use, then download again.',
+    );
+    expect(diskSpaceMessage(2969, null)).toMatch(/^Not enough disk space: need 8\.0 GB .*\. Free/);
+  });
+
+  it('refuses a download that would leave less than the reserve, before fetching anything', async () => {
+    const caches = new FakeCaches();
+    const s = server();
+    // 32 bytes more would leave just under 5 GB.
+    const st = onDisk(caches, { mb: DISK_RESERVE_MB }, s);
+    const err = await st.download(A, () => {}, new AbortController().signal).catch((e) => e);
+    expect(err).toBeInstanceOf(DiskSpaceError);
+    expect(err.message).toMatch(/^Not enough disk space: need 5\.0 GB .*, 5\.0 GB free\./);
+    expect(s.requests).toEqual([]);
+    // With room, it downloads; once downloaded, nothing more is needed, whatever is free.
+    const free = { mb: DISK_RESERVE_MB + 1 };
+    await onDisk(caches, free).download(A, () => {}, new AbortController().signal);
+    free.mb = 0;
+    await onDisk(caches, free).download(A, () => {}, new AbortController().signal);
+    expect(await onDisk(caches, free).downloaded([A])).toEqual(new Set(['a']));
+  });
+
+  it('only counts what is left of a partly downloaded model', async () => {
+    const caches = new FakeCaches();
+    // 20 of the 32 bytes arrive, then the connection drops.
+    const s = server((_url, range) => range === 'bytes=20-24');
+    const free = { mb: DISK_RESERVE_MB + 1 };
+    await onDisk(caches, free, s)
+      .download(A, () => {}, new AbortController().signal)
+      .catch(() => {});
+    expect(await onDisk(caches, free).storedMB(A)).toBeCloseTo(27 / 1e6);
+    free.mb = DISK_RESERVE_MB;
+    const err = await onDisk(caches, free)
+      .download(A, () => {}, new AbortController().signal)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(DiskSpaceError);
+    expect(err.neededMB * 1e6).toBeCloseTo(5);
+  });
+
+  it('reports a save the browser refused as a full disk, not a network fault', async () => {
+    // Chrome's words for a write it refused on a nearly full disk.
+    const refused = new TypeError(
+      "Failed to execute 'put' on 'Cache': Cache.put() encountered a network error",
+    );
+    const failing = (error: Error) => {
+      const caches = new FakeCaches();
+      const put = caches.cache.put.bind(caches.cache);
+      caches.cache.put = async (key: string, res: Response) => {
+        if (key.includes('model.onnx?part=1')) {
+          // Some of it was written before the failure.
+          await put(key, res);
+          throw error;
+        }
+        return put(key, res);
+      };
+      return caches;
+    };
+    // The disk filled up while downloading: plenty free at the start, too little after.
+    const caches = failing(refused);
+    let calls = 0;
+    const estimate = async () => ({ quota: (calls++ === 0 ? 6000 : 4800) * 1e6, usage: 0 });
+    const filling = new CacheModelStore({
+      caches,
+      fetch: server().fetch,
+      partBytes: PART,
+      progressMs: 0,
+      estimate,
+    });
+    const err = await filling.download(A, () => {}, new AbortController().signal).catch((e) => e);
+    expect(err).toBeInstanceOf(DiskSpaceError);
+    expect(err.message).toContain('4.8 GB free');
+    // What was written of the failed part is gone; the whole parts stay for a resume.
+    const keys = [...caches.cache.entries.keys()];
+    expect(keys.some((k) => k.endsWith('&pending'))).toBe(false);
+    expect(keys).toContain(partKey(cacheKey(SOURCE, 'onnx/model.onnx'), 0));
+    // The same failure with plenty of room is what it says it is.
+    const plenty = await onDisk(failing(refused), { mb: 50_000 })
+      .download(A, () => {}, new AbortController().signal)
+      .catch((e) => e);
+    expect(plenty).toBe(refused);
+    // The browser's own "out of space" is a full disk, whatever the estimate says.
+    const quota = new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    const full = await onDisk(failing(quota), { mb: 50_000 })
+      .download(A, () => {}, new AbortController().signal)
+      .catch((e) => e);
+    expect(full).toBeInstanceOf(DiskSpaceError);
+    expect(full.message).toContain('50 GB free');
   });
 });
 
