@@ -177,9 +177,7 @@ describe('line fallback', () => {
     const primary = scripted(
       INFO,
       failing(() =>
-        ++call === 1
-          ? new Error('boom')
-          : new LlmOutputError('echo', 'repeated an earlier line (“Hi”)'),
+        ++call === 1 ? new Error('boom') : new LlmOutputError('echo', 'repeated an earlier line'),
       ),
     );
     const events: { reason: string }[] = [];
@@ -189,10 +187,7 @@ describe('line fallback', () => {
     });
     expect((await collect(t.translate(request('Un'))))[0]?.text).toBe('backup: Un');
     expect((await collect(t.translate(request('Deux'))))[0]?.text).toBe('backup: Deux');
-    expect(events.map((e) => e.reason)).toEqual([
-      'failed (boom)',
-      'repeated an earlier line (“Hi”)',
-    ]);
+    expect(events.map((e) => e.reason)).toEqual(['failed (boom)', 'repeated an earlier line']);
     // It still gets the next line.
     await collect(t.translate(request('Trois'))).catch(() => {});
     expect(primary.requests).toHaveLength(3);

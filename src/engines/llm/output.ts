@@ -7,8 +7,10 @@
  * asks for when a line is unintelligible).
  *
  * Checking: an answer is rejected (and the line goes to another translator) when it repeats an
- * earlier line's translation (models given context sometimes translate the context again), or is
- * far longer than the line could need (a runaway that hit the token limit).
+ * earlier line's translation (models given context sometimes translate the context again): that
+ * translation followed by more, or a long one said again whole for different words. Short lines
+ * that mean the same ("Really?") pass. Also when it is far longer than the line could need (a
+ * runaway that hit the token limit). Rejections carry no subtitle text (they reach logs).
  */
 
 const THINK = /<think>[\s\S]*?<\/think>/g;
@@ -100,6 +102,12 @@ export function maxOutputChars(source: string): number {
   return Math.max(80, [...source].length * 8);
 }
 
+/**
+ * An earlier translation said again whole, rather than a line that means the same: two short
+ * lines often translate alike ("Really?", "That's right."), so only a long one counts.
+ */
+export const ECHO_MIN_CHARS = 20;
+
 export function checkOutput(text: string, input: CheckInput): OutputCheck {
   const out = normalize(text);
   const src = normalize(input.source);
@@ -107,11 +115,17 @@ export function checkOutput(text: string, input: CheckInput): OutputCheck {
     const prev = normalize(c.translation);
     // Too short to tell an echo from a line that really says the same ("Yes.").
     if (prev.length < 6) continue;
-    // The same words said again translate the same: not an echo.
-    const repeated = normalize(c.source) !== '' && src.includes(normalize(c.source));
-    if (repeated) continue;
-    if (out === prev || (prev.length >= 12 && out.includes(prev))) {
-      return { ok: false, reason: 'echo', detail: `repeated an earlier line (“${c.translation}”)` };
+    const prevSource = normalize(c.source);
+    // The same words said again (or nearly) translate the same: not an echo.
+    if (prevSource !== '' && (src.includes(prevSource) || changeShare(src, prevSource) < 0.3)) {
+      continue;
+    }
+    // The real pattern: the earlier translation, then this line's (or more of it).
+    const echoedPlus = prev.length >= 12 && out.length > prev.length && out.includes(prev);
+    const echoedWhole = out === prev && prev.length >= ECHO_MIN_CHARS;
+    if (echoedPlus || echoedWhole) {
+      // No text in the detail: it goes to logs and the popup.
+      return { ok: false, reason: 'echo', detail: 'repeated an earlier line' };
     }
   }
   if (input.hitLimit) {

@@ -58,9 +58,23 @@ describe('LLM output', () => {
     expect(
       checkOutput('Nice to see you', { source: 'Ravi de vous voir', context, hitLimit: false }),
     ).toEqual({ ok: true });
+    // A short line said again whole may just mean the same; a long one is an echo.
     expect(
       checkOutput('Hello, everyone.', { source: 'Ravi de vous voir', context, hitLimit: false }),
-    ).toMatchObject({ ok: false, reason: 'echo' });
+    ).toEqual({ ok: true });
+    const long = [
+      {
+        source: 'On commence la réunion maintenant',
+        translation: 'We are starting the meeting now',
+      },
+    ];
+    expect(
+      checkOutput('We are starting the meeting now.', {
+        source: 'Ravi de vous voir',
+        context: long,
+        hitLimit: false,
+      }),
+    ).toEqual({ ok: false, reason: 'echo', detail: 'repeated an earlier line' });
     expect(
       checkOutput('Hello, everyone. Nice to see you', {
         source: 'Ravi de vous voir',
@@ -71,6 +85,33 @@ describe('LLM output', () => {
     // The same words said again translate the same.
     expect(
       checkOutput('Hello, everyone', { source: 'Bonjour à tous !', context, hitLimit: false }),
+    ).toEqual({ ok: true });
+    // Two different short lines that mean the same.
+    for (const [first, second, same] of [
+      ['진짜요?', '정말요?', 'Really?'],
+      ['그렇죠', '맞아요', "That's right."],
+      ['감사합니다', '고마워요', 'Thank you so much.'],
+    ] as const) {
+      expect(
+        checkOutput(same, {
+          source: second,
+          context: [{ source: first, translation: same }],
+          hitLimit: false,
+        }),
+      ).toEqual({ ok: true });
+    }
+    // The same long line said again, with a small difference in the recognized words.
+    expect(
+      checkOutput('Thank you so much, everyone, for coming.', {
+        source: 'Merci beaucoup à tous d’être venus',
+        context: [
+          {
+            source: 'Merci beaucoup à tous d’être venu',
+            translation: 'Thank you so much, everyone, for coming.',
+          },
+        ],
+        hitLimit: false,
+      }),
     ).toEqual({ ok: true });
     // Short answers can't be told from a real repeat.
     expect(
@@ -380,10 +421,16 @@ describe('LLM translation engine', () => {
   });
 
   it('rejects an answer that repeats the context', async () => {
-    worker.answers = ['Hello, everyone'];
+    worker.answers = ['Hello, everyone, and welcome to the show'];
     const stream = engine.translate(
       request('Ravi de vous voir', {
-        context: [{ source: 'Bonjour à tous', translation: 'Hello, everyone', language: 'fr' }],
+        context: [
+          {
+            source: 'Bonjour à tous et bienvenue',
+            translation: 'Hello, everyone, and welcome to the show',
+            language: 'fr',
+          },
+        ],
       }),
     );
     await expect(collect(stream)).rejects.toBeInstanceOf(LlmOutputError);
