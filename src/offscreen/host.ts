@@ -54,13 +54,6 @@ import { ActivityTracker, activityChanged } from './activity';
 /** How often the session's activity is checked (and reported, when it changed). */
 const ACTIVITY_MS = 1000;
 
-/**
- * How long after the page plays a moment the person hears it, while Murmur captures the tab and
- * plays its audio back (measured 60–130 ms in Chrome, codec-dependent): lookahead cues are shown
- * this much after their media time.
- */
-export const CAPTURE_LAG_S = 0.1;
-
 /** Lookahead messages kept from before a session starts, at most (base64 bytes). */
 const EARLY_LOOKAHEAD_BYTES = 32 * 1024 * 1024;
 
@@ -224,7 +217,8 @@ export class OffscreenHost {
     const { config } = running;
     return new LookaheadHost({
       post: (message) => this.broadcast(config.tabId, message),
-      lagS: config.source.kind === 'tab' ? CAPTURE_LAG_S : 0,
+      // Only captured tab audio is played back late (the test tone isn't).
+      measureLag: config.source.kind === 'tab',
       createPipeline: (media, hooks) => this.lookaheadPipeline(running, media, hooks),
       setLivePaused: (paused) => {
         if (running.livePaused === paused) return;
@@ -323,6 +317,7 @@ export class OffscreenHost {
     try {
       running.capture = await startCapture(sourceFor(config.source), (frame) => {
         running.activity.onFrame(frame.samples, Date.now());
+        running.lookahead?.onLiveFrame(frame.samples, frame.startEpochMs);
         // While lookahead is ahead, live frames are only measured.
         if (!running.livePaused) running.pipeline?.push(frame);
       });

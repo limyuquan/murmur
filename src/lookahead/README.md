@@ -75,8 +75,12 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   as live lines (`CaptionStore`, run on media milliseconds): from the cue's start, held at least
   to the end of its speech. The controller redraws on every animation frame while playing (only
   when something is due) and on seek, pause, rate change and `timeupdate`, at
-  `t = currentTime − lag` (the session plays captured tab audio back about 0.1 s late; the test
-  tone has no lag).
+  `t = currentTime − lag`. The session plays captured tab audio back late (60–130 ms measured,
+  codec-dependent; the test tone has no lag): `calibrate.ts` starts at 0.12 s and measures it per
+  session by cross-correlating 4 s of the live capture (each frame stamped with when it is heard)
+  against lookahead's decoded audio of the same moments (placed by the playhead reports), within
+  0–300 ms, keeping the median of 3 good windows (steady 1× playback, not quiet, correlation
+  ≥ 0.6). Each new value goes to the overlays in a `lookahead` message.
 - Where lookahead has finished subtitles (`coverage` messages), only its cues show. Elsewhere live
   lines show as before. Live lines are also placed on the timeline (`MediaClock`); one that
   mostly repeats a kept cue isn't shown, and a lookahead cue replaces the live ones it covers.

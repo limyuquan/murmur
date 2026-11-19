@@ -12,6 +12,7 @@ import type { OverlayMessage } from '@/messaging/protocol';
 import type { Pipeline } from '@/pipeline/pipeline';
 import type { Cue } from '@/pipeline/types';
 import { fromBase64 } from './bytes';
+import { LagCalibrator, type LagEstimate } from './calibrate';
 import { AudioRuns, type CreateDecoder, webCodecsDecoder } from './decode';
 import { SourceBufferMirror } from './mirror';
 import { BLOCK_BYTES, PcmTimeline, toSample } from './pcm';
@@ -41,8 +42,11 @@ export interface LookaheadDeps {
   ): Pipeline | null;
   /** Live recognition should pause (lookahead is far enough ahead) or resume. */
   setLivePaused(paused: boolean): void;
-  /** How long after the page plays a moment the person hears it, seconds. */
-  lagS: number;
+  /**
+   * How long after the page plays a moment the person hears it, seconds: measured from the live
+   * frames (`onLiveFrame`, calibrate.ts) when true, else none (the audio isn't played back).
+   */
+  measureLag: boolean;
   /** Sees every lookahead cue (e2e builds log them). */
   onCue?(cue: Cue): void;
   createDecoder?: CreateDecoder;
@@ -79,6 +83,8 @@ export interface LookaheadSnapshot {
   buffers: { sb: string; ms: string; mime: string; appends: number; errors: string[] }[];
   /** Why recent jobs were dropped. */
   drops: string[];
+  /** The playback lag in use, and how it was measured (null: none, the audio isn't played back). */
+  lag: LagEstimate | null;
 }
 
 export class LookaheadHost {
@@ -94,8 +100,10 @@ export class LookaheadHost {
   private announced = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
+  private readonly calibrator: LagCalibrator | null;
 
   constructor(private readonly deps: LookaheadDeps) {
+    this.calibrator = deps.measureLag ? new LagCalibrator() : null;
     this.now = deps.now ?? (() => performance.timeOrigin + performance.now());
     this.runner = new LookaheadRunner({
       createPipeline: (media, hooks) => deps.createPipeline(media, hooks),
@@ -117,6 +125,17 @@ export class LookaheadHost {
     this.runner.kick();
   }
 
+  /** A live frame of the tab's audio (16 kHz), heard at `epochMs`: for measuring the lag. */
+  onLiveFrame(samples: Float32Array, epochMs: number): void {
+    if (this.stopped || !this.announced) return;
+    this.calibrator?.onLiveFrame(samples, epochMs);
+  }
+
+  /** How long after the page plays a moment the person hears it, seconds. */
+  get lagS(): number {
+    return this.calibrator?.lagS ?? 0;
+  }
+
   /** A message from an overlay: the tee's events. */
   onTee(port: LookaheadPort, frameUrl: string, wire: TeeWire): void {
     if (this.stopped) return;
@@ -133,6 +152,10 @@ export class LookaheadHost {
     if (this.stopped) return;
     const state = this.portState(port, frameUrl);
     state.report = report;
+    if (report.timeline) {
+      const { time, rate, paused, at } = report;
+      this.calibrator?.onPlayhead(report.timeline, { time, rate, paused, at });
+    }
     if (!report.timeline || !report.key) {
       if (this.target?.port === port) this.retarget(null);
       return;
@@ -184,6 +207,7 @@ export class LookaheadHost {
       decodedSeconds,
       warnings: [...this.warnings.keys()],
       drops: [...this.runner.drops],
+      lag: this.calibrator?.estimate ?? null,
       buffers: [...this.buffers].map(([sb, b]) => ({
         sb,
         ms: b.ms,
@@ -204,7 +228,7 @@ export class LookaheadHost {
         this.ticker = setInterval(() => this.tick(), 500);
       }
       // Every overlay of the tab learns lookahead runs (and when to show its cues).
-      this.deps.post({ type: 'lookahead', lagS: this.deps.lagS });
+      this.deps.post({ type: 'lookahead', lagS: this.lagS });
     }
     return state;
   }
@@ -226,6 +250,8 @@ export class LookaheadHost {
 
   private tick(): void {
     this.evict();
+    const lag = this.calibrator?.attempt(this.now(), (timeline) => this.pcm.get(timeline));
+    if (lag != null) this.deps.post({ type: 'lookahead', lagS: lag });
     this.runner.kick();
     const target = this.target;
     if (target?.report.timeline?.startsWith('p:')) {
