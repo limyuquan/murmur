@@ -23,6 +23,11 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   is a line that switches inside it; a line in a different language from the rest gets a small
   tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
+- **Or ahead of time (beta).** On sites you choose, Murmur reads the audio the video player has
+  already loaded and makes the subtitles before the speech plays, so each line appears right on
+  time, and straight away when you seek back. Turn it on per site in the popup ("Show subtitles
+  ahead of time"); it needs the Balanced or Best model size. Where the player has nothing loaded
+  yet (an ad, a jump far ahead), subtitles come as they're heard.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
   downloads a small pack per language, after one click). Balanced and Best run speech
   recognition on the graphics card (Whisper: a 1.6 GB download, once; 80 to 210 MB for the small
@@ -87,7 +92,11 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
   turn them on again there.
 - **Players inside frames from another site** show subtitles at the bottom of the window instead
   of on the player, unless you allow Murmur on all sites (coming with the settings for it).
-- **Subtitles arrive after the speech**, by the time the models need. Expect a second or two.
+- **Subtitles arrive after the speech**, by the time the models need. Expect a second or two,
+  unless subtitles ahead of time are on for the site and the player has loaded that part.
+- **Ahead of time needs a reload** the first time it is turned on for a site, and works with
+  players that load media in the page itself (most sites; not yet ones that load it in a worker,
+  such as Twitch).
 
 ---
 
@@ -148,7 +157,11 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
   real tab-capture handshake (Chromium is started with `--allowlisted-extension-id`).
 - Fixture pages live in `tests/fixtures/pages/`, served on `http://127.0.0.1:4392/` by
   `scripts/serve-fixtures.mjs`, and again on port 4393, another origin, for frames from another
-  site (`frames.html`). The same server stands in for Hugging Face at `/hf/`: e2e builds
+  site (`frames.html`). The lookahead pages use hls.js, dash.js and Shaka (pinned dev
+  dependencies, served from node_modules at `/lib/`) on synthetic media (tone bursts) made by
+  `scripts/make-lookahead-media.sh` (ffmpeg; Opus and VP9, since Playwright's Chromium has no AAC
+  or H.264). `__murmur.lookahead(site, on)` turns lookahead on for a site in e2e builds, and
+  `__murmur.offscreenLog()` returns the offscreen document's lookahead cues and state. The same server stands in for Hugging Face at `/hf/`: e2e builds
   download models from there (every file in `src/engines/*/files.json`, at its real size,
   filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40). With `FIXTURE_HF_DIR=<dir>` it
   serves real files where `<dir>` has them (`<dir>/<repo>/<path>`, else `<dir>/<path>`).
@@ -167,7 +180,8 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/capture/` | Stream ID + offscreen lifecycle (SW side), audio sources, capture graph, AudioWorklet, resampler, clock |
 | `src/pipeline/` | Speech detectors (Silero VAD in `silero.ts`, run ahead of the segmenter by `vadstage.ts`; the energy gate in `vad.ts`), segmenter and its sentence-end detector (`sentence.ts`), orchestration (ASR → translation → cues), per-segment language |
 | `src/engines/` | Engine interfaces (`types.ts`), registry (`builtin.ts`) and factories (`factories.ts`, offscreen only), hardware checks, model profiles, Chrome engines (`chrome/`), Whisper (`whisper/`), Qwen3-ASR (`qwen3asr/`), the segment session both use (`segments.ts`), Gemma 4 translation (`llm/`), the glossary matcher (`glossary.ts`) and what a session wraps around its translator (`translators.ts`: glossary, per-line fallback), demo engines (e2e builds only) |
-| `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
+| `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues (live ones by wall clock, lookahead ones by `video.currentTime`: `mediacues.ts`) |
+| `src/lookahead/`, `src/entrypoints/tee.ts`, `tee-relay.ts`, `src/background/lookahead.ts` | Subtitles ahead of time (beta): page tee and relay (registered per site), demuxers, WebCodecs decode, PCM store, scheduler and runner, progressive MP4 by range. Design in [src/lookahead/README.md](src/lookahead/README.md) |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
 | `src/models/` | Downloadable models: catalog per profile and device, download manager (runs in the SW), Cache API store (`store.ts`) and the reader model workers use (`hub.ts`) |
@@ -311,7 +325,10 @@ Headless tests can't check these, so ask a human after related changes:
 - fullscreen placement (container fullscreen; a top-layer popover for `<video>` fullscreen, a
   fullscreen frame from another site and a web-component player);
 - real players on real sites, including moving clear of their controls (listed players in
-  `src/overlay/sites.ts` are measured; others use pointer activity and pause).
+  `src/overlay/sites.ts` are measured; others use pointer activity and pause);
+- lookahead on real sites (YouTube signed in: 10+ minutes, seeks outside the buffer, ads, quality
+  changes; other players the person uses), and that their players never stall or error with it.
+  Automated fresh profiles can't play YouTube for more than about a minute.
 
 ## License
 
