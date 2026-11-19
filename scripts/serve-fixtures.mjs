@@ -13,23 +13,66 @@
  * embed a frame from "another site" (frames.html).
  *
  * `/hf/<repo>/resolve/<revision>/<path>` stands in for Hugging Face in e2e builds (MODEL_HOST in
- * src/models/hub.ts): any file listed in src/engines/whisper/files.json, at its real size, filled
- * with a fixed pattern, with Range support, at `FIXTURE_HF_MBPS` MB/s (default 40) so downloads
- * take long enough to watch and cancel.
+ * src/models/hub.ts): any file listed in an engine's files.json (src/engines/{whisper,qwen3asr}),
+ * at its real size, filled with a fixed pattern, with Range support, at `FIXTURE_HF_MBPS` MB/s
+ * (default 40) so downloads take long enough to watch and cancel. Files of the `murmur` group
+ * (Murmur's own, whose repo isn't published yet) are served under any repo.
+ *
+ * `FIXTURE_HF_DIR=<dir>` serves real model files instead, unthrottled, where it has them: from
+ * `<dir>/<repo>/<path>`, else `<dir>/<path>`. With a build that downloads from here
+ * (`WXT_MODEL_HOST=http://127.0.0.1:4392/hf pnpm build:e2e`), real models load in a real Chrome
+ * before they are published.
  */
+import { createReadStream, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 
 const port = Number(process.env.FIXTURE_PORT ?? 4392);
 const hfSpeed = Number(process.env.FIXTURE_HF_MBPS ?? 40) * 1e6;
+const hfDir = process.env.FIXTURE_HF_DIR ? path.resolve(process.env.FIXTURE_HF_DIR) : null;
+const readJson = async (file) =>
+  JSON.parse(await readFile(new URL(`../src/engines/${file}`, import.meta.url), 'utf8'));
+/** `<repo>/<path>` → bytes; `murmur` group files by path alone (any repo). */
 const modelFiles = new Map();
-for (const entry of Object.values(
-  JSON.parse(await readFile(new URL('../src/engines/whisper/files.json', import.meta.url), 'utf8')),
-)) {
+const anyRepoFiles = new Map();
+for (const entry of Object.values(await readJson('whisper/files.json'))) {
   for (const [file, bytes] of [...entry.shared, ...(entry.webgpu ?? []), ...(entry.wasm ?? [])]) {
     modelFiles.set(`${entry.repo}/${file}`, bytes);
   }
+}
+const qwen = await readJson('qwen3asr/files.json');
+for (const [file, bytes] of qwen.upstream.files)
+  modelFiles.set(`${qwen.upstream.repo}/${file}`, bytes);
+for (const [file, bytes] of qwen.murmur.files) anyRepoFiles.set(file, bytes);
+
+/** A real file for `<repo>/<path>` under FIXTURE_HF_DIR, or null. */
+function localModelFile(repo, file) {
+  if (!hfDir) return null;
+  for (const candidate of [path.join(hfDir, repo, file), path.join(hfDir, file)]) {
+    if (!candidate.startsWith(hfDir + path.sep)) continue;
+    try {
+      const stat = statSync(candidate);
+      if (stat.isFile()) return { file: candidate, size: stat.size };
+    } catch {}
+  }
+  return null;
+}
+
+/** Streams bytes [start, end] of a real model file. */
+function serveLocalFile(req, res, { file, size }) {
+  const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '');
+  const start = range ? Number(range[1]) : 0;
+  const end = range?.[2] ? Math.min(size - 1, Number(range[2])) : size - 1;
+  res.writeHead(range ? 206 : 200, {
+    'content-type': 'application/octet-stream',
+    'content-length': String(end - start + 1),
+    ...(range && { 'content-range': `bytes ${start}-${end}/${size}` }),
+    'accept-ranges': 'bytes',
+    'access-control-allow-origin': '*',
+    'cache-control': 'no-store',
+  });
+  createReadStream(file, { start, end }).pipe(res);
 }
 
 /** Streams bytes [start, end] of a stand-in model file, throttled. */
@@ -75,7 +118,13 @@ const server = createServer(async (req, res) => {
   }
   const hf = /^\/hf\/([^/]+\/[^/]+)\/resolve\/[^/]+\/(.+)$/.exec(url.pathname);
   if (hf) {
-    const size = modelFiles.get(`${hf[1]}/${decodeURIComponent(hf[2])}`);
+    const file = decodeURIComponent(hf[2]);
+    const local = localModelFile(hf[1], file);
+    if (local) {
+      serveLocalFile(req, res, local);
+      return;
+    }
+    const size = modelFiles.get(`${hf[1]}/${file}`) ?? anyRepoFiles.get(file);
     if (size === undefined) {
       res.writeHead(404, { 'access-control-allow-origin': '*' });
       res.end('not found');
