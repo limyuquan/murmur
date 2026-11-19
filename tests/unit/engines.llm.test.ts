@@ -273,6 +273,22 @@ describe('LLM translation engine', () => {
     ]);
   });
 
+  it('gives the model number words as digits, and the line itself to the checks', async () => {
+    worker.answers = ['At 85 points, it was 15th place'];
+    const chunks = await collect(
+      engine.translate(
+        request('팔십오 점으로 십오 위', {
+          source: { kind: 'text', text: '팔십오 점으로 십오 위', language: 'ko' },
+          context: [{ source: '백오십 명이 왔어', translation: '150 people came', language: 'ko' }],
+        }),
+      ),
+    );
+    expect(chunks.at(-1)).toEqual({ text: 'At 85 points, it was 15th place', final: true });
+    expect(worker.generations[0]?.user).toBe(
+      'CONTEXT (earlier lines, already translated; do not translate again):\n[ko] 150 명이 왔어 => 150 people came\nCURRENT (Korean, auto-detected): 85 점으로 15 위',
+    );
+  });
+
   it('rejects an answer that repeats the context', async () => {
     worker.answers = ['Hello, everyone'];
     const stream = engine.translate(

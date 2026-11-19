@@ -7,7 +7,8 @@
  *   (`sourceFinal: false`) and stops a preview that is running.
  * - Each line's prompt (prompt.ts) has its language as the speech engine heard it, the earlier
  *   lines it was given with their languages, the glossary entries it needs and the session's
- *   languages. Every line is translated, whatever its language.
+ *   languages. Every line is translated, whatever its language. Number words in the lines are
+ *   given as digits (numbers.ts); the subtitle keeps what was said.
  * - The answer streams: a growing draft (`final: false`) as tokens come, then the cleaned final
  *   one. An answer that repeats an earlier line or runs away is rejected with `LlmOutputError`,
  *   so the session can have another translator do that line (translators.ts).
@@ -25,6 +26,7 @@ import type {
 } from '../types';
 import { LLM_SOURCES, type LlmEngineId, llmModelId, modelFile } from './info';
 import type { FromWorker, GenerationStats, ToWorker } from './messages';
+import { numeralsToDigits } from './numbers';
 import { checkOutput, cleanOutput } from './output';
 import {
   buildPrompt,
@@ -252,12 +254,13 @@ export class LlmTranslationEngine implements TranslationEngine {
     }
     const maxTokens = maxOutputTokens(text);
     const language: LanguageTag | null = request.source.language;
+    // Number words as digits for the model, which copies digits but misreads number words.
     const prompt = fitPrompt(
       {
-        text,
+        text: numeralsToDigits(text),
         sourceLanguage: language,
         targetLanguage: request.target,
-        context: request.context,
+        context: request.context.map((c) => ({ ...c, source: numeralsToDigits(c.source) })),
         glossary: request.glossary ?? [],
         spokenLanguages: this.session?.spokenLanguages ?? [],
         ...(request.source.mixed ? { mixed: request.source.mixed } : {}),
