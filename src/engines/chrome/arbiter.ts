@@ -17,6 +17,8 @@
  *   output: Korean written for Japanese speech ("소토가와가" for 外側が) still reads as Korean 1.00.
  * - Japanese is counted in morae (kanji ≈ 2, katakana discounted): a Japanese recognizer hearing
  *   Korean writes katakana strings ("メキシコアリペラスポ"); real Japanese is mostly kanji and kana.
+ * - Korean has final consonants (받침) on 35–50% of syllables; Korean written for Japanese speech
+ *   has almost none (Japanese syllables are open: "음모와 소토가와가 그리 이로데" 1 in 17).
  * - Continuity: people mostly keep to one language, so the previous line's language gets a small
  *   edge when two recognizers are close.
  */
@@ -53,7 +55,7 @@ const FULL_ACTIVITY = 3;
 /** Below this score nobody heard words (music, noise). */
 export const MIN_SCORE = 0.12;
 /** Edge for the previous line's language. */
-const CONTINUITY = 1.12;
+const CONTINUITY = 1.05;
 
 /**
  * Recognizers' text tidied for subtitles: the Japanese and Chinese recognizers put spaces between
@@ -68,6 +70,34 @@ export function cleanTranscript(text: string, language: string): string {
     /(?<=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー、。])\s+|\s+(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー、。])/gu,
     '',
   );
+}
+
+/** Share of Hangul syllables with a final consonant (받침), and how many syllables there are. */
+export function finalConsonantShare(text: string): { share: number; syllables: number } {
+  let syllables = 0;
+  let closed = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0xac00 || code > 0xd7a3) continue;
+    syllables++;
+    if ((code - 0xac00) % 28 !== 0) closed++;
+  }
+  return { share: syllables ? closed / syllables : 0, syllables };
+}
+
+/**
+ * How much a Korean line looks like Korean rather than another language's sounds written in
+ * Hangul: 1 from 30% closed syllables, down to 0.3 at 16% or fewer. Short lines aren't judged.
+ */
+export function koreanShape(text: string): number {
+  const { share, syllables } = finalConsonantShare(text);
+  if (syllables < 6) return 1;
+  return Math.min(1, Math.max(0.3, (share - 0.1) / 0.2));
+}
+
+/** Whether `language` is written with spaces between words. */
+export function spacedScript(language: string): boolean {
+  return !['ja', 'zh', 'th', 'lo', 'km', 'my'].includes(primaryLanguage(language));
 }
 
 /**
@@ -129,6 +159,7 @@ export function scoreCandidate(c: Candidate, speechMs: number, previous?: string
   const activity = Math.min(1, c.updates / seconds / FULL_ACTIVITY);
   const script = scriptShare(c.text, c.language);
   let score = (0.55 * Math.min(1, coverage) + 0.45 * activity) * script;
+  if (p === 'ko') score *= koreanShape(c.text);
   if (c.detected && c.detected.language !== 'und') {
     const agrees = primaryLanguage(c.detected.language) === p;
     if (agrees) score *= 1 + 0.15 * c.detected.confidence;
@@ -155,28 +186,55 @@ export function pickCandidate(
 
 /**
  * Where the not-yet-used text starts in `current`, a recognizer result whose start (`given`) was
- * already used for an earlier segment. Recognizers keep revising a result, so the match ignores
- * case, spaces and punctuation; when the old start was rewritten altogether (a wrong-language
- * guess the recognizer later replaced with the real words) the whole result is unused; and a
- * cut inside a word moves past it (its start was shown with the earlier line).
+ * already used for an earlier segment. Recognizers keep revising a result, so the end of `given`
+ * is found by edit distance on letters and digits (case, spaces and punctuation ignored); when
+ * the old start was rewritten altogether (a wrong-language guess the recognizer later replaced
+ * with the real words) the whole result is unused; and in `spaced` scripts a cut inside a word
+ * moves past it (its start was shown with the earlier line). Japanese, Chinese and Thai interims
+ * have no spaces to find a word's end by.
  */
-export function unusedFrom(current: string, given: string): number {
-  const key = (ch: string) => (/[\p{L}\p{N}]/u.test(ch) ? ch.toLowerCase() : '');
-  const want = [...given].map(key).filter(Boolean);
+export function unusedFrom(current: string, given: string, spaced = true): number {
+  const isWord = (ch: string) => /[\p{L}\p{N}]/u.test(ch);
+  const want = [...given].filter(isWord).map((ch) => ch.toLowerCase());
   if (want.length === 0) return 0;
   const chars = [...current];
-  let matched = 0;
-  let pos = 0;
-  for (; pos < chars.length && matched < want.length; pos++) {
-    const k = key(chars[pos] as string);
-    if (!k) continue;
-    if (k !== want[matched]) break;
-    matched++;
+  // Positions of the letters and digits in `current`.
+  const at: number[] = [];
+  const have: string[] = [];
+  chars.forEach((ch, i) => {
+    if (isWord(ch)) {
+      at.push(i);
+      have.push(ch.toLowerCase());
+    }
+  });
+  // Edit distance of `want` against every prefix of `have`; keep the best prefix.
+  const n = want.length;
+  let prev = Array.from({ length: n + 1 }, (_, k) => k);
+  let best = { cost: n, prefix: 0 };
+  for (let j = 1; j <= have.length; j++) {
+    const row = [j];
+    for (let k = 1; k <= n; k++) {
+      const same = want[k - 1] === have[j - 1] ? 0 : 1;
+      row[k] = Math.min(
+        (prev[k] as number) + 1,
+        (row[k - 1] as number) + 1,
+        (prev[k - 1] as number) + same,
+      );
+    }
+    prev = row;
+    const cost = row[n] as number;
+    if (cost < best.cost) best = { cost, prefix: j };
+    if (j > n * 2 + 8) break;
   }
-  if (matched < want.length * 0.5) return 0;
+  if (best.prefix === 0 || best.cost > n * 0.4) return 0;
+  let pos = (at[best.prefix - 1] as number) + 1;
   // Past the rest of a word cut in the middle.
-  while (pos < chars.length && /[\p{L}\p{N}]/u.test(chars[pos] as string)) {
-    if (pos > 0 && !/[\p{L}\p{N}]/u.test(chars[pos - 1] as string)) break;
+  while (
+    spaced &&
+    pos < chars.length &&
+    isWord(chars[pos] as string) &&
+    isWord(chars[pos - 1] as string)
+  ) {
     pos++;
   }
   return chars.slice(0, pos).join('').length;
@@ -198,17 +256,24 @@ export function textSpan(history: readonly { sample: number; length: number }[])
   return from === undefined || to === undefined ? null : { from, to };
 }
 
-/** Score a second language needs in the same segment to be kept as its own line. */
-export const SWITCH_SCORE = 0.4;
-
 /**
- * Whether `other` is a second language spoken in the same segment (a switch inside it) rather
- * than a wrong recognizer echoing the winner's speech: its text must have been written at a
- * different time from the winner's, mostly after or before it.
+ * Whether `other` is a second language spoken in the same segment (a switch inside it that the
+ * segmenter couldn't cut) rather than a wrong recognizer's take on the winner's speech:
+ * - its text was written at another time than the winner's (mostly before or after it);
+ * - together the two lines don't claim more speech than there was (a wrong recognizer writes
+ *   over the same speech, so the coverages add up past the segment);
+ * - it is substantial in its own script.
  */
-export function isSwitch(winner: Span | null, other: Span | null, otherScore: number): boolean {
-  if (!winner || !other || otherScore < SWITCH_SCORE) return false;
-  const overlap = Math.min(winner.to, other.to) - Math.max(winner.from, other.from);
-  const shorter = Math.max(1, Math.min(winner.to - winner.from, other.to - other.from));
+export function isSwitch(
+  winner: { coverage: number; span: Span | null },
+  other: { coverage: number; script: number; updates: number; span: Span | null },
+): boolean {
+  const a = winner.span;
+  const b = other.span;
+  if (!a || !b) return false;
+  if (other.coverage < 0.2 || other.script < 0.8 || other.updates < 4) return false;
+  if (Math.min(1, winner.coverage) + other.coverage > 1.15) return false;
+  const overlap = Math.min(a.to, b.to) - Math.max(a.from, b.from);
+  const shorter = Math.max(1, Math.min(a.to - a.from, b.to - b.from));
   return overlap / shorter < 0.3;
 }

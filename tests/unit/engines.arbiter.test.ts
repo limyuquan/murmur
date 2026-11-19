@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import {
   type Candidate,
   cleanTranscript,
+  finalConsonantShare,
   isSwitch,
+  koreanShape,
   pickCandidate,
   scriptShare,
   speechUnits,
@@ -42,9 +44,9 @@ describe('pickCandidate', () => {
       c('zh-CN', '哇哇', 5),
       c('en-US', '', 0),
     ];
-    // Counted in morae, the Japanese line covers the speech; with the previous line Japanese the
-    // continuity edge settles it.
-    expect(pickCandidate(candidates, 4000, 'ja-JP').winner?.language).toBe('ja-JP');
+    // The Korean line has almost no final consonants: Japanese sounds written in Hangul.
+    expect(pickCandidate(candidates, 4000).winner?.language).toBe('ja-JP');
+    expect(pickCandidate(candidates, 4000, 'ko-KR').winner?.language).toBe('ja-JP');
   });
 
   it('prefers kanji-dense Japanese over katakana guesses of Korean speech', () => {
@@ -72,6 +74,18 @@ describe('pickCandidate', () => {
     const zh = { ...c('zh-CN', '西部', 4), detected: { language: 'ja', confidence: 0.9 } };
     const ko = c('ko-KR', '15위로 끝마쳤습니다', 7);
     expect(pickCandidate([zh, ko], 1560).winner?.language).toBe('ko-KR');
+  });
+});
+
+describe('koreanShape', () => {
+  it('tells Korean from Japanese sounds written in Hangul', () => {
+    expect(koreanShape('자신의 의견이 아닌 정부의 의견을 듣고 싶을 수도 있지만')).toBe(1);
+    expect(koreanShape('대형 텔레비전 스크린 여러대가 곳곳에 설치되어')).toBe(1);
+    expect(koreanShape('음모와 소토가와가 그리 이로데 지가와가')).toBe(0.3);
+    expect(koreanShape('수리 샤무노 아시니 바자')).toBe(0.3);
+    // Too short to judge.
+    expect(koreanShape('네 그래요')).toBe(1);
+    expect(finalConsonantShare('끝마쳤습니다')).toEqual({ share: 0.5, syllables: 6 });
   });
 });
 
@@ -110,9 +124,25 @@ describe('unusedFrom (cutting a recognizer result between segments)', () => {
     expect('it Warns, no one'.slice(unusedFrom('it Warns, no one', 'It warns'))).toBe(', no one');
   });
 
+  it('finds the cut when the recognizer revised a word before it', () => {
+    const used = 'Thousands of years ago a man called aristarchist said';
+    const now = 'Thousands of years ago a man called Aristarchus said that the solar system moved';
+    expect(now.slice(unusedFrom(now, used))).toBe(' that the solar system moved');
+  });
+
   it('gives the whole result to the new segment when its start was rewritten', () => {
     // A wrong-language guess ("Iran") the recognizer replaced once real English started.
     expect(unusedFrom('It warns no one can guarantee', 'Iran')).toBe(0);
+  });
+
+  it('cuts Japanese interims, which have no spaces, at the used characters', () => {
+    const used = '全国から集まった有名な歌手たちが';
+    const now = '全国から集まった有名な歌手たちがシュリーシャムの足元に';
+    expect(now.slice(unusedFrom(now, used, false))).toBe('シュリーシャムの足元に');
+    // Spaced in the final, unspaced in the interim: still lines up.
+    expect(now.slice(unusedFrom(now, '全国 から 集まっ た', false))).toBe(
+      '有名な歌手たちがシュリーシャムの足元に',
+    );
   });
 
   it('handles nothing used', () => {
@@ -121,20 +151,30 @@ describe('unusedFrom (cutting a recognizer result between segments)', () => {
 });
 
 describe('isSwitch (a second language inside one segment)', () => {
-  it('needs the second text to be written at another time', () => {
-    const history = (from: number, to: number) => [
-      { sample: from, length: 2 },
-      { sample: (from + to) / 2, length: 10 },
-      { sample: to, length: 20 },
-    ];
-    const en = textSpan(history(16_000, 160_000));
-    const ko = textSpan(history(176_000, 290_000));
-    const echo = textSpan(history(20_000, 150_000));
-    expect(isSwitch(en, ko, 0.61)).toBe(true);
-    // Written alongside the winner: a wrong recognizer echoing the same speech.
-    expect(isSwitch(en, echo, 0.61)).toBe(false);
-    // Too weak to keep.
-    expect(isSwitch(en, ko, 0.2)).toBe(false);
+  const history = (from: number, to: number) => [
+    { sample: from, length: 2 },
+    { sample: (from + to) / 2, length: 10 },
+    { sample: to, length: 20 },
+  ];
+  const line = (coverage: number, from: number, to: number) => ({
+    coverage,
+    script: 1,
+    updates: 20,
+    span: textSpan(history(from, to)),
+  });
+
+  it('keeps a language that followed the winner within the segment', () => {
+    // Measured: English then Korean with a 0.48 s pause (coverages 0.65 and 0.43).
+    expect(isSwitch(line(0.65, 16_000, 160_000), line(0.43, 176_000, 290_000))).toBe(true);
+  });
+
+  it('rejects a wrong recognizer writing over the same speech', () => {
+    // Written alongside the winner.
+    expect(isSwitch(line(0.65, 16_000, 160_000), line(0.3, 20_000, 150_000))).toBe(false);
+    // At another time, but the two lines would claim more speech than there was.
+    expect(isSwitch(line(0.9, 50_000, 100_000), line(0.42, 5_000, 40_000))).toBe(false);
+    // Too little of it.
+    expect(isSwitch(line(0.65, 16_000, 160_000), line(0.1, 176_000, 290_000))).toBe(false);
   });
 
   it('textSpan is null without text', () => {

@@ -45,6 +45,7 @@ import {
   pickCandidate,
   type Scored,
   type Span,
+  spacedScript,
   textSpan,
   unusedFrom,
 } from './arbiter';
@@ -177,7 +178,11 @@ class Listener {
     const parts: string[] = [];
     for (let i = this.cursor.index; i < this.results.length; i++) {
       const text = this.results[i]?.text ?? '';
-      parts.push(i === this.cursor.index ? text.slice(unusedFrom(text, this.cursor.used)) : text);
+      parts.push(
+        i === this.cursor.index
+          ? text.slice(unusedFrom(text, this.cursor.used, spacedScript(this.locale)))
+          : text,
+      );
     }
     return cleanTranscript(parts.join(' '), this.locale);
   }
@@ -464,15 +469,15 @@ function linesOf(
   scored: readonly Scored[],
   spans: Map<string, Span | null>,
 ): Scored[] {
-  const winnerSpan = spans.get(winner.language) ?? null;
+  const span = (c: Scored) => spans.get(c.language) ?? null;
   const second = scored.find(
     (c) =>
       c !== winner &&
       primaryLanguage(c.language) !== primaryLanguage(winner.language) &&
-      isSwitch(winnerSpan, spans.get(c.language) ?? null, c.score),
+      isSwitch({ ...winner, span: span(winner) }, { ...c, span: span(c) }),
   );
   if (!second) return [winner];
-  const from = (c: Scored) => spans.get(c.language)?.from ?? 0;
+  const from = (c: Scored) => span(c)?.from ?? 0;
   return [winner, second].sort((a, b) => from(a) - from(b));
 }
 
