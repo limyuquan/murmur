@@ -9,7 +9,7 @@
 // ONNX Runtime's WebAssembly build, emitted into the extension by Vite: never the CDN default.
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
-import { MODEL_CACHE, readFile } from '@/models/hub';
+import { MODEL_CACHE, readBytes } from '@/models/hub';
 import { looksLikeOutOfMemory } from '../errors';
 import { watchGpuDevices } from '../gpuwatch';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
@@ -102,9 +102,10 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
       message.model,
       async (path) => {
         const file = source.files.find((f) => f.path === path);
-        const res = file && (await readFile(cache, source, file));
-        if (!res) throw new Error(`${path} isn’t downloaded.`);
-        return new Uint8Array(await res.arrayBuffer());
+        // One buffer the size of the file (the 1.7B's decoder weights are 1.9 GB): `readBytes`.
+        const bytes = file && (await readBytes(cache, source, file));
+        if (!bytes) throw new Error(`${path} isn’t downloaded.`);
+        return bytes;
       },
       (fraction, file) => post({ type: 'progress', stage: 'compile', fraction, file }),
     ),

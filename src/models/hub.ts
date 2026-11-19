@@ -188,6 +188,24 @@ export async function readBlob(
   return body.size === file.bytes ? body : undefined;
 }
 
+/**
+ * `file`'s bytes in one buffer, when every part is on disk. Reads with `Blob.arrayBuffer()`,
+ * which fills one buffer of the file's size: reading a Response over the same Blob (`readFile`)
+ * gathers the stream's chunks and then copies them, about twice the file at its peak (measured in
+ * headless Chromium on a 1.5 GB file: 3.2 GB for the tab's process against 1.6 GB). For a
+ * runtime that wants the whole file in memory (ONNX Runtime's external data); LiteRT-LM reads
+ * its model from the Blob a slice at a time instead.
+ */
+export async function readBytes(
+  cache: Cache,
+  source: ModelSource,
+  file: ModelFile,
+  partBytes = PART_BYTES,
+): Promise<Uint8Array | undefined> {
+  const blob = await readBlob(cache, source, file, partBytes);
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+}
+
 /** `file` as one response, when every part is on disk. */
 export async function readFile(
   cache: Cache,

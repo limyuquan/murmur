@@ -17,6 +17,7 @@ import {
   partCount,
   partKey,
   pendingPartKey,
+  readBytes,
   verifiedKey,
 } from '@/models/hub';
 import { ModelManager } from '@/models/manager';
@@ -481,6 +482,20 @@ describe('modelFileCache', () => {
     } finally {
       Object.defineProperty(globalThis, 'caches', { value: original, configurable: true });
     }
+  });
+
+  it('reads a stored file of several parts into one buffer of its size, for ONNX Runtime', async () => {
+    const caches = new FakeCaches();
+    await store(caches).download(A, () => {}, new AbortController().signal);
+    const cache = await caches.open();
+    const file = SOURCE.files[1] as ModelSource['files'][number];
+    expect(partCount(file.bytes, PART)).toBe(3);
+    const read = await readBytes(cache, SOURCE, file, PART);
+    expect(read).toEqual(CONTENT.get('onnx/model.onnx'));
+    expect(read?.buffer.byteLength).toBe(25);
+    // A part missing: nothing.
+    await caches.cache.delete(partKey(cacheKey(SOURCE, file), 2));
+    expect(await readBytes(cache, SOURCE, file, PART)).toBeUndefined();
   });
 
   it('parses Hugging Face file URLs', () => {
