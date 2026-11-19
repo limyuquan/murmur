@@ -151,3 +151,49 @@ describe('SegmentSession probes', () => {
     ]);
   });
 });
+
+describe('SegmentSession.abort', () => {
+  it('drops queued finals and the open segment, sends nothing, and waits for the decode under way', async () => {
+    const { decoder, jobs, finish } = manualDecoder((job) => `text ${job.segmentId}`);
+    const results: AsrResult[] = [];
+    const s = new SegmentSession(
+      decoder,
+      {
+        sampleRate: S,
+        languageHint: null,
+        batch: true,
+        onResult: (r) => results.push(r),
+        onError: () => {},
+      },
+      {},
+    );
+    // Four finished 2 s segments queued (batch mode), and one open.
+    for (let i = 0; i < 4; i++) {
+      const id = `s${i}`;
+      s.startSegment(id, sec(2 * i));
+      s.pushAudio(id, new Float32Array(sec(2)), sec(2 * i));
+      s.endSegment(id, sec(2 * i + 2));
+    }
+    s.startSegment('open', sec(8));
+    s.pushAudio('open', new Float32Array(sec(1)), sec(8));
+    expect(jobs).toHaveLength(1);
+    let aborted = false;
+    const done = s.abort().then(() => {
+      aborted = true;
+    });
+    await Promise.resolve();
+    // The decode under way still runs to its end...
+    expect(aborted).toBe(false);
+    await finish();
+    await done;
+    // ...but nothing else is decoded, and nothing is sent.
+    expect(jobs).toHaveLength(1);
+    expect(results).toEqual([]);
+  });
+
+  it('resolves at once when nothing is under way', async () => {
+    const { decoder } = manualDecoder(() => '');
+    const { s } = session(decoder);
+    await s.abort();
+  });
+});

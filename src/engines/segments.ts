@@ -53,6 +53,8 @@ export class SegmentSession implements AsrSession {
   private readonly scheduler: DecodeScheduler;
   private readonly segments = new Map<string, Buffered>();
   private closed = false;
+  /** Aborted: nothing more is decoded or sent. */
+  private aborted = false;
   private idle: (() => void) | null = null;
   private reported: AsrHealth | null = null;
   /** Decode ms per audio ms of the last few finals. */
@@ -132,8 +134,26 @@ export class SegmentSession implements AsrSession {
 
   async close(): Promise<void> {
     this.closed = true;
-    if (!this.scheduler.busy && this.scheduler.backlogSamples() === 0) return;
-    await new Promise<void>((resolve) => {
+    await this.whenIdle();
+  }
+
+  /**
+   * Stops at once: queued finals and the open segment are dropped unsent (a seek, a dropped
+   * lookahead job), so the shared worker isn't kept busy with audio nobody will see. Resolves
+   * when the decode under way, if any, has returned.
+   */
+  async abort(): Promise<void> {
+    this.closed = true;
+    this.aborted = true;
+    this.scheduler.clear();
+    for (const id of this.segments.keys()) this.decoder.forget?.(id);
+    this.segments.clear();
+    await this.whenIdle();
+  }
+
+  private whenIdle(): Promise<void> {
+    if (!this.scheduler.busy && this.scheduler.backlogSamples() === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 5000);
       this.idle = () => {
         clearTimeout(timer);
@@ -143,6 +163,10 @@ export class SegmentSession implements AsrSession {
   }
 
   private pump(): void {
+    if (this.aborted) {
+      if (!this.scheduler.busy) this.idle?.();
+      return;
+    }
     const job = this.scheduler.next();
     this.report();
     if (!job) {
@@ -163,6 +187,7 @@ export class SegmentSession implements AsrSession {
     this.decoder
       .decode(job, samples)
       .then((out) => {
+        if (this.aborted) return;
         if (job.kind === 'probe') {
           seg.probing = null;
           seg.probe = { endSample: job.endSample, out, peak };
@@ -171,6 +196,7 @@ export class SegmentSession implements AsrSession {
         this.deliver(asFinal() ? { ...job, kind: 'final' } : job, seg, out, peak);
       })
       .catch((err: unknown) => {
+        if (this.aborted) return;
         if (job.kind === 'probe') seg.probing = null;
         if (asFinal() && !seg.finished) {
           this.finish(job.segmentId);

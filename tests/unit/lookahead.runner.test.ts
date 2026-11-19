@@ -34,7 +34,10 @@ async function flushAll(t: { runner: LookaheadRunner; advance(ms: number): void 
   }
 }
 
-function setup(translator: TranslationEngine = new PassthroughTranslationEngine()) {
+function setup(
+  translator: TranslationEngine = new PassthroughTranslationEngine(),
+  wrap: (p: Pipeline) => Pipeline = (p) => p,
+) {
   const pcm = new PcmTimeline();
   const cues = new Map<string, Cue>();
   const coverage: [number, number][][] = [];
@@ -43,17 +46,19 @@ function setup(translator: TranslationEngine = new PassthroughTranslationEngine(
   let now = 1_000_000;
   const runner = new LookaheadRunner({
     createPipeline: (media, hooks) =>
-      new Pipeline({
-        asr: new EchoAsrEngine(),
-        translator,
-        targetLanguage: 'en',
-        sourceLanguage: null,
-        media,
-        onCue: hooks.onCue,
-        onSegment: hooks.onSegment,
-        onError: hooks.onError,
-        untilShownMs: hooks.untilShownMs,
-      }),
+      wrap(
+        new Pipeline({
+          asr: new EchoAsrEngine(),
+          translator,
+          targetLanguage: 'en',
+          sourceLanguage: null,
+          media,
+          onCue: hooks.onCue,
+          onSegment: hooks.onSegment,
+          onError: hooks.onError,
+          untilShownMs: hooks.untilShownMs,
+        }),
+      ),
     pcm: (t) => (t === 'ms1' ? pcm : undefined),
     onCue: (cue) => cues.set(cue.id, cue),
     onCoverage: (_key, spans) => coverage.push(spans.map(([s, e]) => [s, e])),
@@ -188,5 +193,30 @@ describe('LookaheadRunner', () => {
     await flushAll(t);
     expect(t.cues.size).toBe(0);
     expect(t.runner.leadS).toBe(0);
+  });
+
+  it('hands back to live at once on a seek, while the dropped job is still stopping', async () => {
+    let release: () => void = () => {};
+    const stopping = new Promise<void>((r) => {
+      release = r;
+    });
+    const t = setup(undefined, (p) => {
+      const abort = p.abort.bind(p);
+      p.abort = async () => {
+        await stopping;
+        await abort();
+      };
+      return p;
+    });
+    t.pcm.write(0, audio());
+    t.runner.setTarget(t.target(0));
+    await flushAll(t);
+    expect(t.live).toEqual([true]);
+    // A seek past what is decoded: the job is dropped, its decode still under way.
+    t.runner.setTarget(t.target(40));
+    await settle();
+    expect(t.live).toEqual([true, false]);
+    release();
+    await flushAll(t, 5);
   });
 });

@@ -169,6 +169,12 @@ export class DecodeScheduler {
     this.running = null;
   }
 
+  /** Drops the open segment and every queued final (the running job, if any, still finishes). */
+  clear(): void {
+    this.open = null;
+    this.finals.length = 0;
+  }
+
   /** Audio heard but not decoded yet, in samples. */
   backlogSamples(): number {
     let n = 0;

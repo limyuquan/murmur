@@ -279,6 +279,11 @@ export interface AsrSession {
    */
   requestPartial?(segmentId: string, endSample: number): void;
   close(): Promise<void>;
+  /**
+   * Optional: stop at once, sending nothing more. Queued work and the open segment are dropped;
+   * resolves when the decode under way, if any, has returned. Without it, `close()` is used.
+   */
+  abort?(): Promise<void>;
 }
 
 export interface AsrEngine extends Engine<AsrEngineInfo> {

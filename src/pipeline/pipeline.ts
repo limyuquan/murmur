@@ -240,8 +240,11 @@ export class Pipeline {
     this.closing.abort();
     for (const s of this.segments.values()) s.preview?.abort();
     this.vadStage?.reset();
-    await this.vadStage?.drain();
-    await this.session.close();
+    await Promise.all([
+      this.vadStage?.drain(),
+      // Queued decodes are dropped, not run: nobody will see them.
+      this.session.abort ? this.session.abort() : this.session.close(),
+    ]);
   }
 
   /** Ends the open segment, waits for queued final translations, then closes the ASR session. */

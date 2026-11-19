@@ -202,8 +202,9 @@ export class LookaheadRunner {
     const target = this.target;
     const now = this.deps.now();
     if (!target || target.ad) {
-      await this.dropJob('no target or an ad');
+      // Live takes over now, not once the job's decode under way has returned.
       this.setLead(0);
+      await this.dropJob('no target or an ad');
       return;
     }
     const playhead = playheadAt(target.playhead, now);
@@ -214,6 +215,7 @@ export class LookaheadRunner {
     let job = this.job;
     if (job) this.progress(job, now);
     const work = nextWork(playhead, decoded, processed);
+    this.setLead(leadOf(playhead, processed));
     if (
       job &&
       (job.key !== target.key ||
@@ -223,7 +225,6 @@ export class LookaheadRunner {
       await this.dropJob('moved');
       job = null;
     }
-    this.setLead(leadOf(playhead, processed));
     if (!work || !pcm) return;
 
     if (!job) {
