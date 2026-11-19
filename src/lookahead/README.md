@@ -24,6 +24,17 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   `URL.createObjectURL`. Wrappers keep the built-in's name, length and `toString()`, call the
   original unconditionally, and never throw into the page. Only audio is copied (one `slice()`,
   transferred); `timestampOffset`, the append window and `mode` are read at each append.
+- MSE in a worker (Twitch: the element plays a `MediaSourceHandle`): on the sites marked
+  `workers` in `sites.ts` only, `worker.ts` makes `Worker` a Proxy whose `new` starts a classic
+  worker from a blob that installs the same tee (`installTee` is self-contained and goes in as its
+  own source text, with `kindOf`), then `importScripts` the original by absolute URL. The first
+  message hands it a private port (marked with a random token, never seen by the page's
+  handlers); its events go out with the page's. Module workers are left alone, as is every worker
+  after the page's CSP refused a blob worker (`securitypolicyviolation`) or when making one
+  throws. The worker's tee also reports each audio SourceBuffer's buffered ranges after every
+  update; the relay keeps them (`mediaSourceFor`) and the overlay finds the element's MediaSource
+  by matching its own `buffered` (the playhead inside counts most, then overlap, then the
+  latest). E2e builds let a fixture page ask for the worker tee (`?murmur-worker-tee`).
 - `relay.ts` (isolated world, same frames) takes the tee's events, keeps every SourceBuffer's
   latest init segment and the last `HOLD_BYTES` of appended audio while no session runs, and
   hands everything to the overlay when a session attaches (`globalThis.__murmurTee`). So turning
@@ -63,9 +74,10 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   before Chrome's translator does it instead (`lookaheadBudgetMs`, from the runner's
   `untilShownMs`; paused: the cap). Gemma takes finished lines by when they are due, so live
   lines (due in 3 s) and the lines nearest the playhead go first.
-- Processed spans and cues are kept per content key: a site's id for the video (YouTube's `v`),
-  else the timeline, so a video coming back in a new MediaSource after an ad isn't redone. Ads
-  (`.ad-showing`) are never subtitled ahead.
+- Processed spans and cues are kept per content key: a site's id for the video (YouTube's `v`,
+  Twitch's `/videos/<id>`, Bilibili's BV id and part), else the timeline, so a video coming back
+  in a new MediaSource after an ad isn't redone. Ads (YouTube's `.ad-showing`, Twitch's ad label)
+  are never subtitled ahead.
 
 ## Showing cues (overlay)
 
@@ -89,9 +101,12 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
 
 ## Limits and extension points
 
-- MSE in a worker (Twitch: `MediaSourceHandle`) needs the tee installed inside the worker:
-  `installTee(global, …)` takes the global for that; wrapping `Worker` is not done yet.
-- Bilibili, Twitch: add to `sites.ts` (content key, ads).
+- Live streams are never subtitled ahead: a video whose duration is infinite, or a page the site
+  entry calls live (a Twitch channel), gets no timeline, and the live path handles it.
+- Sites (`sites.ts`): YouTube, Twitch (VODs; MSE in a worker; ads by the player's ad label),
+  Bilibili (DASH, AAC in fMP4, main thread). Others use the MediaSource as the key.
+- A worker started from a blob sees a `blob:` `location`: a player whose worker script uses
+  relative URLs would break, which is why the worker tee is per site.
 - Players that create their MediaSource before the page scripts are registered (lookahead turned
   on mid-video) need a page reload; the popup says so.
 - Encrypted media (CENC, WebM encryption) is detected and skipped.

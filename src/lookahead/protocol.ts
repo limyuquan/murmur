@@ -32,7 +32,13 @@ export type TeeEvent =
   | { t: 'remove'; sb: string; start: number; end: number }
   | { t: 'abort'; sb: string }
   | { t: 'ctype'; sb: string; mime: string; kind: TrackKind }
-  | { t: 'sbrm'; sb: string };
+  | { t: 'sbrm'; sb: string }
+  /**
+   * An audio SourceBuffer's buffered ranges after an update, from a worker's tee only: the
+   * element plays a `MediaSourceHandle`, so its MediaSource is found by matching these with the
+   * element's own buffered ranges (the relay keeps them; not sent on).
+   */
+  | { t: 'buffered'; sb: string; ranges: [number, number][] };
 
 /** From the relay to the tee. */
 export type TeeControl =
@@ -41,7 +47,7 @@ export type TeeControl =
 
 /** A TeeEvent on the way to the offscreen document. */
 export type TeeWire =
-  | Exclude<TeeEvent, { t: 'append' }>
+  | Exclude<TeeEvent, { t: 'append' | 'buffered' }>
   | {
       t: 'append';
       sb: string;
@@ -79,6 +85,11 @@ export interface TeeRelayApi {
   attach(sink: (wire: TeeWire) => void): () => void;
   /** The MediaSource an element plays, from its blob URL. */
   mediaSourceOf(url: string): string | null;
+  /**
+   * The MediaSource in a worker an element plays (`srcObject` is a `MediaSourceHandle`): the one
+   * whose audio is buffered where the element's is (`buffered`), around `time`. Null: none seen.
+   */
+  mediaSourceFor(buffered: readonly (readonly [number, number])[], time: number): string | null;
   /** Reads bytes of a URL with the page's access (progressive sources on the page's origin). */
   fetchRange(
     url: string,
@@ -134,6 +145,13 @@ export function isTeeEvent(m: unknown): m is TeeEvent {
     case 'abort':
     case 'sbrm':
       return isId(e.sb);
+    case 'buffered':
+      return (
+        isId(e.sb) &&
+        Array.isArray(e.ranges) &&
+        e.ranges.length <= 32 &&
+        e.ranges.every((r) => Array.isArray(r) && r.length === 2 && isNum(r[0]) && isNum(r[1]))
+      );
     default:
       return false;
   }
@@ -154,6 +172,7 @@ export function isTeeWire(m: unknown): m is TeeWire {
     );
   }
   if (e.t === 'fetched') return isNum(e.id);
+  if (e.t === 'buffered') return false;
   return isTeeEvent(m);
 }
 

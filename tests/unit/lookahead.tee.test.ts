@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fromBase64 } from '@/lookahead/bytes';
+import { kindOf } from '@/lookahead/kind';
 import type { TeeEvent, TeeWire } from '@/lookahead/protocol';
 import { initSegmentOf, Relay } from '@/lookahead/relay';
 import { installTee, type TeeGlobal } from '@/lookahead/tee';
@@ -53,7 +54,7 @@ describe('installTee', () => {
   it('wraps methods so they look like the originals', () => {
     const { G, MediaSource } = fakeGlobal();
     const original = MediaSource.prototype.addSourceBuffer;
-    installTee(G, { send: () => {}, idPrefix: 'p-' });
+    installTee(G, { send: () => {}, idPrefix: 'p-', kindOf });
     const wrapped = MediaSource.prototype.addSourceBuffer;
     expect(wrapped).not.toBe(original);
     expect(wrapped.name).toBe('addSourceBuffer');
@@ -65,7 +66,7 @@ describe('installTee', () => {
   it('copies audio appends with their timing, and only counts video', () => {
     const { G, MediaSource, calls } = fakeGlobal();
     const events: TeeEvent[] = [];
-    const tee = installTee(G, { send: (e) => events.push(e), idPrefix: 'p-' });
+    const tee = installTee(G, { send: (e) => events.push(e), idPrefix: 'p-', kindOf });
     const ms = new MediaSource();
     expect((G.URL as { createObjectURL(o: unknown): string }).createObjectURL(ms)).toBe('blob:x/1');
     const audio = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
@@ -114,6 +115,7 @@ describe('installTee', () => {
         throw new Error('broken relay');
       },
       idPrefix: 'p-',
+      kindOf,
     });
     const ms = new MediaSource();
     const sb = ms.addSourceBuffer('audio/mp4');
@@ -124,7 +126,7 @@ describe('installTee', () => {
   it('passes straight through once switched off', () => {
     const { G, MediaSource } = fakeGlobal();
     const events: TeeEvent[] = [];
-    const tee = installTee(G, { send: (e) => events.push(e), idPrefix: 'p-' });
+    const tee = installTee(G, { send: (e) => events.push(e), idPrefix: 'p-', kindOf });
     tee.off();
     const sb = new MediaSource().addSourceBuffer('audio/mp4');
     sb.appendBuffer(new Uint8Array(2));

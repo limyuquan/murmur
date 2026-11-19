@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lookahead: MSE in a worker</title>
+    <style>body { margin: 0; } video { display: block; width: 640px; height: 360px; background: #000; }</style>
+  </head>
+  <body>
+    <video id="player" muted playsinline></video>
+    <script src="lookahead-common.js"></script>
+    <script>
+      // Open with ?murmur-worker-tee: e2e builds then put the tee in this page's workers.
+      const worker = new Worker('lookahead-worker.js');
+      window.playerWorker = worker;
+      worker.onmessage = (e) => {
+        if (e.data.type === 'handle') {
+          video.srcObject = e.data.handle;
+          video.play().catch(() => {});
+        } else if (e.data.type === 'error') {
+          playback.errors.push(`worker:${e.data.message}`);
+        }
+      };
+      worker.onerror = (e) => playback.errors.push(`worker:${e.message}`);
+      worker.postMessage({ type: 'start', base: new URL('lookahead/dash-webm/', location.href).href });
+    </script>
+  </body>
+</html>

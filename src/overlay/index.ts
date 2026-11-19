@@ -64,11 +64,13 @@ export function startOverlay(): void {
       ? {
           timelineOf: (video: HTMLVideoElement) =>
             videoTimeline(
-              video.currentSrc || video.src,
-              (url) => relay.mediaSourceOf(url),
+              video,
+              {
+                byUrl: (url) => relay.mediaSourceOf(url),
+                byBuffered: (ranges, time) => relay.mediaSourceFor(ranges, time),
+              },
               lookaheadSite,
               location,
-              video,
             ),
           onPlayhead: (report: import('@/lookahead/protocol').PlayheadReport) =>
             post({ type: 'playhead', report }),

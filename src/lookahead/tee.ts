@@ -15,16 +15,28 @@
  *   left alone.
  * - The kill switch (`off()`) makes every wrapper a plain pass-through.
  *
- * Players that run MSE in a worker (MediaSourceHandle) need the same tee inside the worker: this
- * function takes the global to install on, so a worker wrapper can call it there (not done yet).
+ * Players that run MSE in a dedicated worker (Twitch: the element plays a `MediaSourceHandle`)
+ * get the same tee inside each worker, on the sites that need it only (`workerTeeHost`): the
+ * page's `Worker` is wrapped so a classic worker starts from a blob that installs the tee and
+ * then `importScripts` the original (worker.ts). `installTee` is written to run there from its
+ * own source text: everything it uses is inside it or passed in.
  */
 import { kindOf, type TrackKind } from './kind';
 import { TEE_MESSAGE, type TeeEvent } from './protocol';
+import { workerTeeHost } from './sites';
+import { wrapWorkers } from './worker';
 
 export interface TeeOptions {
   send(event: TeeEvent, transfer: ArrayBuffer[]): void;
   /** Prefix for MediaSource and SourceBuffer ids (unique per document). */
   idPrefix: string;
+  /** What a SourceBuffer carries, from its MIME type (kind.ts; self-contained too). */
+  kindOf(mime: string): TrackKind;
+  /**
+   * Report each audio SourceBuffer's buffered ranges after every update (`buffered` events): in a
+   * worker, where the element's MediaSource is found by matching them.
+   */
+  reportBuffered?: boolean;
 }
 
 export interface TeeHandle {
@@ -41,49 +53,56 @@ export interface TeeGlobal {
   performance?: { now(): number };
 }
 
-type Method = (this: unknown, ...args: unknown[]) => unknown;
-
 /**
- * Replaces `target[name]` with `hook`, which gets the original. The replacement looks like the
- * built-in: same name and length, no prototype, and `toString()` gives the original's source.
+ * Installs the tee on `G`. Self-contained (a worker runs it from its source text): no reference to
+ * anything outside the function but its arguments and built-ins.
  */
-export function wrapMethod(
-  target: object,
-  name: string,
-  hook: (original: Method) => (self: unknown, args: unknown[]) => unknown,
-): boolean {
-  const descriptor = Object.getOwnPropertyDescriptor(target, name);
-  const original = descriptor?.value as Method | undefined;
-  if (typeof original !== 'function') return false;
-  const body = hook(original);
-  const wrapper = {
-    [name](this: unknown, ...args: unknown[]): unknown {
-      return body(this, args);
-    },
-  }[name] as Method;
-  Object.defineProperty(wrapper, 'length', { value: original.length });
-  const source = Function.prototype.toString.call(original);
-  Object.defineProperty(wrapper, 'toString', {
-    value: {
-      toString(): string {
-        return source;
-      },
-    }.toString,
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(target, name, { ...descriptor, value: wrapper });
-  return true;
-}
-
-function bytesOf(data: unknown): Uint8Array | null {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  if (ArrayBuffer.isView(data))
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  return null;
-}
-
 export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
+  type Method = (this: unknown, ...args: unknown[]) => unknown;
+  /**
+   * Replaces `target[name]` with `hook`, which gets the original. The replacement looks like the
+   * built-in: same name and length, no prototype, and `toString()` gives the original's source.
+   */
+  const wrapMethod = (
+    target: object,
+    name: string,
+    hook: (original: Method) => (self: unknown, args: unknown[]) => unknown,
+  ): boolean => {
+    const descriptor = Object.getOwnPropertyDescriptor(target, name);
+    const original = descriptor?.value as Method | undefined;
+    if (typeof original !== 'function') return false;
+    const body = hook(original);
+    const wrapper = {
+      [name](this: unknown, ...args: unknown[]): unknown {
+        return body(this, args);
+      },
+    }[name] as Method;
+    Object.defineProperty(wrapper, 'length', { value: original.length });
+    const source = Function.prototype.toString.call(original);
+    Object.defineProperty(wrapper, 'toString', {
+      value: {
+        toString(): string {
+          return source;
+        },
+      }.toString,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(target, name, { ...descriptor, value: wrapper });
+    return true;
+  };
+  const bytesOf = (data: unknown): Uint8Array | null => {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data))
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    return null;
+  };
+  const rangesOf = (ranges: TimeRanges): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let i = 0; i < ranges.length && i < 32; i++) out.push([ranges.start(i), ranges.end(i)]);
+    return out;
+  };
+  const kindOf = options.kindOf;
   const stats = { appends: 0, copiedBytes: 0, skippedBytes: 0, hookMs: 0 };
   let killed = false;
   const handle: TeeHandle = {
@@ -105,7 +124,7 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
   };
 
   const sourceIds = new WeakMap<object, string>();
-  const buffers = new WeakMap<object, { id: string; kind: TrackKind }>();
+  const buffers = new WeakMap<object, { id: string; kind: ReturnType<typeof kindOf> }>();
   let seq = 0;
   const sourceId = (ms: object): string => {
     let id = sourceIds.get(ms);
@@ -123,8 +142,18 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
         const mime = String(args[0]);
         const id = `${options.idPrefix}s${++seq}`;
         const kind = kindOf(mime);
-        buffers.set(sb as object, { id, kind });
+        const info = { id, kind };
+        buffers.set(sb as object, info);
         send({ t: 'sb', sb: id, ms: sourceId(self as object), mime: mime.slice(0, 256), kind });
+        if (options.reportBuffered) {
+          const target = sb as EventTarget & { buffered: TimeRanges };
+          target.addEventListener('updateend', () => {
+            if (killed || info.kind === 'video') return;
+            try {
+              send({ t: 'buffered', sb: id, ranges: rangesOf(target.buffered) });
+            } catch {}
+          });
+        }
       } catch {}
     }
     return sb;
@@ -235,8 +264,8 @@ export function installTee(G: TeeGlobal, options: TeeOptions): TeeHandle {
 }
 
 /**
- * The page side: installs the tee on `window` and sends its events to the relay over a
- * MessagePort the relay hands over (queued until then).
+ * The page side: installs the tee on `window` (and in its workers, where needed) and sends its
+ * events to the relay over a MessagePort the relay hands over (queued until then).
  */
 export function startPageTee(win: Window & typeof globalThis): void {
   const flag = Symbol.for('murmur.tee');
@@ -249,20 +278,27 @@ export function startPageTee(win: Window & typeof globalThis): void {
   let port: MessagePort | null = null;
   const random = new Uint32Array(1);
   win.crypto.getRandomValues(random);
-  const tee = installTee(win as unknown as TeeGlobal, {
-    idPrefix: `${(random[0] ?? 0).toString(36)}-`,
-    send(event, transfer) {
-      if (port) {
-        port.postMessage(event, transfer);
-        return;
-      }
-      // Until the relay is there (moments): a bounded queue.
-      const size = event.t === 'append' ? event.bytes.byteLength : 64;
-      if (queued + size > 8 * 1024 * 1024) return;
-      queued += size;
-      queue.push([event, transfer]);
-    },
-  });
+  const prefix = `${(random[0] ?? 0).toString(36)}-`;
+  const send = (event: TeeEvent, transfer: ArrayBuffer[]): void => {
+    if (port) {
+      port.postMessage(event, transfer);
+      return;
+    }
+    // Until the relay is there (moments): a bounded queue.
+    const size = event.t === 'append' ? event.bytes.byteLength : 64;
+    if (queued + size > 8 * 1024 * 1024) return;
+    queued += size;
+    queue.push([event, transfer]);
+  };
+  const tee = installTee(win as unknown as TeeGlobal, { idPrefix: prefix, kindOf, send });
+  // MSE in workers, on the sites that need it (wrapping workers can break a page's CSP).
+  const workers = workerTeeHost(win.location.hostname, win.location.search)
+    ? wrapWorkers(win, { idPrefix: prefix, send, installTee, kindOf })
+    : null;
+  const off = (): void => {
+    tee.off();
+    workers?.off();
+  };
 
   win.addEventListener(
     'message',
@@ -274,7 +310,7 @@ export function startPageTee(win: Window & typeof globalThis): void {
       e.stopImmediatePropagation();
       port = given;
       port.onmessage = (m: MessageEvent) => {
-        if ((m.data as { t?: string } | null)?.t === 'off') tee.off();
+        if ((m.data as { t?: string } | null)?.t === 'off') off();
       };
       for (const [event, transfer] of queue.splice(0)) port.postMessage(event, transfer);
       queued = 0;

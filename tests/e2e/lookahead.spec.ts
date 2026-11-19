@@ -26,6 +26,8 @@ const PLAYERS = [
   { name: 'dash.js', page: 'lookahead-dash.html' },
   { name: 'Shaka (WebM)', page: 'lookahead-shaka.html' },
   { name: 'progressive MP4', page: 'lookahead-progressive.html' },
+  // MSE in a worker, as on Twitch (e2e builds put the tee in workers when the page asks).
+  { name: 'MSE in a worker', page: 'lookahead-worker.html?murmur-worker-tee' },
 ];
 
 type SwGlobal = { __murmur: import('@/shared/e2e').BackgroundTestHook };
@@ -156,8 +158,9 @@ for (const player of PLAYERS) {
     }
     // While lookahead was ahead, live recognition stepped aside.
     expect(sawLivePaused).toBe(true);
-    // Live cues never showed where lookahead had subtitles.
-    const liveShown = shown.filter((s) => s.ids.some((id) => !id.startsWith('L')));
+    // Live cues never showed where lookahead had subtitles (while paused at 0 before play, a
+    // live line may come before lookahead's first one is finished).
+    const liveShown = shown.filter((s) => s.t > 0 && s.ids.some((id) => !id.startsWith('L')));
     expect(liveShown).toEqual([]);
 
     // Seeking back shows the cue there at once, without making it again.
@@ -183,6 +186,31 @@ for (const player of PLAYERS) {
     expect(log?.lookahead?.warnings ?? []).toEqual([]);
   });
 }
+
+test('the page’s workers are wrapped only where asked', async ({ murmur, serviceWorker }) => {
+  await serviceWorker.evaluate(() =>
+    (globalThis as unknown as SwGlobal).__murmur.lookahead('127.0.0.1', true),
+  );
+  // A wrapped Worker is a Proxy: what it makes has the original as its constructor.
+  const wrapped = () => {
+    const w = new Worker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' })));
+    w.terminate();
+    return w.constructor !== Worker;
+  };
+  // hls.js makes a worker of its own: left as it is.
+  const plain = await murmur.open('lookahead-hls.html');
+  expect(await plain.evaluate(wrapped)).toBe(false);
+  const asked = await murmur.open('lookahead-worker.html?murmur-worker-tee');
+  await asked.waitForFunction(() => (document.querySelector('video')?.currentTime ?? 0) > 0.5);
+  expect(await asked.evaluate(wrapped)).toBe(true);
+  const state = await asked.evaluate(() => ({
+    instance: (window as unknown as { playerWorker: Worker }).playerWorker instanceof Worker,
+    name: Worker.name,
+    native: String(Worker).includes('[native code]'),
+    errors: (window as unknown as { playback: { errors: string[] } }).playback.errors,
+  }));
+  expect(state).toEqual({ instance: true, name: 'Worker', native: true, errors: [] });
+});
 
 test('without lookahead on for the site, the player is left alone', async ({ murmur }) => {
   const page = await murmur.open('lookahead-hls.html');

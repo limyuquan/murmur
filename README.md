@@ -95,8 +95,8 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 - **Subtitles arrive after the speech**, by the time the models need. Expect a second or two,
   unless subtitles ahead of time are on for the site and the player has loaded that part.
 - **Ahead of time needs a reload** the first time it is turned on for a site, and works with
-  players that load media in the page itself (most sites; not yet ones that load it in a worker,
-  such as Twitch).
+  players that load media in the page itself (most sites) and with Twitch's videos. Live streams
+  get subtitles as they're heard.
 
 ---
 

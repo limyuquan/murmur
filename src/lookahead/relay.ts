@@ -61,13 +61,19 @@ interface Buffer {
 }
 
 type HeldEntry =
-  | { event: Exclude<TeeEvent, { t: 'append' }> }
+  | { event: Exclude<TeeEvent, { t: 'append' | 'buffered' }> }
   | { append: Extract<TeeEvent, { t: 'append' }>; size: number };
 
 export class Relay implements TeeRelayApi {
   readonly version = 1;
   private readonly urls = new Map<string, string>();
   private readonly buffers = new Map<string, Buffer>();
+  /** Audio buffered per MediaSource in a worker (latest report), for `mediaSourceFor`. */
+  private readonly workerBuffered = new Map<
+    string,
+    { ranges: readonly (readonly [number, number])[]; at: number }
+  >();
+  private bufferedSeq = 0;
   private held: HeldEntry[] = [];
   private heldBytes = 0;
   private sink: ((wire: TeeWire) => void) | null = null;
@@ -123,6 +129,15 @@ export class Relay implements TeeRelayApi {
       case 'sbrm':
         this.buffers.delete(event.sb);
         break;
+      case 'buffered': {
+        const b = this.buffers.get(event.sb);
+        if (!b) return;
+        this.workerBuffered.set(b.ms, { ranges: event.ranges, at: ++this.bufferedSeq });
+        if (this.workerBuffered.size > MAX_URLS) {
+          this.workerBuffered.delete(this.workerBuffered.keys().next().value as string);
+        }
+        return;
+      }
       case 'append': {
         const b = this.buffers.get(event.sb);
         if (!b) return;
@@ -181,6 +196,23 @@ export class Relay implements TeeRelayApi {
     return this.urls.get(url) ?? null;
   }
 
+  mediaSourceFor(buffered: readonly (readonly [number, number])[], time: number): string | null {
+    let best: string | null = null;
+    let bestScore = -1;
+    let bestAt = -1;
+    for (const [ms, { ranges, at }] of this.workerBuffered) {
+      // Mostly the overlap with the element's buffered audio; holding the playhead counts most.
+      let score = overlap(buffered, ranges);
+      if (ranges.some(([s, e]) => time >= s - 0.5 && time <= e + 0.5)) score += 1e6;
+      if (score > bestScore || (score === bestScore && at > bestAt)) {
+        best = ms;
+        bestScore = score;
+        bestAt = at;
+      }
+    }
+    return best;
+  }
+
   async fetchRange(
     url: string,
     start: number,
@@ -201,8 +233,8 @@ export class Relay implements TeeRelayApi {
     };
   }
 
-  private forward(event: TeeEvent): void {
-    if (this.sink && event.t !== 'append') this.sink(event);
+  private forward(event: Exclude<TeeEvent, { t: 'append' | 'buffered' }>): void {
+    if (this.sink) this.sink(event);
   }
 
   private hold(entry: HeldEntry): void {
@@ -214,6 +246,18 @@ export class Relay implements TeeRelayApi {
       if ('append' in old) this.heldBytes -= old.size;
     }
   }
+}
+
+/** Seconds both sets of ranges cover. */
+function overlap(
+  a: readonly (readonly [number, number])[],
+  b: readonly (readonly [number, number])[],
+): number {
+  let total = 0;
+  for (const [as, ae] of a) {
+    for (const [bs, be] of b) total += Math.max(0, Math.min(ae, be) - Math.max(as, bs));
+  }
+  return total;
 }
 
 function wireOf(event: Extract<TeeEvent, { t: 'append' }>): TeeWire {
