@@ -2,6 +2,7 @@
  * Test-only hooks, present only in e2e builds (`import.meta.env.MODE === 'e2e'`). Production
  * builds tree-shake them away. Playwright reaches them through `serviceWorker.evaluate`.
  */
+import type { Cue } from '@/pipeline/types';
 
 /** True in `pnpm build:e2e` builds only. */
 export const IS_E2E = import.meta.env.MODE === 'e2e';
@@ -17,6 +18,16 @@ export interface BackgroundTestHook {
   stop(): Promise<void>;
 }
 
+/** On the offscreen document's global as `__earshotLog` (e2e builds): what the session produced. */
+export interface OffscreenTestLog {
+  /** Every cue sent to the overlay, with the epoch ms it was sent. */
+  cues: { at: number; cue: Cue }[];
+  /** Chrome speech: which recognizer won each segment, with every candidate's score. */
+  arbitrations: { at: number; record: unknown }[];
+  engines: { asr: string; translation: string } | null;
+}
+
 declare global {
   var __earshot: BackgroundTestHook | undefined;
+  var __earshotLog: OffscreenTestLog | undefined;
 }

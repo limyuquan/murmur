@@ -6,8 +6,11 @@ import {
   DEMO_ASR_ID,
   DEMO_TRANSLATION_ID,
   PROFILE_ORDER,
+  PROFILES,
   recommendProfile,
   resolveEngines,
+  WHISPER_BASE_ID,
+  WHISPER_TURBO_ID,
 } from '@/engines/profiles';
 import { EngineRegistry } from '@/engines/registry';
 import type { AsrEngine, AsrEngineInfo } from '@/engines/types';
@@ -27,6 +30,20 @@ const gpuAsr: AsrEngineInfo = {
   requirements: { backends: ['webgpu'], shaderF16: true, downloadMB: 500 },
 };
 
+/** The demo engines, as e2e builds register them. */
+function demoRegistry(): EngineRegistry {
+  return new EngineRegistry()
+    .registerAsr({
+      info: ECHO_ASR_INFO,
+      create: async () => new (await import('@/engines/demo/echoAsr')).EchoAsrEngine(),
+    })
+    .registerTranslation({
+      info: PASSTHROUGH_INFO,
+      create: async () =>
+        new (await import('@/engines/demo/passthroughTranslator')).PassthroughTranslationEngine(),
+    });
+}
+
 function fakeEngine(info: AsrEngineInfo): AsrEngine {
   return {
     info,
@@ -40,10 +57,19 @@ function fakeEngine(info: AsrEngineInfo): AsrEngine {
 }
 
 describe('EngineRegistry', () => {
-  it('lists and creates the built-in demo engines', async () => {
+  it('ships the real engines, and the demo engines only in e2e builds', () => {
     const r = createBuiltinRegistry();
-    expect(r.asrEngines().map((e) => e.id)).toEqual([DEMO_ASR_ID]);
-    expect(r.translationEngines().map((e) => e.id)).toEqual([DEMO_TRANSLATION_ID]);
+    expect(r.asrEngines().map((e) => e.id)).toEqual([
+      'chrome-webspeech',
+      WHISPER_BASE_ID,
+      WHISPER_TURBO_ID,
+    ]);
+    expect(r.translationEngines().map((e) => e.id)).toEqual(['chrome-translator']);
+    expect(r.hasAsr(DEMO_ASR_ID)).toBe(false);
+  });
+
+  it('creates and loads engines', async () => {
+    const r = demoRegistry();
     const asr = await r.createAsr(DEMO_ASR_ID);
     expect(asr.info).toBe(ECHO_ASR_INFO);
     const mt = await r.createTranslation(DEMO_TRANSLATION_ID);
@@ -121,8 +147,26 @@ describe('profiles', () => {
     }
   });
 
+  it('profiles: Light is Chrome speech, Balanced is Whisper turbo, with Whisper base behind', () => {
+    expect(PROFILES.light.asr).toEqual(['chrome-webspeech', WHISPER_BASE_ID]);
+    expect(PROFILES.balanced.asr).toEqual([WHISPER_TURBO_ID, WHISPER_BASE_ID]);
+    const r = createBuiltinRegistry();
+    const none = { asr: DEMO_ASR_ID, translation: DEMO_TRANSLATION_ID };
+    expect(resolveEngines('balanced', none, r, GPU)).toMatchObject({
+      asr: WHISPER_TURBO_ID,
+      translation: 'chrome-translator',
+    });
+    // No WebGPU: turbo doesn't fit, base runs on WebAssembly.
+    expect(resolveEngines('balanced', none, r, NO_HARDWARE).asr).toBe(WHISPER_BASE_ID);
+    // A custom choice of demo engines in a build without them: the real last resorts.
+    expect(resolveEngines('custom', none, r, GPU)).toMatchObject({
+      asr: WHISPER_BASE_ID,
+      translation: 'chrome-translator',
+    });
+  });
+
   it('takes the first candidate that fits, with notes on the ones skipped', () => {
-    const r = createBuiltinRegistry().registerAsr({
+    const r = demoRegistry().registerAsr({
       info: gpuAsr,
       create: async () => fakeEngine(gpuAsr),
     });

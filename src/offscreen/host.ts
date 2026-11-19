@@ -7,9 +7,16 @@
 import { type CaptureHandle, startCapture } from '@/capture/graph';
 import { type AudioSource, tabAudioSource, toneSource } from '@/capture/sources';
 import { createBuiltinRegistry } from '@/engines/builtin';
+import { isActionRequired } from '@/engines/errors';
+import { ENGINE_FACTORIES } from '@/engines/factories';
+import { detectHardware } from '@/engines/hardware';
+import { loadWithFallback } from '@/engines/loading';
 import type {
   AsrEngine,
   AsrEngineInfo,
+  LoadProgress,
+  SessionLanguages,
+  SetupAction,
   TranslationEngine,
   TranslationEngineInfo,
 } from '@/engines/types';
@@ -25,6 +32,7 @@ import {
   type SessionErrorCode,
 } from '@/messaging/protocol';
 import { Pipeline } from '@/pipeline/pipeline';
+import type { Cue } from '@/pipeline/types';
 import { LOG_PREFIX } from '@/shared/ids';
 import { ActivityTracker, activityChanged } from './activity';
 
@@ -41,6 +49,10 @@ export interface OverlayPort {
 export interface HostDeps {
   /** Sends an event to the service worker. */
   send(event: OffscreenEvent): Promise<unknown>;
+  /** Sees every cue as it is sent (e2e builds record them for real-model checks). */
+  onCue?(cue: Cue): void;
+  /** Sees the session's engines once loaded (e2e builds tap their diagnostics). */
+  onEngines?(asr: AsrEngine, translator: TranslationEngine): void;
 }
 
 interface Running {
@@ -53,10 +65,12 @@ interface Running {
   activity: ActivityTracker;
   reported: SessionActivity | undefined;
   ticker: ReturnType<typeof setInterval> | null;
+  /** Downloads a line needed while running (each reported once). */
+  setup: SetupAction[];
 }
 
 export class OffscreenHost {
-  private readonly registry = createBuiltinRegistry();
+  private readonly registry = createBuiltinRegistry(ENGINE_FACTORIES);
   private readonly ports = new Set<OverlayPort>();
   private session: Running | null = null;
   /** Last chip status per tab, for overlays that connect late. */
@@ -90,63 +104,95 @@ export class OffscreenHost {
       activity: new ActivityTracker(Date.now()),
       reported: undefined,
       ticker: null,
+      setup: [],
     };
     this.session = running;
     this.broadcast(config.tabId, { type: 'reset' });
     try {
-      const asrInfo = this.registry.asrInfo(config.asrEngine);
-      const mtInfo = this.registry.translationInfo(config.translationEngine);
-      running.activity = new ActivityTracker(Date.now(), {
-        supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
+      // Capture first: the tab's stream ID expires seconds after it is minted, and models can
+      // take minutes to load. Frames heard before the pipeline exists are only measured.
+      let pipeline: Pipeline | null = null;
+      running.capture = await startCapture(sourceFor(config.source), (frame) => {
+        running.activity.onFrame(frame.samples, Date.now());
+        pipeline?.push(frame);
       });
-      this.report({
-        state: 'loading',
-        tabId: config.tabId,
-        sessionId: config.sessionId,
-        progress: null,
-        detail: `Loading ${asrInfo?.label ?? config.asrEngine}`,
-      });
-      running.asr = await this.registry.createAsr(config.asrEngine);
-      running.translator = await this.registry.createTranslation(config.translationEngine);
-      const onProgress = (p: { fraction: number | null }) =>
+      if (!this.isCurrent(running)) {
+        await running.capture.stop();
+        return;
+      }
+      const session: SessionLanguages = {
+        targetLanguage: config.targetLanguage,
+        sourceLanguage: config.sourceLanguage,
+        spokenLanguages: config.spokenLanguages ?? [],
+      };
+      const hardware = await detectHardware();
+      const loading = (label: string, p: LoadProgress | null) =>
         this.isCurrent(running) &&
         this.report({
           state: 'loading',
           tabId: config.tabId,
           sessionId: config.sessionId,
-          progress: p.fraction,
-          detail: `Loading ${asrInfo?.label ?? config.asrEngine}`,
+          progress: p?.fraction ?? null,
+          detail: loadingDetail(label, p),
         });
-      await running.asr.load({ onProgress });
-      await running.translator.load({ onProgress });
-      if (!this.isCurrent(running)) return;
+      loading(this.registry.asrInfo(config.asrEngine)?.label ?? config.asrEngine, null);
+      // Engines that can't run here at all hand over to their fallback (profiles.ts).
+      running.asr = await loadWithFallback(
+        config.asrEngine,
+        (id) => this.registry.createAsr(id),
+        (engine) =>
+          engine.load({ hardware, session, onProgress: (p) => loading(engine.info.label, p) }),
+      );
+      running.translator = await loadWithFallback(
+        config.translationEngine,
+        (id) => this.registry.createTranslation(id),
+        (engine) =>
+          engine.load({ hardware, session, onProgress: (p) => loading(engine.info.label, p) }),
+      );
+      if (!this.isCurrent(running)) {
+        // Stopped while loading: the teardown ran before these existed.
+        await this.teardown(running);
+        return;
+      }
+      this.deps.onEngines?.(running.asr, running.translator);
+      const asrInfo = running.asr.info;
+      const mtInfo = running.translator.info;
+      running.activity = new ActivityTracker(Date.now(), {
+        supports: (language) => supports(asrInfo, mtInfo, language, config.targetLanguage),
+      });
 
-      running.pipeline = new Pipeline({
+      pipeline = new Pipeline({
         asr: running.asr,
         translator: running.translator,
         targetLanguage: config.targetLanguage,
         sourceLanguage: config.sourceLanguage,
+        spokenLanguages: config.spokenLanguages ?? [],
         translatePartials: config.translatePartials,
+        track: running.capture.track,
         onCue: (cue) => {
           running.activity.onCue(cue, Date.now());
+          this.deps.onCue?.(cue);
           if (!running.heard) {
             running.heard = true;
             this.reportRunning(running);
           }
           this.broadcast(config.tabId, { type: 'cue', cue });
         },
-        onError: (err) => console.error(LOG_PREFIX, 'pipeline', err),
+        onHealth: (health) => running.activity.onHealth(health),
+        onError: (err) => {
+          if (isActionRequired(err)) {
+            const fresh = err.actions.filter((a) => !running.setup.some((b) => b.id === a.id));
+            if (fresh.length > 0) {
+              running.setup.push(...fresh);
+              this.reportRunning(running);
+            }
+            return;
+          }
+          console.error(LOG_PREFIX, 'pipeline', err);
+        },
       });
-      const pipeline = running.pipeline;
-      running.capture = await startCapture(sourceFor(config.source), (frame) => {
-        running.activity.onFrame(frame.samples, Date.now());
-        pipeline.push(frame);
-      });
-      if (!this.isCurrent(running)) {
-        await running.capture.stop();
-        return;
-      }
-      this.reportRunning(running, mtInfo?.label);
+      running.pipeline = pipeline;
+      this.reportRunning(running, mtInfo.label);
       running.ticker = setInterval(() => {
         const next = running.activity.snapshot(Date.now());
         if (activityChanged(running.reported, next)) this.reportRunning(running);
@@ -161,6 +207,7 @@ export class OffscreenHost {
         sessionId: config.sessionId,
         message,
         code,
+        ...(isActionRequired(err) ? { setup: err.actions } : {}),
       });
       await this.teardown(running);
       if (this.session === running) this.session = null;
@@ -197,6 +244,7 @@ export class OffscreenHost {
       translation: translationLabel ?? running.translator?.info.label ?? config.translationEngine,
       heard: running.heard,
       activity: running.reported,
+      ...(running.setup.length > 0 ? { setup: [...running.setup] } : {}),
     });
   }
 
@@ -225,7 +273,23 @@ function sourceFor(spec: CaptureSourceSpec): AudioSource {
   return spec.kind === 'tab' ? tabAudioSource(spec.streamId) : toneSource();
 }
 
+/** "Downloading Whisper base: model_q4.onnx", "Preparing Whisper base", ... */
+function loadingDetail(label: string, p: LoadProgress | null): string {
+  if (!p) return `Loading ${label}`;
+  switch (p.stage) {
+    case 'download':
+      return `Downloading ${label}`;
+    case 'compile':
+      return `Preparing ${label}`;
+    case 'warmup':
+      return `Warming up ${label}`;
+  }
+}
+
 function describeError(err: unknown): { message: string; code: SessionErrorCode } {
+  if (isActionRequired(err)) {
+    return { message: `Chrome needs to download first: ${err.message}.`, code: 'setup' };
+  }
   if (err instanceof DOMException && err.name === 'NotAllowedError') {
     return {
       message:

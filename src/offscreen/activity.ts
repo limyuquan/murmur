@@ -2,7 +2,7 @@
  * What a running session is doing, for the popup and the overlay's chip: pure, fed by the host
  * with captured frames and the cues it sends. See `SessionActivity` (messaging/protocol.ts).
  */
-import { UNKNOWN_LANGUAGE } from '@/engines/types';
+import { type AsrHealth, UNKNOWN_LANGUAGE } from '@/engines/types';
 import type { SessionActivity } from '@/messaging/protocol';
 import { primaryLanguage } from '@/pipeline/language';
 import type { Cue } from '@/pipeline/types';
@@ -33,6 +33,7 @@ export class ActivityTracker {
   private readonly cues = new Map<string, Seen>();
   private readonly delays: number[] = [];
   private lastSound: number | null = null;
+  private engineBehind = false;
   private readonly behindMs: number;
   private readonly maxBacklog: number;
   private readonly soundLevel: number;
@@ -50,6 +51,11 @@ export class ActivityTracker {
     let sum = 0;
     for (const s of samples) sum += s * s;
     if (Math.sqrt(sum / Math.max(1, samples.length)) >= this.soundLevel) this.lastSound = now;
+  }
+
+  /** The speech engine's own report: it is skipping work to keep up. */
+  onHealth(health: AsrHealth): void {
+    this.engineBehind = health.behind;
   }
 
   onCue(cue: Cue, now: number): void {
@@ -96,7 +102,10 @@ export class ActivityTracker {
     const unsupported = supports ? languages.filter((l) => !supports(l)) : [];
 
     const delayMs = this.delays.length > 0 ? median(this.delays) : null;
-    const behind = (delayMs !== null && delayMs > this.behindMs) || backlog >= this.maxBacklog;
+    const behind =
+      (delayMs !== null && delayMs > this.behindMs) ||
+      backlog >= this.maxBacklog ||
+      this.engineBehind;
 
     return {
       stage,

@@ -10,12 +10,38 @@ import {
   OVERLAY_PORT,
   type OverlayHello,
 } from '@/messaging/protocol';
-import { OffscreenHost, type OverlayPort } from '@/offscreen/host';
+import {
+  OffscreenHost,
+  type HostDeps as OffscreenHostDeps,
+  type OverlayPort,
+} from '@/offscreen/host';
+import { IS_E2E, type OffscreenTestLog } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
 
 const host = new OffscreenHost({
   send: (event) => browser.runtime.sendMessage(event),
+  ...(IS_E2E ? e2eTaps() : {}),
 });
+
+/**
+ * e2e builds: every cue (with when it was sent) and every Chrome speech arbitration, on
+ * `globalThis.__earshotLog`, for real-model checks driven over CDP.
+ */
+function e2eTaps(): Pick<OffscreenHostDeps, 'onCue' | 'onEngines'> {
+  const log: OffscreenTestLog = { cues: [], arbitrations: [], engines: null };
+  globalThis.__earshotLog = log;
+  const now = () => performance.timeOrigin + performance.now();
+  return {
+    onCue: (cue) => log.cues.push({ at: now(), cue }),
+    onEngines: (asr, translator) => {
+      log.engines = { asr: asr.info.id, translation: translator.info.id };
+      if ('onArbitration' in asr) {
+        (asr as { onArbitration: unknown }).onArbitration = (record: unknown) =>
+          log.arbitrations.push({ at: now(), record });
+      }
+    },
+  };
+}
 
 browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (sender.id !== browser.runtime.id || !isOffscreenCommand(message)) return;

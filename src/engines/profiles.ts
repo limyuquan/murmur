@@ -4,6 +4,7 @@
  * demo engines are the last resort. So adding a real engine is: register it (builtin.ts), then put
  * its id at the front of the profiles it suits. `custom` uses the engines chosen in settings.
  */
+import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
 import { checkRequirements, type HardwareInfo } from './hardware';
 import type { EngineRegistry } from './registry';
 import type { EngineInfo } from './types';
@@ -23,28 +24,48 @@ export interface ModelProfile {
 
 export const DEMO_ASR_ID = 'demo-echo';
 export const DEMO_TRANSLATION_ID = 'demo-passthrough';
+export const WHISPER_BASE_ID = 'whisper-base';
+export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
+
+/**
+ * What runs when an engine turns out not to work here once it loads (EngineUnavailableError):
+ * the service worker can't see Chrome's speech APIs, so the profile can't rule them out.
+ */
+export const RUNTIME_FALLBACKS: Readonly<Record<string, string>> = {
+  [CHROME_WEBSPEECH_ID]: WHISPER_BASE_ID,
+};
+
+/**
+ * Last resorts when nothing a profile lists fits, in order. The demo engines are only registered
+ * in e2e builds, so elsewhere these are real engines.
+ */
+const ASR_LAST_RESORT = [WHISPER_BASE_ID, DEMO_ASR_ID];
+const TRANSLATION_LAST_RESORT = [CHROME_TRANSLATOR_ID, DEMO_TRANSLATION_ID];
 
 export const PROFILES: Record<ProfileId, ModelProfile> = {
+  // Chrome's own on-device speech and translation: nothing for Earshot to download.
   light: {
     id: 'light',
     label: 'Light',
     description: 'Small models. Runs on most laptops, including without a graphics card.',
-    asr: [DEMO_ASR_ID],
-    translation: [DEMO_TRANSLATION_ID],
+    asr: [CHROME_WEBSPEECH_ID, WHISPER_BASE_ID],
+    translation: [CHROME_TRANSLATOR_ID],
   },
+  // Translation stays Chrome's until an in-browser translation model is chosen (benchmarks).
   balanced: {
     id: 'balanced',
     label: 'Balanced',
     description: 'Medium models on the graphics card. Better accuracy, larger download.',
-    asr: [DEMO_ASR_ID],
-    translation: [DEMO_TRANSLATION_ID],
+    asr: [WHISPER_TURBO_ID, WHISPER_BASE_ID],
+    translation: [CHROME_TRANSLATOR_ID],
   },
+  // Until the companion app exists, the best the browser runs.
   best: {
     id: 'best',
     label: 'Best',
     description: 'The largest models: a strong graphics card or the companion app.',
-    asr: [DEMO_ASR_ID],
-    translation: [DEMO_TRANSLATION_ID],
+    asr: [WHISPER_TURBO_ID, WHISPER_BASE_ID],
+    translation: [CHROME_TRANSLATOR_ID],
   },
 };
 
@@ -67,15 +88,21 @@ export function resolveEngines(
   const notes: string[] = [];
   const asrCandidates = choice === 'custom' ? [custom.asr] : PROFILES[choice].asr;
   const mtCandidates = choice === 'custom' ? [custom.translation] : PROFILES[choice].translation;
-  const asr = pick(asrCandidates, (id) => registry.asrInfo(id), DEMO_ASR_ID, hardware, notes);
+  const asrInfo = (id: string) => registry.asrInfo(id);
+  const mtInfo = (id: string) => registry.translationInfo(id);
+  const asr = pick(asrCandidates, asrInfo, lastResort(ASR_LAST_RESORT, asrInfo), hardware, notes);
   const translation = pick(
     mtCandidates,
-    (id) => registry.translationInfo(id),
-    DEMO_TRANSLATION_ID,
+    mtInfo,
+    lastResort(TRANSLATION_LAST_RESORT, mtInfo),
     hardware,
     notes,
   );
   return { asr, translation, notes };
+}
+
+function lastResort(ids: readonly string[], info: (id: string) => EngineInfo | undefined): string {
+  return ids.find((id) => info(id)) ?? (ids[0] as string);
 }
 
 function pick(

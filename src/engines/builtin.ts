@@ -1,20 +1,43 @@
 /**
- * The engines this build ships. Add an engine here (factory with static info; `create()` may
- * dynamic-import so its runtime loads only when chosen), then list its id in a profile
- * (profiles.ts) or pick it under Custom.
+ * The engines this build ships, by static info. Add an engine here, give it a factory in
+ * factories.ts (dynamic-import so its runtime loads only when chosen), then list its id in a
+ * profile (profiles.ts) or pick it under Custom. The demo engines exist in e2e builds only.
+ *
+ * Without `factories` (service worker, pages) the registry lists engines but can't create them;
+ * the offscreen document passes `ENGINE_FACTORIES`.
  */
+import { IS_E2E } from '@/shared/e2e';
+import { CHROME_TRANSLATOR_INFO, CHROME_WEBSPEECH_INFO } from './chrome/info';
 import { ECHO_ASR_INFO, PASSTHROUGH_INFO } from './demo/info';
 import { EngineRegistry } from './registry';
+import type { AnyEngine, AsrEngine, TranslationEngine } from './types';
+import { WHISPER_BASE_INFO, WHISPER_TURBO_INFO } from './whisper/info';
 
-export function createBuiltinRegistry(): EngineRegistry {
-  return new EngineRegistry()
-    .registerAsr({
-      info: ECHO_ASR_INFO,
-      create: async () => new (await import('./demo/echoAsr')).EchoAsrEngine(),
-    })
-    .registerTranslation({
-      info: PASSTHROUGH_INFO,
-      create: async () =>
-        new (await import('./demo/passthroughTranslator')).PassthroughTranslationEngine(),
-    });
+export type EngineFactories = Record<string, () => Promise<AnyEngine>>;
+
+export function createBuiltinRegistry(factories: EngineFactories = {}): EngineRegistry {
+  const make =
+    <E extends AnyEngine>(id: string) =>
+    async (): Promise<E> => {
+      const factory = factories[id];
+      if (!factory) throw new Error(`Engine ${id} can only be created in the offscreen document.`);
+      return (await factory()) as E;
+    };
+  const registry = new EngineRegistry();
+  for (const info of [CHROME_WEBSPEECH_INFO, WHISPER_BASE_INFO, WHISPER_TURBO_INFO]) {
+    registry.registerAsr({ info, create: make<AsrEngine>(info.id) });
+  }
+  registry.registerTranslation({
+    info: CHROME_TRANSLATOR_INFO,
+    create: make<TranslationEngine>(CHROME_TRANSLATOR_INFO.id),
+  });
+  if (IS_E2E) {
+    registry
+      .registerAsr({ info: ECHO_ASR_INFO, create: make<AsrEngine>(ECHO_ASR_INFO.id) })
+      .registerTranslation({
+        info: PASSTHROUGH_INFO,
+        create: make<TranslationEngine>(PASSTHROUGH_INFO.id),
+      });
+  }
+  return registry;
 }
