@@ -151,8 +151,11 @@ export class LookaheadHost {
   }
 
   /** A message from an overlay: where its video is. */
-  onPlayhead(port: LookaheadPort, frameUrl: string, report: PlayheadReport): void {
+  onPlayhead(port: LookaheadPort, frameUrl: string, given: PlayheadReport): void {
     if (this.stopped) return;
+    // On this document's clock: the page's may disagree (another document, reloaded, asleep).
+    // The message took milliseconds, so the time it gives is the time now, near enough.
+    const report = { ...given, at: this.now() };
     const state = this.portState(port, frameUrl);
     state.report = report;
     if (report.timeline) {
@@ -246,6 +249,7 @@ export class LookaheadHost {
             key: r.key,
             ad: r.ad,
             playhead: { time: r.time, rate: r.rate, paused: r.paused, at: r.at },
+            duration: r.duration ?? null,
           }
         : null,
     );

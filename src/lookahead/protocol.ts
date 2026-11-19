@@ -82,6 +82,8 @@ export interface PlayheadReport {
   paused: boolean;
   /** Epoch ms of `time`. */
   at: number;
+  /** The media's length, seconds (null: unknown or endless). */
+  duration?: number | null;
 }
 
 /** The global the relay leaves in the isolated world, for the overlay (same world). */
@@ -194,6 +196,7 @@ export function isPlayheadReport(m: unknown): m is PlayheadReport {
     isNum(r.time) &&
     isNum(r.rate) &&
     typeof r.paused === 'boolean' &&
-    isNum(r.at)
+    isNum(r.at) &&
+    (r.duration === undefined || r.duration === null || isNum(r.duration))
   );
 }

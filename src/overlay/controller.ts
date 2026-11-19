@@ -409,7 +409,7 @@ export class OverlayController {
       this.mediaT = null;
       return null;
     }
-    const t = video.currentTime - this.lagS;
+    const t = video.currentTime - this.lagS * video.playbackRate;
     this.clock.record(
       epochNow(),
       video.currentTime,
@@ -432,7 +432,9 @@ export class OverlayController {
     const start = this.clock.toMedia(cue.startEpochMs, timeline.key);
     const end = this.clock.toMedia(cue.endEpochMs, timeline.key);
     if (start === null || end === null || end < start) return null;
-    return { timeline: timeline.key, start: start - this.lagS, end: end - this.lagS };
+    // The lag is wall-clock time: on the media's clock it is scaled by the playback rate.
+    const lag = this.lagS * (this.video?.playbackRate ?? 1);
+    return { timeline: timeline.key, start: start - lag, end: end - lag };
   }
 
   private currentTimeline(): VideoTimeline | null {
@@ -465,7 +467,7 @@ export class OverlayController {
   private mediaTick(): void {
     const video = this.video;
     if (!this.media || !video) return;
-    const t = video.currentTime - this.lagS;
+    const t = video.currentTime - this.lagS * video.playbackRate;
     const last = this.mediaT;
     const due =
       last === null ||
@@ -491,6 +493,7 @@ export class OverlayController {
       rate: video?.playbackRate ?? 1,
       paused: video ? video.paused || video.readyState < 3 : true,
       at: now,
+      duration: video && Number.isFinite(video.duration) ? video.duration : null,
     };
     const signature = `${report.timeline}|${report.key}|${report.ad}|${report.paused}|${report.rate}`;
     if (!force && signature === this.lastReport && now - this.lastReportAt < 1000) return;

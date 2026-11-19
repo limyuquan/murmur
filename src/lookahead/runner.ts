@@ -30,11 +30,18 @@ const CHUNK_S = 1;
  */
 const HOLD_BACK_S = 0.6;
 /**
- * With no more audio decoded for this long, the open segment is ended (the end of the video, or
- * of what the player has buffered for now). Decoding outruns playback by far, so a pause this
- * long means no more is coming soon.
+ * With no more audio decoded for this long, the open segment may be ended: decoding outruns
+ * playback by far, so a pause this long means no more is coming soon. Only at the end of the
+ * media, or when the playhead nears the end of what is decoded (`FLUSH_NEAR_PLAYHEAD_S`).
+ * Elsewhere it is the edge of what the player has fetched so far, and the next fragment (2 to
+ * 10 s later) carries the segment on: ending it there would cut words and lines at every
+ * fragment edge.
  */
 const IDLE_FLUSH_MS = 1000;
+/** The playhead is this close to the end of the decoded audio: finish the line there. */
+const FLUSH_NEAR_PLAYHEAD_S = 4;
+/** The decoded audio reaches the media's end, give or take this. */
+const END_SLACK_S = 0.5;
 /** A segment whose cue isn't finished this long after it started is given up on. */
 const SEGMENT_TIMEOUT_MS = 30_000;
 
@@ -46,6 +53,8 @@ export interface RunnerTarget {
   /** An ad: never subtitled ahead. */
   ad: boolean;
   playhead: Playhead;
+  /** The media's length, seconds (null: unknown or endless). */
+  duration?: number | null;
 }
 
 export interface PipelineHooks {
@@ -246,7 +255,11 @@ export class LookaheadRunner {
     // Or the audio ran out (for now): end it once it's clear no more is coming.
     const decodedEnd = pcm.spanFrom(job.pushed - 1)?.[1] ?? job.pushed;
     const atDone = job.pushed >= end && end < decodedEnd;
-    const ranOut = job.pushed >= decodedEnd && now - job.grewAt > IDLE_FLUSH_MS;
+    const endS = decodedEnd / PCM_RATE;
+    const atMediaEnd = target.duration != null && endS >= target.duration - END_SLACK_S;
+    const playheadNear = endS - playhead < FLUSH_NEAR_PLAYHEAD_S;
+    const ranOut =
+      job.pushed >= decodedEnd && now - job.grewAt > IDLE_FLUSH_MS && (atMediaEnd || playheadNear);
     if (job.flushedAt === null && job.pushed > job.from && (atDone || ranOut)) {
       job.pipeline.flush();
       job.flushedAt = job.pushed;

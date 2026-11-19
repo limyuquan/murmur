@@ -71,6 +71,7 @@ function setup(
     key: 'video',
     ad: false,
     playhead: { time, rate: 1, paused, at: now } satisfies Playhead,
+    duration: 30,
   });
   return {
     pcm,
@@ -218,5 +219,34 @@ describe('LookaheadRunner', () => {
     expect(t.live).toEqual([true, false]);
     release();
     await flushAll(t, 5);
+  });
+
+  it('keeps a line open across the edge of what the player has fetched, far from the playhead', async () => {
+    const t = setup();
+    // Speech from 9 to 13 s; the player has fetched up to 11 s for now (a fragment edge).
+    const samples = concat([burst(9, 0), burst(4, 0.3), burst(3, 0)]);
+    t.pcm.write(0, samples.subarray(0, 11 * PCM_RATE));
+    t.runner.setTarget({ ...t.target(0), duration: null });
+    // Seconds go by with nothing new decoded: the line stays open.
+    await flushAll(t, 30);
+    expect(finished(t.cues)).toEqual([]);
+    // The next fragment arrives: one line, across the edge.
+    t.pcm.write(11 * PCM_RATE, samples.subarray(11 * PCM_RATE));
+    t.runner.setTarget({ ...t.target(0), duration: 16 });
+    await flushAll(t);
+    const done = finished(t.cues);
+    expect(done).toHaveLength(1);
+    expect(done[0]?.media?.start).toBeLessThan(9);
+    expect(done[0]?.media?.end).toBeGreaterThan(12.9);
+  });
+
+  it('finishes the line at the edge once the playhead comes near it', async () => {
+    const t = setup();
+    const samples = concat([burst(9, 0), burst(4, 0.3), burst(3, 0)]);
+    t.pcm.write(0, samples.subarray(0, 11 * PCM_RATE));
+    t.runner.setTarget({ ...t.target(8), duration: null });
+    await flushAll(t, 30);
+    // 3 s from the playhead: ended there, so it is ready when shown.
+    expect(finished(t.cues)).toHaveLength(1);
   });
 });
