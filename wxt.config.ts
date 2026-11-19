@@ -37,6 +37,8 @@ export default defineConfig({
   imports: false,
   vite: () => ({
     plugins: [tailwindcss()],
+    // The speech model worker imports transformers.js, which is ESM with top-level await.
+    worker: { format: 'es' },
   }),
   manifest: ({ mode }) => ({
     name: 'Earshot',
@@ -58,6 +60,11 @@ export default defineConfig({
       // Downloaded models live in the Cache API / OPFS; keep them from being evicted.
       'unlimitedStorage',
     ],
+    // WebAssembly for the speech models (ONNX Runtime), from the extension's own files only.
+    // No cross-origin isolation headers: they break tab capture, and threads work without them.
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    },
     // Asked for at runtime only (keep subtitles across page loads, players in cross-origin
     // frames). Never granted at install.
     optional_host_permissions: ['<all_urls>'],
