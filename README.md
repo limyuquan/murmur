@@ -14,9 +14,13 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 - **Any video, any site.** Earshot hears the tab's audio, so it works with whatever player the
   page uses, in any frame layout, without site-specific code.
 - **Subtitles on the picture.** They sit over the video itself (not the black bars), scale with
-  it, and follow it through scrolling, resizing and fullscreen.
+  it, and follow it through scrolling, resizing and fullscreen. They move up while the player
+  shows its controls, and you can drag them anywhere; Earshot remembers the spot for each site.
+- **Laid out like TV subtitles.** Two lines at most, broken at natural points, each held long
+  enough to read. Box, shadow or outline, in the size you like.
 - **Original and translation.** Show both lines, only the translation, or only what was said.
-  Each line is translated on its own, so a video that switches language mid-way is fine.
+  Each line is translated on its own, so a video that switches language mid-way is fine; a line
+  in a different language from the rest gets a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Pick a model size.** Light, Balanced or Best, or choose engines yourself. Earshot suggests one
   that suits your device.
@@ -55,8 +59,9 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 | | |
 |---|---|
 | Open Earshot | Click the toolbar icon, or press `Alt+Shift+E` (change it at `chrome://extensions/shortcuts`) |
-| Subtitles on this tab | Turn on the switch. Chrome shows its "sharing this tab" indicator while Earshot listens |
-| Stop | Turn the switch off, or close the tab |
+| Subtitles on this tab | Turn on the switch, or press `Alt+Shift+S`. Chrome shows its "sharing this tab" indicator while Earshot listens |
+| Stop | Turn the switch off, press `Alt+Shift+S` again, or close the tab |
+| Move subtitles | Drag them. Double-click to put them back |
 | Languages, model size, how subtitles look | **Settings** in the popup |
 
 **Limits**
@@ -145,8 +150,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/engines/` | Engine interfaces (`types.ts`), registry, hardware checks, model profiles, demo engines |
 | `src/overlay/`, `src/entrypoints/overlay.ts` | Injected script: picks the video, positions the shadow-DOM overlay, draws cues |
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), popup → SW client |
-| `src/settings/` | Settings type, defaults, validation, storage |
-| `src/entrypoints/popup/`, `src/entrypoints/options/` | React + Tailwind extension pages |
+| `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`) |
+| `src/models/` | Downloadable models: catalog per profile, download manager (runs in the SW), simulated store |
+| `src/entrypoints/popup/`, `options/`, `welcome/` | React + Tailwind extension pages (welcome opens on install) |
+| `src/ui/` | Shared React components, hooks and copy for those pages; tokens in `src/styles/app.css` |
 | `tests/unit`, `tests/e2e` | Vitest (pure logic) and Playwright end-to-end |
 | `scripts/` | Fixture server, icon renderer (`pnpm icons`), release-zip check |
 
@@ -164,8 +171,10 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    partial and final results, each with its own language. Finals are translated in order with
    recent lines as context; a segment already in the target language isn't translated.
 5. Each change to a segment is sent as a whole `Cue` over the overlay's port. The overlay replaces
-   it by id, keeps the newest two, dims what may still change, and holds finished lines for a
-   reading time.
+   it by id and lays it out (`src/overlay/linebreak.ts`, `captions.ts`): at most two segments,
+   two rows per line, growing text filled so it never jumps, finished text balanced or paged and
+   held for a reading time. The offscreen document also reports what the session is doing
+   (`SessionActivity`) to the popup and a short status to the overlay's chip.
 6. Stop closes the offscreen document; the overlay's port disconnects and it removes itself.
 
 ### 6. Adding an engine
@@ -177,7 +186,15 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 3. Register a factory in `src/engines/builtin.ts` whose `create()` dynamic-imports the engine.
 4. Put its id at the front of the profiles it suits in `src/engines/profiles.ts`. Profiles fall
    back down their list, then to the demo engines, when an engine doesn't fit the device.
-5. Load progress goes through `LoadOptions.onProgress`; the popup shows it.
+5. List what it downloads in `info.models` (id, label, size). The options page, welcome page and
+   popup then show and manage those instead of the planned placeholders in
+   `src/models/planned.ts`. Downloads go through a `ModelStore` (`src/models/types.ts`): add the
+   real one (Cache API / OPFS) as `real` in `src/background/models.ts`.
+6. Load progress goes through `LoadOptions.onProgress`; the popup and the overlay's chip show it.
+7. Report failures the popup can fix with a `SessionErrorCode` (`companion`, `model`, ...) on the
+   error status, and keep `SessionActivity` honest: the offscreen host feeds `ActivityTracker`
+   (`src/offscreen/activity.ts`) with every frame and cue, which is how "falling behind",
+   "no sound" and unsupported languages reach the popup.
 
 ### 7. Known limits
 
@@ -186,7 +203,8 @@ Headless tests can't check these, so ask a human after related changes:
 - the real toolbar click, shortcut and badge;
 - that captured tab audio stays audible (playback through the offscreen document);
 - fullscreen placement (container fullscreen and `<video>` fullscreen via a top-layer popover);
-- real players on real sites.
+- real players on real sites, including moving clear of their controls (listed players in
+  `src/overlay/sites.ts` are measured; others use pointer activity and pause).
 
 ## License
 
