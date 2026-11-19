@@ -1,12 +1,13 @@
 /** Profile picker and model manager, shared by the options page and the welcome page. */
 import type { ReactNode } from 'react';
 import { packsFor } from '@/engines/chrome/setup';
-import { checkEngine, type HardwareInfo } from '@/engines/hardware';
+import { checkEngine, gpuKey, type HardwareInfo } from '@/engines/hardware';
 import {
   PROFILE_ORDER,
   PROFILES,
   type ProfileChoice,
   type ProfileId,
+  type ResolvedEngines,
   recommendProfile,
   resolveEngines,
 } from '@/engines/profiles';
@@ -14,8 +15,10 @@ import type { EngineRegistry } from '@/engines/registry';
 import type { SetupAction } from '@/engines/types';
 import { modelsFor, totalMB } from '@/models/catalog';
 import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/models/types';
-import type { Settings } from '@/settings/settings';
+import { type MemoryFit, resolveOptions, saveMemoryFit } from '@/settings/memoryfit';
+import type { Settings, SettingsPatch } from '@/settings/settings';
 import { Icon, Meter, ProgressBar } from './components';
+import { engineNames, memoryFitCopy, smallerSpeechCopy } from './fitcopy';
 import type { ModelActions } from './hooks';
 import { PackRow, usePacks } from './setup';
 import { chosenSpoken } from './spoken';
@@ -24,6 +27,7 @@ interface ProfileCopy {
   /** Who it's for. */
   suits: string;
   accuracy: { level: 1 | 2 | 3; text: string };
+  /** Where it runs; the engines it runs on this device come first (`ProfileModels.runs`). */
   runsOn: string;
   /** The honest catch. */
   tradeoff: string;
@@ -38,22 +42,28 @@ export const PROFILE_COPY: Record<ProfileId, ProfileCopy> = {
       'Nothing to download from Murmur: Chrome downloads a small pack for each language. More mistakes with fast speech, music and names.',
   },
   balanced: {
-    suits: 'Recent computers with a graphics chip, including Apple Silicon.',
+    suits: 'Computers with a graphics card or a recent graphics chip, including Apple silicon.',
     accuracy: { level: 2, text: 'Good' },
-    runsOn: 'Whisper on the graphics chip; Chrome’s translation',
-    tradeoff: 'Good for most videos. Needs WebGPU.',
+    runsOn: 'on the graphics card',
+    tradeoff:
+      'A large one-time download, mostly the speech model; you can choose a smaller speech model. Where graphics memory is short, smaller models run instead.',
   },
   best: {
-    suits: 'Desktop graphics cards, or with the companion app.',
+    suits: 'Graphics cards with their own memory, 6 GB or more.',
     accuracy: { level: 3, text: 'Best' },
-    runsOn: 'Whisper on the graphics card; Chrome’s translation',
-    tradeoff: 'For now the same models as Balanced. Larger ones come with the companion app.',
+    runsOn: 'on the graphics card',
+    tradeoff:
+      'The largest download, and translations take about twice as long as Balanced’s. Where graphics memory is short, smaller models run instead.',
   },
 };
 
 const RANK: Record<ProfileId, number> = { light: 0, balanced: 1, best: 2 };
 
 export interface ProfileModels {
+  /** The engines it runs on this device ("Qwen3-ASR 1.7B and Gemma 4 E2B"), when known. */
+  runs?: string;
+  /** What it resolved to here, with its memory ladder. */
+  engines?: ResolvedEngines;
   models: ModelInfo[];
   totalMB: number;
   missingMB: number;
@@ -62,15 +72,21 @@ export interface ProfileModels {
   downloading: number | null;
 }
 
-/** Download state of what `profile` needs. */
+/**
+ * Download state of what `profile` needs on this device (`fit`: which step of its memory ladder
+ * worked here, settings/memoryfit.ts).
+ */
 export function profileModels(
   profile: ProfileChoice,
   settings: Settings,
   registry: EngineRegistry,
   hardware: HardwareInfo,
   view: ModelsView | null,
+  fit: MemoryFit | null = null,
 ): ProfileModels {
-  const models = modelsFor(profile, settings.custom, registry, hardware);
+  const options = resolveOptions(settings, profile, hardware, fit);
+  const engines = resolveEngines(profile, settings.custom, registry, hardware, options);
+  const models = modelsFor(profile, settings.custom, registry, hardware, options);
   const entries = models.map((m) => view?.models.find((e) => e.info.id === m.id));
   const missing = models.filter((_, i) => entries[i]?.status.state !== 'ready');
   let received = 0;
@@ -86,6 +102,8 @@ export function profileModels(
   }
   const total = totalMB(models);
   return {
+    runs: engineNames(engines, registry),
+    engines,
     models,
     totalMB: total,
     missingMB: totalMB(missing),
@@ -166,7 +184,11 @@ export function ProfileCards({
                         : 'Chrome’s language packs only'}
                     </dd>
                     <dt className="text-[var(--color-muted)]">Runs</dt>
-                    <dd>{copy.runsOn}</dd>
+                    <dd>
+                      {id !== 'light' && models.runs
+                        ? `${models.runs}, ${copy.runsOn}`
+                        : copy.runsOn}
+                    </dd>
                   </dl>
                   <p className="mt-2 text-[13px] text-[var(--color-muted)]">{copy.tradeoff}</p>
                   {warning && (
@@ -225,6 +247,66 @@ function ModelStateBadge({ models }: { models: ProfileModels }) {
     );
   }
   return null;
+}
+
+/**
+ * Model sizes for the chosen profile: the smaller speech model (Balanced), and why smaller models
+ * run on this device, with a way to try the larger ones again.
+ */
+export function ModelSizeOptions({
+  settings,
+  update,
+  registry,
+  hardware,
+  models,
+}: {
+  settings: Settings;
+  update(patch: SettingsPatch): void;
+  registry: EngineRegistry;
+  hardware: HardwareInfo | null;
+  models: ProfileModels | null;
+}) {
+  const profile = settings.profile;
+  if (profile !== 'balanced' && profile !== 'best') return null;
+  const smaller = profile === 'balanced' ? smallerSpeechCopy(registry) : null;
+  const fit = models?.engines ? memoryFitCopy(models.engines, registry) : null;
+  if (!smaller && !fit) return null;
+  return (
+    <div className="card grid gap-3 p-4" data-testid="model-size">
+      {smaller && (
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={settings.smallerSpeech}
+            onChange={(e) => update({ smallerSpeech: e.target.checked })}
+            data-testid="smaller-speech"
+          />
+          <span>
+            <span className="font-medium">{smaller.label}</span>
+            <span className="block text-[13px] text-[var(--color-muted)]">{smaller.hint}</span>
+          </span>
+        </label>
+      )}
+      {fit && hardware && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="memory-fit">
+          <p className="min-w-[220px] flex-1 text-[13px]">{fit.text}</p>
+          {fit.retry && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() =>
+                void saveMemoryFit(gpuKey(hardware), profile, { step: 0, at: Date.now() })
+              }
+              data-testid="try-larger"
+            >
+              Try the larger models
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** "Speech recognition, small" with its state and actions, for each model. */

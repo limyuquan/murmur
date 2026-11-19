@@ -10,13 +10,14 @@ import type { CaptionBackground, CaptionDisplay, Settings } from '@/settings/set
 import { REPO_URL } from '@/shared/ids';
 import { Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
 import { GlossaryEditor } from '@/ui/glossary';
-import { useHardware, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
+import { useHardware, useMemoryFit, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
   ChromePacks,
   engineFits,
   HardwareSummary,
   ModelList,
+  ModelSizeOptions,
   ProfileCards,
   type ProfileModels,
   packsForSettings,
@@ -143,8 +144,9 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
   const registry = useMemo(createBuiltinRegistry, []);
   const hardware = useHardware();
   const [view, actions, error] = useModels();
+  const fit = useMemoryFit();
   const modelsOf = (p: ProfileId | 'custom'): ProfileModels | null =>
-    hardware ? profileModels(p, settings, registry, hardware, view) : null;
+    hardware ? profileModels(p, settings, registry, hardware, view, fit) : null;
   const selected = modelsOf(settings.profile);
   const suggested = hardware ? recommendProfile(hardware) : null;
   const packs = useMemo(
@@ -190,6 +192,14 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
           )}
         </aside>
       </div>
+
+      <ModelSizeOptions
+        settings={settings}
+        update={update}
+        registry={registry}
+        hardware={hardware}
+        models={selected}
+      />
 
       {settings.profile === 'custom' && (
         <CustomEngines

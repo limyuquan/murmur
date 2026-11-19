@@ -10,11 +10,12 @@ import { PROFILES, type ProfileId, recommendProfile } from '@/engines/profiles';
 import { formatSize } from '@/models/types';
 import type { Settings } from '@/settings/settings';
 import { Icon, type IconName, Logo, ProgressBar } from '@/ui/components';
-import { useHardware, useModels, useSettings } from '@/ui/hooks';
+import { useHardware, useMemoryFit, useModels, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
   ChromePacks,
   ModelList,
+  ModelSizeOptions,
   ProfileCards,
   type ProfileModels,
   packsForSettings,
@@ -45,6 +46,7 @@ export function Welcome({ initial }: { initial: Settings }) {
   const hardware = useHardware();
   const registry = useMemo(createBuiltinRegistry, []);
   const [view, actions] = useModels();
+  const fit = useMemoryFit();
   const heading = useRef<HTMLHeadingElement>(null);
   const suggested: ProfileId | null = hardware ? recommendProfile(hardware) : null;
   const picked = useRef(false);
@@ -70,7 +72,7 @@ export function Welcome({ initial }: { initial: Settings }) {
   const index = STEPS.findIndex((s) => s.id === step);
   const go = (to: Step) => setStep(to);
   const modelsOf = (p: ProfileId | 'custom') =>
-    hardware ? profileModels(p, settings, registry, hardware, view) : EMPTY;
+    hardware ? profileModels(p, settings, registry, hardware, view, fit) : EMPTY;
   const selected = modelsOf(settings.profile);
   const packs = hardware ? packsForSettings(settings, registry, hardware) : [];
   const profileLabel = settings.profile === 'custom' ? 'Custom' : PROFILES[settings.profile].label;
@@ -121,6 +123,13 @@ export function Welcome({ initial }: { initial: Settings }) {
             modelsOf={modelsOf}
             includeCustom={false}
             name="welcome-profile"
+          />
+          <ModelSizeOptions
+            settings={settings}
+            update={update}
+            registry={registry}
+            hardware={hardware}
+            models={selected}
           />
         </div>
       );

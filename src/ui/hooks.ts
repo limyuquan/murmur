@@ -4,6 +4,7 @@ import { browser } from 'wxt/browser';
 import { detectHardware, type HardwareInfo } from '@/engines/hardware';
 import { call } from '@/messaging/client';
 import { DOWNLOADS_KEY, type DownloadProgress, type ModelsView } from '@/models/types';
+import { loadMemoryFit, type MemoryFit, watchMemoryFit } from '@/settings/memoryfit';
 import {
   applyPatch,
   loadSettings,
@@ -40,6 +41,16 @@ export function useHardware(): HardwareInfo | null {
     detectHardware().then(setHardware, () => {});
   }, []);
   return hardware;
+}
+
+/** Which memory-ladder step worked on this device, per profile (settings/memoryfit.ts), live. */
+export function useMemoryFit(): MemoryFit | null {
+  const [fit, setFit] = useState<MemoryFit | null>(null);
+  useEffect(() => {
+    loadMemoryFit().then(setFit, () => setFit({}));
+    return watchMemoryFit(setFit);
+  }, []);
+  return fit;
 }
 
 export interface ModelActions {

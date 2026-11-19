@@ -176,6 +176,52 @@ test('options: download a model, stop and resume it, delete it', async ({ contex
   await expect(page.getByTestId('disk-usage')).toContainText('0 MB used');
 });
 
+test('options: the smaller speech model, and trying larger models again', async ({
+  context,
+  serviceWorker,
+}) => {
+  const page = await context.newPage();
+  await page.goto(url('options.html'));
+  await page.getByTestId('profile-balanced').click();
+  const size = page.getByTestId('model-size');
+  // The e2e build gets Qwen3-ASR from the fixture server, so the choice is offered.
+  await expect(size).toContainText('Use the smaller speech model (1.1 GB)');
+  await expect(size).toContainText('Qwen3-ASR 0.6B instead of Qwen3-ASR 1.7B (2.3 GB)');
+  await page.getByTestId('smaller-speech').check();
+  await expect
+    .poll(() =>
+      serviceWorker.evaluate(async () => {
+        const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+          .chrome;
+        const s = await chrome.storage.local.get('settings');
+        return (s.settings as { smallerSpeech?: boolean }).smallerSpeech;
+      }),
+    )
+    .toBe(true);
+  await page.getByTestId('smaller-speech').uncheck();
+  // A step down below the last step recorded on this device (no WebGPU here: the card is
+  // `none`), so Chrome's own engines run.
+  await serviceWorker.evaluate(async () => {
+    const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+      .chrome;
+    await chrome.storage.local.set({
+      memoryFit: { none: { balanced: { step: 3, at: 1, engine: 'qwen3-asr-0.6b' } } },
+    });
+  });
+  const fit = page.getByTestId('memory-fit');
+  await expect(fit).toContainText('Using smaller models to fit this device’s graphics memory');
+  await expect(fit).toContainText('Larger ones ran out of graphics memory here.');
+  await page.getByTestId('try-larger').click();
+  await expect(fit).toHaveCount(0);
+  const step = await serviceWorker.evaluate(async () => {
+    const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+      .chrome;
+    const s = await chrome.storage.local.get('memoryFit');
+    return (s.memoryFit as { none: { balanced: { step: number } } }).none.balanced.step;
+  });
+  expect(step).toBe(0);
+});
+
 test('options: spoken languages', async ({ context, serviceWorker }) => {
   const page = await context.newPage();
   await page.goto(url('options.html#languages'));
