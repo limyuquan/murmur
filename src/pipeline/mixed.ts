@@ -6,7 +6,8 @@
  * - By script (`foreignPart`, at once): letters in scripts the target language isn't written in
  *   (Hangul for an English target; Latin for a Korean one; Hangul, Latin or kana for Chinese)
  *   make up a meaningful share of the line. Wide characters (Hangul, kana, Han) count double, as
- *   one carries about as much as two Latin letters.
+ *   one carries about as much as two Latin letters. For a target not written in Latin, Latin
+ *   words with a capital (names, brands: YouTube, iPhone) don't count, and it takes two others.
  * - By detector (`detectForeign`, async): for a line in the target's own script (French in an
  *   English line), Chrome's `LanguageDetector`, when the page has it, finds another language with
  *   a meaningful confidence.
@@ -114,15 +115,19 @@ export function foreignPart(
   spoken: readonly LanguageTag[] = [],
 ): ForeignPart | null {
   const own = new Set(scriptsOf(target));
+  // Latin words in a line whose target isn't written in Latin: names (YouTube, iPhone, BTS)
+  // don't count, and it takes two other words to count at all.
+  const skipped = own.has('latin') ? null : brandLetters(text);
   const weights = new Map<Script, number>();
   let total = 0;
-  for (const ch of text) {
+  for (const ch of skipped?.text ?? text) {
     const script = scriptOf(ch);
     if (!script) continue;
     const w = WIDE.has(script) ? 2 : 1;
     total += w;
     if (!own.has(script)) weights.set(script, (weights.get(script) ?? 0) + w);
   }
+  if (skipped && skipped.words < 2) weights.delete('latin');
   let foreign = 0;
   let main: Script | null = null;
   for (const [script, w] of weights) {
@@ -131,6 +136,24 @@ export function foreignPart(
   }
   if (!main || foreign < MIXED_MIN_WEIGHT || foreign / total < MIXED_SHARE) return null;
   return { language: languageOfScript(main, weights, target, spoken), share: foreign / total };
+}
+
+/** A Latin word with a capital after its first letter (iPhone, YouTube, BTS) or a name. */
+const BRAND = /^(?:\p{Lu}.*|.+\p{Lu}.*)$/u;
+const LATIN_WORD = /[A-Za-z\u00c0-\u024f\u1e00-\u1eff]+(?:['’][A-Za-z]+)*/g;
+
+/**
+ * `text` without its Latin words that look like names or brands (any capital letter: YouTube,
+ * iPhone, Netflix, BTS), and how many other Latin words it has.
+ */
+function brandLetters(text: string): { text: string; words: number } {
+  let words = 0;
+  const rest = text.replace(LATIN_WORD, (word) => {
+    if (BRAND.test(word)) return ' ';
+    words++;
+    return word;
+  });
+  return { text: rest, words };
 }
 
 function languageOfScript(

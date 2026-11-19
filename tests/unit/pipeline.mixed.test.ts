@@ -48,6 +48,19 @@ describe('foreignPart', () => {
     expect(foreignPart('이거 진짜 good idea 같아', 'ko')?.language).toBe('und');
   });
 
+  it('doesn’t count Latin names and brands in a line whose target isn’t written in Latin', () => {
+    expect(foreignPart('오늘 YouTube 영상 봤어', 'ko')).toBeNull();
+    expect(foreignPart('iPhone 샀어', 'ko')).toBeNull();
+    expect(foreignPart('BTS 콘서트 갔다 왔어', 'ko')).toBeNull();
+    expect(foreignPart('Netflix で見た', 'ja')).toBeNull();
+    // One plain word isn't enough either.
+    expect(foreignPart('그거 진짜 cool 했어', 'ko')).toBeNull();
+    // Two or more are.
+    expect(foreignPart('YouTube 보는데 so good 진짜', 'ko')?.language).toBe('und');
+    // A target written in Latin still sees a Hangul part, names or not.
+    expect(foreignPart('I watched 유튜브 영상 today', 'en')?.language).toBe('ko');
+  });
+
   it('knows Han and kana belong to Japanese, but Hangul and kana don’t to Chinese', () => {
     expect(foreignPart('今日は東京に行きます', 'ja')).toBeNull();
     expect(foreignPart('我们今天去 カフェ 吧', 'zh')?.language).toBe('ja');

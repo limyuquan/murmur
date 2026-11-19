@@ -302,6 +302,25 @@ describe('Pipeline with lines that mix languages', () => {
     expect(latest(cues)[0]?.untranslated).toBeNull();
   });
 
+  it('marks a mixed line given back unchanged as the target language, not translated', async () => {
+    const { asr, say } = handAsr();
+    const translator: TranslationEngine = {
+      info: new PassthroughTranslationEngine().info,
+      state: 'ready',
+      load: async () => {},
+      unload: async () => {},
+      async *translate(request) {
+        const text = request.source.kind === 'text' ? request.source.text : '';
+        yield { text, final: true, sourceLanguage: 'en' };
+      },
+    };
+    const { pipeline, cues } = setup({ asr, translator });
+    say('That is so 귀여워 honestly', 'en');
+    await pipeline.close();
+    expect(latest(cues)[0]?.translation).toBeNull();
+    expect(latest(cues)[0]?.untranslated).toBe('same-language');
+  });
+
   it('asks the detector about a finished line in the target’s own script', async () => {
     const requests: TranslationRequest[] = [];
     const { asr, say } = handAsr();

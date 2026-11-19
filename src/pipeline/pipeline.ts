@@ -499,6 +499,15 @@ export class Pipeline {
             return;
           }
         }
+        // A mixed line given back as it was (Chrome's translator heard the target): the source
+        // is no translation.
+        if (mixed && chunk.final && sameText(chunk.text, text)) {
+          cue.translation = null;
+          cue.untranslated = 'same-language';
+          this.emit(cue);
+          if (final) this.lastLine = null;
+          return;
+        }
         cue.translation = { text: chunk.text, language: target, final: final && chunk.final };
         if (cue.translation.final) cue.untranslated = null;
         this.emit(cue);
@@ -608,4 +617,14 @@ export class Pipeline {
       this.segments.delete(id);
     }
   }
+}
+
+/** The same words, whatever the spacing, case and punctuation. */
+function sameText(a: string, b: string): boolean {
+  const norm = (t: string) =>
+    t
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '');
+  return norm(a) === norm(b);
 }
