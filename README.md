@@ -3,9 +3,10 @@
 Live translated subtitles over any video in Chrome. Murmur listens to the tab, turns speech into
 text, translates it, and draws the subtitles on the video, all on your own machine.
 
-> **Status: early.** Real speech recognition and translation run in the browser: Chrome's own
-> on-device speech recognition and translator (Light), or speech recognition and a translation
-> model (Gemma 4) on the graphics card (Balanced, Best). The optional companion app comes next.
+> **Status: early (v0.1).** Real speech recognition and translation run in the browser: Chrome's
+> own on-device speech recognition and translator (Light), or speech recognition (Whisper) and a
+> translation model (Gemma 4) on the graphics card (Balanced, Best). A newer speech model,
+> Qwen3-ASR, is built in and comes in a later update, once its files are published.
 
 ## For humans
 
@@ -29,13 +30,14 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   ahead of time"); it needs the Balanced or Best model size. Where the player has nothing loaded
   yet (an ad, a jump far ahead), subtitles come as they're heard.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
-  downloads a small pack per language, after one click). Balanced and Best run speech
-  recognition on the graphics card (Whisper: a 1.6 GB download, once; 80 to 210 MB for the small
-  model on devices without a suitable graphics card) and a translation model that reads the
-  lines before each one: Gemma 4 E2B in Balanced (2.0 GB more), the larger E4B in Best (3.0 GB
-  more, for a graphics card with its own memory). Where the translation model doesn't fit, or
-  until you download it, Chrome's translator translates (the popup offers the download).
-  Murmur suggests a size that suits your device.
+  downloads a small pack per language, after one click; where the browser has no on-device
+  speech recognition, a small Whisper model, 80 to 210 MB). Balanced and Best run speech
+  recognition on the graphics card (Whisper large-v3-turbo: a 1.6 GB download, once) and a
+  translation model that reads the lines before each one: Gemma 4 E2B in Balanced (2.0 GB
+  more), the larger E4B in Best (3.0 GB more, for a graphics card with its own memory). Where
+  graphics memory is short, smaller models run, and where the translation model doesn't fit, or
+  until you download it, Chrome's translator translates (the popup offers the download). Murmur
+  suggests a size that suits your device.
 - **Your names and terms.** List names and terms with how they should be written (Settings →
   Glossary), each with the other ways it's said or misheard and an optional note. The
   translation model uses your spelling when a line mentions one, or something that sounds
@@ -59,7 +61,19 @@ text, translates it, and draws the subtitles on the video, all on your own machi
 3. Pin Murmur to the toolbar.
 
 To update, download the new zip, replace the folder's contents, then click ↻ on Murmur's card in
-`chrome://extensions`. Works in Chrome 120+ and other Chromium browsers.
+`chrome://extensions`. Your settings and downloaded models stay; removing the extension deletes
+them.
+
+**Browsers.** Chrome 138 or newer; Chrome 139 or newer for everything:
+
+| Model size | Needs |
+|---|---|
+| Light | Chrome 139+ for on-device speech recognition (older: a small Whisper model instead) and Chrome 138+ for translation |
+| Balanced, Best | WebGPU (a graphics card or recent built-in graphics) and Chrome 137+ for the translation model; Chrome's translator (138+) translates lines it is late on |
+
+Other Chromium browsers (Edge, Brave, Opera and others) don't have Chrome's on-device speech
+recognition and translator, so Light can't translate there, and Balanced and Best have no
+backup for late lines. Murmur's settings page says which of these your browser lacks.
 
 <details>
 <summary>Or build it from source</summary>
@@ -91,11 +105,11 @@ the hidden `.output` folder. To update: `git pull && pnpm build`, then ↻.
 - **One tab at a time.** Turning Murmur on in another tab stops it in the first.
 - **Protected video (DRM)** is silent to extensions, so there is nothing to transcribe. Most
   paid streaming services are in this group.
-- **When the tab goes to another site**, subtitles follow if Murmur can reach the new page (or
-  you allowed it on all sites) and it has a video. Otherwise they stop, and the popup says why:
-  turn them on again there.
+- **When the tab goes to another site**, subtitles follow if Murmur can reach the new page (a
+  site where you turned on subtitles ahead of time) and it has a video. Otherwise they stop, and
+  the popup says why: turn them on again there.
 - **Players inside frames from another site** show subtitles at the bottom of the window instead
-  of on the player, unless you allow Murmur on all sites (coming with the settings for it).
+  of on the player.
 - **Subtitles arrive after the speech**, by the time the models need. Expect a second or two,
   unless subtitles ahead of time are on for the site and the player has loaded that part.
 - **Ahead of time needs a reload** the first time it is turned on for a site, and works with
@@ -156,21 +170,25 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 
 - One-time setup: `pnpm exec playwright install chromium`.
 - A change is done when both are green.
-- The e2e build (`pnpm build:e2e` → `.output/chrome-mv3-e2e`) adds `<all_urls>` and the
-  `__murmur` service-worker hooks (`src/shared/e2e.ts`), and opens the overlay's shadow root so
-  tests can read it. All of that is stripped from other builds. Its sessions capture a synthetic
-  test tone, because headless Chromium plays no tab audio; `capture.spec.ts` still exercises the
-  real tab-capture handshake (Chromium is started with `--allowlisted-extension-id`).
+- The e2e build (`pnpm build:e2e` → `.output/chrome-mv3-e2e`) adds `<all_urls>`, the `__murmur`
+  service-worker hooks (`src/shared/e2e.ts`), the demo and test engines (`src/engines/demo/`)
+  and simulated out-of-memory failures, and opens the overlay's shadow root so tests can read
+  it. Other builds leave all of that out (`noDemoEngines` in `wxt.config.ts`, `IS_E2E`
+  branches); `scripts/verify-zip.mjs` fails a release zip that has any of it. Its sessions
+  capture a synthetic test tone, because headless Chromium plays no tab audio; `capture.spec.ts`
+  still exercises the real tab-capture handshake (Chromium is started with
+  `--allowlisted-extension-id`).
 - Fixture pages live in `tests/fixtures/pages/`, served on `http://127.0.0.1:4392/` by
   `scripts/serve-fixtures.mjs`, and again on port 4393, another origin, for frames from another
   site (`frames.html`). The lookahead pages use hls.js, dash.js and Shaka (pinned dev
   dependencies, served from node_modules at `/lib/`) on synthetic media (tone bursts) made by
-  `scripts/make-lookahead-media.sh` (ffmpeg; Opus and VP9, since Playwright's Chromium has no AAC
-  or H.264). `__murmur.lookahead(site, on)` turns lookahead on for a site in e2e builds, and
-  `__murmur.offscreenLog()` returns the offscreen document's lookahead cues and state. The same server stands in for Hugging Face at `/hf/`: e2e builds
-  download models from there (every file in `src/engines/*/files.json`, at its real size,
-  filled with a pattern, at `FIXTURE_HF_MBPS` MB/s, default 40). With `FIXTURE_HF_DIR=<dir>` it
-  serves real files where `<dir>` has them (`<dir>/<repo>/<path>`, else `<dir>/<path>`).
+  `scripts/make-lookahead-media.sh` (ffmpeg; Opus and VP9, since Playwright's Chromium has no
+  AAC or H.264). `__murmur.lookahead(site, on)` turns lookahead on for a site in e2e builds, and
+  `__murmur.offscreenLog()` returns the offscreen document's lookahead cues and state. The same
+  server stands in for Hugging Face at `/hf/`: e2e builds download models from there (every file
+  in `src/engines/*/files.json`, at its real size, filled with a pattern, at `FIXTURE_HF_MBPS`
+  MB/s, default 40). With `FIXTURE_HF_DIR=<dir>` it serves real files where `<dir>` has them
+  (`<dir>/<repo>/<path>`, else `<dir>/<path>`).
 - If `playwright test` hangs before any test starts, the machine may hang on connections to a
   closed localhost port instead of refusing them (seen with WSL mirrored networking). Start
   `node scripts/serve-fixtures.mjs` yourself first; Playwright reuses it.
@@ -257,21 +275,21 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    peak, and place it on a profile's memory ladder (`LADDERS`) or in `MEMORY_FALLBACKS`.
 5. List what it downloads in `info.models`: id, label, size and the exact files (`source`: a
    Hugging Face repo at a pinned commit, with each file's byte size and its hash on the Hub,
-   `sha256:` for Git LFS files and `git-sha1:` for the others, checked after download), one entry
-   per `backend` when the weights differ by backend. A file from another repo names it
+   `sha256:` for Git LFS files and `git-sha1:` for the others, checked after download), one
+   entry per `backend` when the weights differ by backend. A file from another repo names it
    (`from: { repo, revision }`). Files Murmur makes itself go in `MURMUR_MODELS`
    (`src/models/hub.ts`); until that repo is published, an engine that needs them sets
-   `info.unavailable` where models come from Hugging Face. The options page, welcome page and popup show
-   and manage those; the service worker downloads them into the Cache API (`src/models/store.ts`)
-   only when the person clicks Download. `load()` must never download: read the files with
-   `modelFileCache(source)` / `readFile` (`src/models/hub.ts`) and throw
+   `info.unavailable` where models come from Hugging Face. The options page, welcome page and
+   popup show and manage those; the service worker downloads them into the Cache API
+   (`src/models/store.ts`) only when the person clicks Download. `load()` must never download:
+   read the files with `modelFileCache(source)` / `readFile` (`src/models/hub.ts`) and throw
    `ModelError(message, ids, true)` when they aren't there.
 6. Load progress goes through `LoadOptions.onProgress`; the popup and the overlay's chip show it.
    Honour `LoadOptions.signal`: a stop aborts it, and any wait (downloads, Chrome packs) should end
    with it. A part of the engine that stops for good while running reports an
    `EngineUnavailableError` to `onError`; the popup lists it.
 7. Report failures with the errors in `src/engines/errors.ts`: `ModelError` (code `model`),
-   `CompanionError` (`companion`), `EngineActionRequiredError` (`setup`, Chrome packs),
+   `EngineActionRequiredError` (`setup`, Chrome packs),
    `UnsupportedLanguageError` (a language it can't handle at all). Keep `SessionActivity` honest:
    the offscreen host feeds `ActivityTracker` (`src/offscreen/activity.ts`) with every frame,
    cue and `AsrHealth` report (backlog, real-time factor), which is how "falling behind",
@@ -284,27 +302,41 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 |---|---|---|
 | `chrome-webspeech` | Chrome's on-device `SpeechRecognition` on the tab track | Always `processLocally = true`; refuses to run when Chrome can't promise on-device. One recognizer per spoken language (up to 4) runs all session; `chrome/arbiter.ts` picks, per segment, the one that heard its own language. |
 | `chrome-translator` | Chrome's `Translator`, one per language pair | `LanguageDetector` checks each line's language when Chrome has it ready. |
-| `qwen3-asr-0.6b`, `qwen3-asr-1.7b` | Qwen3-ASR-0.6B / 1.7B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker; one engine class, the size's files and width from `QWEN3_MODELS` (`qwen3asr/info.ts`) | The 1.7B first in Balanced (with E2B) and Best (with E4B), the 0.6B where graphics memory is short (the memory ladder below) or, in Balanced, by choice (`smallerSpeech`, a 1.1 GB download instead of 2.3 GB); a 1.7B that can't run for another reason hands over to the 0.6B (`RUNTIME_FALLBACKS`). The 1.7B makes clearly better subtitles at the same speed (blind judge 3.10 vs 2.79 on English). 0.6B: SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). 1.7B: our 8-bit encoder and decoder from the same export, under `qwen3-asr-1.7b/` in `MURMUR_MODELS`, sharing the vocabulary files (2.3 GB; about 2.4 GB of graphics memory, 5.6 GB with E4B on an RTX 3070). **Those files aren't published yet**, so production builds show it unavailable and Balanced runs turbo. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; probes and finals decode from scratch, and a probe at the segment's end is its final; decoding stops at a token cap that grows with the audio or on a repetition loop; Whisper's scheduler and guards (`segments.ts`). |
-| `gemma4-e2b`, `gemma4-e4b` | Gemma 4 E2B / E4B (`-web.litertlm`, `litert-community` at pinned commits, `llm/files.json`) on LiteRT-LM.js 0.19.0 (pinned), WebGPU, in a **classic** worker (`entrypoints/llm-worker.ts`: its glue uses `importScripts`) | First in Balanced (E2B) and Best (E4B, then E2B, by the memory ladder). Only the relaxed-SIMD + JSPI WebAssembly build ships (24 MB; Chrome 137+); older Chrome, no WebGPU or another failed load hands over to Chrome's translator (`RUNTIME_FALLBACKS`); running out of graphics memory steps down the ladder. A model that isn't downloaded doesn't stop the session either (`MODEL_FALLBACKS`: E4B to E2B to Chrome's translator; `splitMissing` in `models/catalog.ts` tells the service worker which missing models block a start); the popup offers the download (`TabView.models.better`). The model loads as a Blob of the cached parts; unloading terminates the worker, the only way to free its graphics memory. Prompt v2 (`llm/prompt.ts`, byte for byte the benchmarked one): earlier lines with their languages, the glossary entries the line uses, the line's own language. Number words in the lines reach the model as digits where they are plainly numbers (`llm/numbers.ts`: before a counter, or beside another number; Sino-Korean, native Korean, Japanese and Chinese numerals; 백오십 원 → 150 원, 三百で → 300で; words such as 세대, 천만에요, 百度 and 十人十色 stay); the subtitle keeps what was said. One generation at a time, finished lines before previews and revisions (`request.previous`: the line before, retranslated with the line that ends its sentence as `NEXT`, sent as `revises` only when it changes materially, `worthRevising` in `llm/output.ts`); drafts stream to the overlay; answers are cleaned and rejected when they repeat a context line or run away (`llm/output.ts`). A finished line gets 3 s (`LINE_BUDGET_MS`), then Chrome's translator does it and the popup says so; a line made ahead of time (lookahead) gets until 1 s before it shows, 3 to 20 s (`lookaheadBudgetMs`), and finished lines are generated in the order they are due, so a live line goes before one that shows later. Measured on an RTX 3070: E2B first token ~140 ms, ~90 tokens/s; E4B ~430 ms, ~60 tokens/s. |
+| `qwen3-asr-0.6b`, `qwen3-asr-1.7b` | Qwen3-ASR-0.6B / 1.7B on ONNX Runtime Web (pinned), WebGPU with `shader-f16` only, in a worker; one engine class, the size's files and width from `QWEN3_MODELS` (`qwen3asr/info.ts`) | The 1.7B first in Balanced (with E2B) and Best (with E4B), the 0.6B where graphics memory is short (the memory ladder below) or, in Balanced, by choice (`smallerSpeech`, a 1.1 GB download instead of 2.3 GB); a 1.7B that can't run for another reason hands over to the 0.6B (`RUNTIME_FALLBACKS`). The 1.7B makes clearly better subtitles at the same speed (blind judge 3.10 vs 2.79 on English). 0.6B: SubtitleKing's fp16 encoder at a pinned commit plus our 8-bit decoder, tied-embedding offsets and vocabulary from `MURMUR_MODELS` (`qwen3asr/files.json`, 1.1 GB). 1.7B: our 8-bit encoder and decoder from the same export, under `qwen3-asr-1.7b/` in `MURMUR_MODELS`, sharing the vocabulary files (2.3 GB; about 2.4 GB of graphics memory, 5.6 GB with E4B on an RTX 3070). **Those files aren't published yet** (`MURMUR_MODELS` in `src/models/hub.ts` is a placeholder), so v0.1 builds show both sizes unavailable, Balanced and Best run Whisper turbo, and the smaller speech model choice doesn't show. Language per segment from the model's `language X` header (`language None` = no speech); partials every 1.5 s that re-decode only the last partial's tail; probes and finals decode from scratch, and a probe at the segment's end is its final; decoding stops at a token cap that grows with the audio or on a repetition loop; Whisper's scheduler and guards (`segments.ts`). A final or probe heard as the target language is decoded again forced to the speaker's language (the first spoken language that isn't the target, else the session's most heard one), and that answer kept when the model is surer of it and it says about as much: a speaker who mixes in a few target-language words is often heard as the target. Once the session is plainly in the target language (8 of the last 10 finals, surely), only one such line in 5 is decoded again (`decodeAgain` in `qwen3asr/prompt.ts`); both decodes count in the line's decoding time. |
+| `gemma4-e2b`, `gemma4-e4b` | Gemma 4 E2B / E4B (`-web.litertlm`, `litert-community` at pinned commits, `llm/files.json`) on LiteRT-LM.js 0.19.0 (pinned), WebGPU, in a **classic** worker (`entrypoints/llm-worker.ts`: its glue uses `importScripts`) | First in Balanced (E2B) and Best (E4B, then E2B, by the memory ladder). Only the relaxed-SIMD + JSPI WebAssembly build ships (24 MB; Chrome 137+); older Chrome, no WebGPU or another failed load hands over to Chrome's translator (`RUNTIME_FALLBACKS`); running out of graphics memory steps down the ladder. A model that isn't downloaded doesn't stop the session either (`MODEL_FALLBACKS`: E4B to E2B to Chrome's translator; `splitMissing` in `models/catalog.ts` tells the service worker which missing models block a start); the popup offers the download (`TabView.models.better`). The model loads as a Blob of the cached parts; unloading terminates the worker, the only way to free its graphics memory. Prompt v3 (`llm/prompt.ts`, byte for byte the benchmarked one with the benchmark's languages): the 6 earlier lines with their languages and translations (`contextLines` in `pipeline.ts`), the glossary entries the line uses, the line's own language. Number words in CJK languages reach the model as digits where they are plainly numbers (`llm/numbers.ts`: before a counter, or beside another number; 三百で → 300で; idioms and everyday words that contain numerals stay); the subtitle keeps what was said. One generation at a time, finished lines before previews and revisions (`request.previous`: the line before, retranslated with the line that ends its sentence as `NEXT`, sent as `revises` only when it changes materially, `worthRevising` in `llm/output.ts`); drafts stream to the overlay; answers are cleaned and rejected when they repeat a context line or run away (`llm/output.ts`). A finished line gets 3 s (`LINE_BUDGET_MS`), then Chrome's translator does it and the popup says so; a line made ahead of time (lookahead) gets until 1 s before it shows, 3 to 20 s (`lookaheadBudgetMs`), and finished lines are generated in the order they are due, so a live line goes before one that shows later. Measured on an RTX 3070: E2B first token ~140 ms, ~90 tokens/s; E4B ~430 ms, ~60 tokens/s. |
 | `whisper-base`, `whisper-large-v3-turbo` | transformers.js (pinned) in a worker per model | WebGPU, WebAssembly fallback (base only). Weights from Hugging Face at pinned revisions (`whisper/files.json`), one download per backend, read from the model cache with the network off. Language detected per segment; partials about every second, a final per segment; hallucination guards in `whisper/filters.ts`. |
 
 - **Graphics memory: the ladder.** WebGPU doesn't report how much memory a card has. Balanced and
   Best have a memory ladder (`LADDERS` in `src/engines/profiles.ts`): Best 1.7B + E4B → 1.7B +
   E2B → 0.6B + E2B → 0.6B + Chrome's translator; Balanced 1.7B + E2B → 0.6B + E2B → 0.6B +
-  Chrome's translator; below the last step, Chrome's own speech recognition (else Whisper base)
-  and translator. A session starts at the first step whose engines' measured peaks
-  (`minGpuMemoryMB`, added up) fit a guess (`estimateGpuMemoryMB`: the kind of card, its name when
-  Chrome gives one, `navigator.deviceMemory`, buffer limits), or at the step that last worked on
-  this card (`src/settings/memoryfit.ts`, per `gpuKey`). The offscreen document loads speech
-  recognition, then the translator (`loadLadder` in `src/engines/loading.ts`); an engine that runs
-  out of memory while loading or warming up (`OutOfMemoryError`: the workers watch every
-  `GPUDevice` their runtime makes for `GPUOutOfMemoryError` and device loss, `gpuwatch.ts`, and
-  read out-of-memory messages) is unloaded and the session steps down, reports the step
-  (`memory-fit` event; the service worker records it) and says "Using smaller models to fit this
-  device's graphics memory". The options page offers "Try the larger models", which sets the
-  record back to the top. There is no test allocation: on Windows the driver lets a program
-  allocate past the card's memory, so a probe proves little, and filling the card can make the GPU
-  process drop every page's graphics.
+  Chrome's translator (in v0.1, turbo stands in for both Qwen3-ASR sizes); below the last step,
+  Chrome's own speech recognition (else Whisper base) and translator. A session starts at the
+  first step whose engines' measured peaks (`minGpuMemoryMB`, added up) fit a guess
+  (`estimateGpuMemoryMB`: the kind of card, its name when Chrome gives one,
+  `navigator.deviceMemory`, buffer limits), or at the step this card's record says
+  (`src/settings/memoryfit.ts`, per `gpuKey`; a record names its ladder, `ladderId`: the engines
+  of every step as resolved here, and doesn't apply to another). The offscreen document loads
+  speech recognition, then the translator (`loadLadder` in `src/engines/loading.ts`); an engine
+  that runs out of memory while loading or warming up (`OutOfMemoryError`: the workers watch
+  every `GPUDevice` their runtime makes for `GPUOutOfMemoryError` and device loss, `gpuwatch.ts`,
+  and read out-of-memory messages) is unloaded and the session steps down: past every step with
+  a speech model that doesn't fit alone, else to the next step with a smaller translator (the
+  speech model loaded again if its device went too). A device lost with no out-of-memory error
+  first (`lostOnly`: a driver reset, the GPU process restarting) is tried once more first. The
+  session reports the step (`memory-fit` event; the service worker records it) and says "Using
+  smaller models to fit this device's graphics memory". The options page offers "Try the larger
+  models", which sets the record back to the top (a session already running doesn't undo that).
+  There is no test allocation: on Windows the driver lets a program allocate past the card's
+  memory, so a probe proves little, and filling the card can make the GPU process drop every
+  page's graphics.
+- **Falling behind.** A step that fits can still be too slow (`src/engines/slowness.ts`): the
+  translator over its 3 s budget on a fifth of a full window of 30 live lines, the late ones
+  spread over at least 2 minutes (a late line that mostly waited for the one before doesn't
+  count), or speech recognition slower than 0.6 s per second of speech for 15 lines in a row.
+  Lines while the tab is hidden, or while lookahead is busy on the same models, don't count. One
+  such session is a strike; a second at the same step within 14 days makes the next session
+  start one step down (a smaller translator, or a smaller speech model when speech recognition
+  fell behind), never below the ladder's last step. That step down moves back up one step a week.
 - **Chrome language packs need a click.** Chrome only starts a speech or translation pack
   download from a user gesture, and reports packs per site (a new origin sees `downloadable`
   even when the pack is on disk; the click then finishes at once). Engines reject loading with
@@ -323,10 +355,13 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 - **Glossary** (a setting). `SessionConfig.glossary` carries it to the offscreen document;
   `withGlossary` (`translators.ts`) gives each request the entries its line or context uses
   (`glossary.ts`: each entry's source and `aliases`, compiled once per session; whole words, or
-  anywhere in unspaced scripts; short Korean names need a boundary; light fuzzy matching for
-  misheard names, Korean by its jamo), each as the alias that matched with the entry's `note`.
-  Only engines with `usesGlossary` get it. Files: `settings/glossaryfile.ts` (JSON, or rows of
-  `said as|other<TAB>written as<TAB>note`, tabs or commas; import merges by rendering).
+  anywhere in unspaced scripts, where short names need a boundary; light fuzzy matching for
+  misheard names, by sound units where the script has them), each as the alias that matched
+  with the entry's `note`. Only engines with `usesGlossary` get it. Glossary text is kept on one
+  line (`oneLine` in `settings.ts`), so it can't add lines to the prompt. Files:
+  `settings/glossaryfile.ts` (JSON, or rows of `said as|other<TAB>written as<TAB>note`, tabs or
+  commas; at most 1 MB and 1000 rows; import merges by rendering; the table export marks cells
+  a spreadsheet would read as formulas).
 - **Real-model checks** need a real Chrome with a GPU and language packs, so they aren't in
   `pnpm test:e2e`. Build with `WXT_MODEL_HOST=https://huggingface.co pnpm build:e2e` so models
   download from Hugging Face, download them on the options page, then the e2e build's
@@ -367,7 +402,9 @@ Headless tests can't check these, so ask a human after related changes:
 
 ## License
 
-[MIT](LICENSE). Gemma 4 (downloaded on request) is © Google, Apache-2.0; LiteRT-LM.js (bundled)
-is © Google, Apache-2.0 ([NOTICE](NOTICE)). The bundled Silero VAD model is © Silero Team, MIT
-([src/assets/silero-vad/LICENSE](src/assets/silero-vad/LICENSE)). Test clips carry their own
-licences ([tests/unit/fixtures/vad/README.md](tests/unit/fixtures/vad/README.md)).
+[MIT](LICENSE). The extension bundles third-party code and the Silero VAD model, listed with
+their licences in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) (ONNX Runtime Web, React,
+Tailwind CSS and Silero VAD are MIT; Transformers.js and LiteRT-LM.js are Apache-2.0). Models
+downloaded on request carry their own licences, listed in [NOTICE](NOTICE): Whisper (© OpenAI),
+Qwen3-ASR (© Alibaba Cloud, Apache-2.0) and Gemma 4 (© Google, Apache-2.0). Test clips carry
+their own licences ([tests/unit/fixtures/vad/README.md](tests/unit/fixtures/vad/README.md)).
