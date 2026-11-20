@@ -311,11 +311,10 @@ test('a line whose translation failed shows the original, full size and not dimm
   await expect(line).toHaveAttribute('data-role', 'main');
   await expect(line).toHaveAttribute('data-final', 'true');
   await expect(line.locator('.text')).toContainText('Ja, aber ich komme später.');
-  // Drawn as any finished translation: white, at the main line's size.
-  const style = await line
-    .locator('.text')
-    .evaluate((el) => ({ color: getComputedStyle(el).color, size: getComputedStyle(el).fontSize }));
-  expect(style.color).toBe('rgb(255, 255, 255)');
+  // Drawn as any finished translation: white (once its colour has eased in), at the main
+  // line's size.
+  const text = line.locator('.text');
+  await expect(text).toHaveCSS('color', 'rgb(255, 255, 255)');
   const main = await host.locator('.stack').evaluate((el) => getComputedStyle(el).fontSize);
-  expect(style.size).toBe(main);
+  await expect(text).toHaveCSS('font-size', main);
 });
