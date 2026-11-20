@@ -15,6 +15,9 @@ const LITERT_WASM = path.join(
 );
 const LITERT_FILES = ['litertlm_wasm_internal.js', 'litertlm_wasm_internal.wasm'];
 
+/** Licence files, copied to the extension's root so every build carries them. */
+const LICENCE_FILES = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.txt'];
+
 /**
  * Public half of the key that fixes the unpacked extension ID (EXTENSION_ID in src/shared/ids.ts).
  * The private half was never saved. A fixed ID lets a future local companion app list Murmur in
@@ -70,6 +73,9 @@ export default defineConfig({
     'build:publicAssets': (_wxt, files) => {
       for (const file of LITERT_FILES) {
         files.push({ absoluteSrc: path.join(LITERT_WASM, file), relativeDest: `litert/${file}` });
+      }
+      for (const file of LICENCE_FILES) {
+        files.push({ absoluteSrc: path.resolve(import.meta.dirname, file), relativeDest: file });
       }
     },
   },

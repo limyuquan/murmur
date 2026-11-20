@@ -1,12 +1,37 @@
-Murmur includes or downloads the following third-party software and models.
+Murmur
+Copyright (c) 2026 Lim Yu Quan. Released under the MIT License (LICENSE).
 
-LiteRT-LM.js (@litert-lm/core 0.19.0), bundled with its WebAssembly runtime.
-Copyright 2026 Google LLC. Licensed under the Apache License, Version 2.0.
-https://github.com/google-ai-edge/LiteRT-LM
+Murmur includes the third-party software listed in THIRD_PARTY_NOTICES.txt, with their licence
+texts. Among them, under the Apache License, Version 2.0:
 
-Gemma 4 E2B and E4B (litert-community/gemma-4-E2B-it-litert-lm,
-litert-community/gemma-4-E4B-it-litert-lm), downloaded from Hugging Face only when the person
-clicks Download. Copyright Google LLC. Licensed under the Apache License, Version 2.0.
-https://huggingface.co/google/gemma-4-E2B-it
+LiteRT-LM.js (@litert-lm/core 0.19.0) and @litertjs/wasm-utils, bundled with their WebAssembly
+runtime. Copyright 2026 Google LLC. https://github.com/google-ai-edge/LiteRT-LM
 
-A copy of the Apache License, Version 2.0 is at https://www.apache.org/licenses/LICENSE-2.0.
+Transformers.js (@huggingface/transformers 4.3.2), with @huggingface/tokenizers bundled in it.
+Copyright Hugging Face, Inc. https://github.com/huggingface/transformers.js
+
+Models Murmur downloads from Hugging Face, only when the person clicks Download. They are not
+part of the extension; each comes with the licence on its model card:
+
+Whisper base and Whisper large-v3-turbo (speech recognition), ONNX conversions by onnx-community
+(onnx-community/whisper-base, onnx-community/whisper-large-v3-turbo) of OpenAI's models
+(openai/whisper-base: Apache License 2.0 on its model card; openai/whisper-large-v3-turbo: MIT
+License). Copyright OpenAI. https://github.com/openai/whisper
+
+Qwen3-ASR 0.6B and 1.7B (speech recognition), by the Qwen team, Alibaba Cloud (Qwen/Qwen3-ASR-0.6B,
+Qwen/Qwen3-ASR-1.7B). Licensed under the Apache License, Version 2.0.
+- The 0.6B's audio encoder comes from SubtitleKing's ONNX export
+  (subtitleking/qwen3-asr-0.6b-onnx), Apache License 2.0 on its model card.
+- The other files (the 0.6B's decoder; the 1.7B's encoder and decoder, made from
+  subtitleking/qwen3-asr-1.7b-onnx, also Apache License 2.0) are re-quantised to 8 bits by
+  Murmur and published in Murmur's own model repository, with the Apache License, the
+  upstream notices and a statement of the changes. Until that repository is published, Murmur
+  builds don't offer Qwen3-ASR.
+
+Gemma 4 E2B and E4B (translation), LiteRT-LM builds by litert-community
+(litert-community/gemma-4-E2B-it-litert-lm, litert-community/gemma-4-E4B-it-litert-lm) of
+google/gemma-4-E2B-it and google/gemma-4-E4B-it. Copyright Google LLC. Licensed under the Apache
+License, Version 2.0.
+
+A copy of the Apache License, Version 2.0 is in THIRD_PARTY_NOTICES.txt and at
+https://www.apache.org/licenses/LICENSE-2.0.
