@@ -205,8 +205,9 @@ test('options: the smaller speech model, and trying larger models again', async 
   await serviceWorker.evaluate(async () => {
     const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
       .chrome;
+    const ladder = await globalThis.__murmur?.ladderId();
     await chrome.storage.local.set({
-      memoryFit: { none: { balanced: { step: 3, at: 1, engine: 'qwen3-asr-0.6b' } } },
+      memoryFit: { none: { balanced: { ladder, step: 3, at: 1, engine: 'qwen3-asr-0.6b' } } },
     });
   });
   const fit = page.getByTestId('memory-fit');

@@ -30,6 +30,8 @@ export interface BackgroundTestHook {
   stop(): Promise<void>;
   /** Lookahead on or off for `site` (the e2e build already has access to every site). */
   lookahead(site: string, on: boolean): Promise<void>;
+  /** The memory ladder the settings' profile resolves to here (`ladderId`), or null. */
+  ladderId(): Promise<string | null>;
   /** What the offscreen document logged (asked over runtime messaging). */
   offscreenLog(): Promise<OffscreenE2eLog | null>;
 }

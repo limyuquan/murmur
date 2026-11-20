@@ -7,6 +7,7 @@ import {
   installSessionListeners,
   onMemoryFit,
   onOffscreenStatus,
+  plannedEngines,
   reconcile,
   startSession,
   stopSession,
@@ -99,6 +100,9 @@ export default defineBackground(() => {
       },
       async lookahead(site, on) {
         await setLookaheadSite(site, on);
+      },
+      async ladderId() {
+        return (await plannedEngines()).ladder?.id ?? null;
       },
       async offscreenLog() {
         try {
