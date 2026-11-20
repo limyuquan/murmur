@@ -82,6 +82,78 @@ test('popup: lookahead on this site turns on, and says the page needs a reload',
   await expect.poll(registered).toEqual({ sites: [], matches: [] });
 });
 
+test('popup: shows the keyboard shortcut Chrome has, and where to change it', async ({
+  murmur,
+  context,
+}) => {
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
+  const popup = await context.newPage();
+  await popup.goto(url(`popup.html?tab=${tabId}`));
+  const row = popup.getByTestId('shortcut');
+  // The binding as Chrome reports it (the manifest suggests Alt+Shift+S).
+  await expect(row.locator('kbd')).toHaveText(['Alt', 'Shift', 'S']);
+  const opened = context.waitForEvent('page');
+  await row.getByRole('button', { name: 'Change the keyboard shortcut' }).click();
+  expect((await opened).url()).toBe('chrome://extensions/shortcuts');
+});
+
+/** Opens the popup with the service worker's `view` answer changed by `patch` (a better model). */
+async function popupWith(
+  context: import('@playwright/test').BrowserContext,
+  tabId: number,
+  patch: Record<string, unknown>,
+) {
+  const popup = await context.newPage();
+  await popup.addInitScript((patch) => {
+    const runtime = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+      .chrome.runtime;
+    const send = runtime.sendMessage.bind(runtime) as (m: unknown) => Promise<unknown>;
+    (runtime as { sendMessage: unknown }).sendMessage = async (message: { op?: string }) => {
+      const res = (await send(message)) as { ok: boolean; result: Record<string, unknown> };
+      if (message?.op === 'view' && res?.ok) Object.assign(res.result, patch);
+      return res;
+    };
+  }, patch);
+  await popup.goto(url(`popup.html?tab=${tabId}`));
+  return popup;
+}
+
+test('popup: “Not now” puts the offer of a better translation model away for good', async ({
+  murmur,
+  context,
+  serviceWorker,
+}) => {
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
+  const better = { ids: ['gemma4-e2b-webgpu'], label: 'Gemma 4 E2B', sizeMB: 2010 };
+  const patch = { models: { ready: true, missingMB: 0, better } };
+  const popup = await popupWith(context, tabId, patch);
+  const offer = popup.getByTestId('better');
+  await expect(offer).toContainText('Better translations: download Gemma 4 E2B');
+  await offer.getByTestId('better-dismiss').click();
+  await expect(offer).toHaveCount(0);
+  await expect
+    .poll(() =>
+      serviceWorker.evaluate(async () => {
+        const s = await (
+          globalThis as unknown as { chrome: typeof import('wxt/browser').browser }
+        ).chrome.storage.local.get('settings');
+        return (s.settings as { dismissed?: string[] }).dismissed;
+      }),
+    )
+    .toEqual(['better:gemma4-e2b-webgpu']);
+  await popup.close();
+  // Not offered again; another model would be.
+  const again = await popupWith(context, tabId, patch);
+  await expect(again.getByTestId('status')).toHaveText(/^Off/);
+  await expect(again.getByTestId('better')).toHaveCount(0);
+  const other = await popupWith(context, tabId, {
+    models: { ready: true, missingMB: 0, better: { ...better, ids: ['gemma4-e4b-webgpu'] } },
+  });
+  await expect(other.getByTestId('better')).toContainText('Better translations');
+});
+
 test('popup: a model that isn’t downloaded stops the start, with the fix', async ({ murmur }) => {
   const page = await murmur.open('video.html');
   const tabId = await murmur.tabId(page);
@@ -196,8 +268,15 @@ test('options: download a model, stop and resume it, delete it', async ({ contex
 
   await page.getByTestId('profile-balanced').click();
   await expect(page.getByRole('radio', { name: /^Balanced/ })).toBeChecked();
-  const selected = page.getByTestId('selected-models');
+  // The download lives inside the chosen card.
+  const selected = page.getByTestId('profile-balanced').getByTestId('selected-models');
   await expect(selected).toContainText('needs 80 MB');
+  // Each file is under Manage downloads, closed until asked for.
+  const manage = page.getByTestId('manage-downloads');
+  await expect(manage).not.toHaveAttribute('open');
+  await expect(page.getByTestId('model-whisper-base-wasm')).toBeHidden();
+  await manage.locator('summary').click();
+  await expect(manage).toHaveAttribute('open');
   await page.getByTestId('download-selected').click();
   await expect(selected).toContainText(/Downloading Balanced models/);
   const row = page.getByTestId('model-whisper-base-wasm');
@@ -374,6 +453,9 @@ test('options: glossary entries are added, edited and removed', async ({
   await editor.getByLabel('Written as').last().fill('Other');
   await expect(page.getByTestId('glossary-add')).toBeDisabled();
   await expect(editor).toContainText('That one is already in.');
+  // What was typed became a chip in the add row; its × takes it out.
+  await editor.locator('form').getByRole('button', { name: 'Remove “Kamil”' }).click();
+  await expect(editor).not.toContainText('That one is already in.');
   // Edits are saved when the field is left.
   const entries = editor.getByRole('list', { name: 'Glossary entries' });
   await entries.getByLabel('Written as').fill('Camille D.');
@@ -388,6 +470,20 @@ test('options: glossary entries are added, edited and removed', async ({
   await editor.getByLabel('Note').fill('a band');
   await page.getByTestId('glossary-add').click();
   const lumen = { source: 'Lumen', aliases: ['Loumen'], target: 'Lumen', note: 'a band' };
+  await expect.poll(glossary).toEqual([lumen]);
+  // Each way it's said is a chip: added with Enter, taken out with its ×, saved at once.
+  const entry = entries.getByTestId('glossary-entry').first();
+  await expect(entry.locator('.token')).toHaveText(['Lumen', 'Loumen']);
+  await entry.getByLabel('Said as').fill('Lümen');
+  await entry.getByLabel('Said as').press('Enter');
+  await expect(entry.locator('.token')).toHaveText(['Lumen', 'Loumen', 'Lümen']);
+  await expect.poll(glossary).toEqual([{ ...lumen, aliases: ['Loumen', 'Lümen'] }]);
+  await entry.getByRole('button', { name: 'Remove “Lümen”' }).click();
+  await expect.poll(glossary).toEqual([lumen]);
+  // Backspace in the empty field takes the last one out.
+  await entry.getByLabel('Said as').press('Backspace');
+  await expect.poll(glossary).toEqual([{ source: 'Lumen', target: 'Lumen', note: 'a band' }]);
+  await entry.getByLabel('Said as').fill('Loumen|');
   await expect.poll(glossary).toEqual([lumen]);
 
   // Exported as a table, imported from one (a bad row is reported, not taken).
@@ -409,7 +505,11 @@ test('options: glossary entries are added, edited and removed', async ({
     { ...lumen, aliases: ['Loumen', 'Lümen'] },
     { source: 'Kamil', aliases: ['Kamille'], target: 'Camille' },
   ]);
-  await expect(entries.getByLabel('Said as').first()).toHaveValue('Lumen | Loumen | Lümen');
+  await expect(entries.getByTestId('glossary-entry').first().locator('.token')).toHaveText([
+    'Lumen',
+    'Loumen',
+    'Lümen',
+  ]);
 });
 
 test('options: the preview follows the subtitle settings', async ({ context }) => {
@@ -441,6 +541,79 @@ test('options: the preview follows the subtitle settings', async ({ context }) =
   await expect(page.getByRole('radio', { name: 'Below' })).toBeDisabled();
 });
 
+test('options: a site is added for subtitles ahead of time, after Chrome gives access', async ({
+  context,
+  serviceWorker,
+}) => {
+  const page = await context.newPage();
+  await page.goto(url('options.html#ahead'));
+  const ahead = page.getByTestId('ahead');
+  await expect(ahead).toContainText('No sites yet.');
+  const field = page.getByLabel('Site to add');
+  const add = ahead.getByRole('button', { name: 'Add', exact: true });
+  const note = page.getByTestId('ahead-add-note');
+
+  // Not a site: said so, nothing asked for.
+  await field.fill('not a site');
+  await add.click();
+  await expect(note).toContainText('That isn’t a site address.');
+
+  // The e2e build already has access everywhere, so Chrome gives it at once.
+  await field.fill('https://www.talks.example.net/watch/42');
+  await add.click();
+  await expect(note).toContainText('On for talks.example.net.');
+  await expect(page.getByTestId('ahead-site-talks.example.net')).toBeVisible();
+  await expect(field).toHaveValue('');
+  const state = () =>
+    serviceWorker.evaluate(async () => {
+      const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+        .chrome;
+      const s = await chrome.storage.local.get('settings');
+      const scripts = await chrome.scripting.getRegisteredContentScripts();
+      return {
+        sites: (s.settings as import('@/settings/settings').Settings).lookahead.sites,
+        matches: scripts.map((x) => x.matches),
+      };
+    });
+  await expect.poll(state).toEqual({
+    sites: ['talks.example.net'],
+    matches: [
+      ['*://talks.example.net/*', '*://www.talks.example.net/*'],
+      ['*://talks.example.net/*', '*://www.talks.example.net/*'],
+    ],
+  });
+  // Already in.
+  await field.fill('talks.example.net');
+  await add.click();
+  await expect(note).toContainText('talks.example.net is already in the list.');
+
+  // While Chrome asks, it says so and waits; refused, it says so and adds nothing.
+  await page.evaluate(() => {
+    const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+      .chrome;
+    let answer: (granted: boolean) => void = () => {};
+    (chrome.permissions as { request: unknown }).request = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve;
+      });
+    (globalThis as unknown as { refuse(): void }).refuse = () => answer(false);
+  });
+  await field.fill('news.example.com');
+  await add.click();
+  await expect(note).toContainText('Waiting for access to news.example.com…');
+  await expect(add).toBeDisabled();
+  await page.evaluate(() => (globalThis as unknown as { refuse(): void }).refuse());
+  await expect(note).toContainText(
+    'Murmur needs access to news.example.com for this. Chrome didn’t give it.',
+  );
+  await expect(page.getByTestId('ahead-site-news.example.com')).toHaveCount(0);
+  await expect.poll(async () => (await state()).sites).toEqual(['talks.example.net']);
+
+  // Removed from the list.
+  await ahead.getByRole('button', { name: 'Remove talks.example.net' }).click();
+  await expect.poll(state).toEqual({ sites: [], matches: [] });
+});
+
 test('options: shortcuts are listed', async ({ context }) => {
   const page = await context.newPage();
   await page.goto(url('options.html#shortcuts'));
@@ -454,7 +627,7 @@ async function next(page: Page, name: RegExp) {
   await page.getByRole('button', { name }).click();
 }
 
-test('welcome: languages, model, download, done', async ({ context, serviceWorker }) => {
+test('welcome: languages, model and its download, done', async ({ context, serviceWorker }) => {
   const page = await context.newPage();
   await page.goto(url('welcome.html'));
   await expect(page.getByTestId('step-intro')).toBeVisible();
@@ -467,17 +640,21 @@ test('welcome: languages, model, download, done', async ({ context, serviceWorke
   await page.getByTestId('spoken').getByRole('checkbox', { name: 'German' }).check();
   await next(page, /Continue/);
 
+  // One step for the model size and its download: four steps in all.
   await expect(page.getByTestId('step-model')).toBeVisible();
+  await expect(page.getByText('Step 3 of 4')).toBeVisible();
   await page.getByTestId('profile-balanced').click();
-  await next(page, /Continue/);
-
-  await expect(page.getByTestId('step-download')).toBeVisible();
-  // Chrome's translation packs for the spoken languages, beside the speech model.
-  await expect(page.getByLabel('Chrome language packs')).toContainText('German to French');
-  await page.getByTestId('welcome-download').click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Models are ready', {
-    timeout: 20_000,
-  });
+  const card = page.getByTestId('profile-balanced');
+  // Chrome's translation packs for the spoken languages, beside the speech model, in the card.
+  await expect(card.getByLabel('Chrome language packs')).toContainText('German to French');
+  // Not downloaded yet: "Later" leaves it for another time; no Continue until it's in.
+  await expect(page.getByRole('button', { name: 'Later' })).toBeVisible();
+  await card.getByTestId('download-selected').click();
+  await expect(page.getByRole('button', { name: 'Continue in the background' })).toBeVisible();
+  await expect(card.getByTestId('selected-models')).toContainText(
+    'Balanced models are downloaded',
+    { timeout: 20_000 },
+  );
   await next(page, /Continue/);
 
   await expect(page.getByTestId('step-done')).toBeVisible();
