@@ -118,7 +118,7 @@ export default defineConfig({
     // would grant.
     ...(mode === 'e2e' && { host_permissions: ['<all_urls>'] }),
     // `default_popup` comes from the `popup` entrypoint. `icons` is discovered from public/icon/
-    // (rendered from assets/icon.svg by `pnpm icons`).
+    // (rendered from assets/icon.svg and icon-16.svg by `pnpm icons`).
     action: {
       default_title: 'Murmur',
       default_icon: { 16: 'icon/16.png', 32: 'icon/32.png', 48: 'icon/48.png' },
