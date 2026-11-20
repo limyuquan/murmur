@@ -1,43 +1,91 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { CHROME_WEBSPEECH_ID } from '@/engines/chrome/info';
-import { PROFILES, type ProfileId, recommendProfile, resolveEngines } from '@/engines/profiles';
+import { PROFILES, type ProfileId, resolveEngines } from '@/engines/profiles';
+import { sitePatterns } from '@/lookahead/sites';
+import { call } from '@/messaging/client';
 import { formatSize, freeSpaceText } from '@/models/types';
 import { SubtitlePreview } from '@/overlay/preview';
 import { clearPositions, loadPositions, watchPositions } from '@/settings/positions';
-import type { CaptionBackground, CaptionDisplay, Settings } from '@/settings/settings';
+import {
+  type CaptionBackground,
+  type CaptionDisplay,
+  type Settings,
+  siteFromInput,
+} from '@/settings/settings';
 import { REPO_URL } from '@/shared/ids';
-import { Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
+import {
+  Icon,
+  type IconName,
+  Keys,
+  Logo,
+  Notice,
+  Segmented,
+  Select,
+  Switch,
+} from '@/ui/components';
 import { GlossaryEditor } from '@/ui/glossary';
-import { useHardware, useMemoryFit, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
+import {
+  openShortcutSettings,
+  useHardware,
+  useMemoryFit,
+  useModels,
+  useReducedMotion,
+  useSettings,
+} from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
   BrowserGaps,
-  ChromePacks,
+  DeviceCard,
   engineFits,
-  HardwareSummary,
   ModelList,
   ModelSizeOptions,
   ProfileCards,
+  ProfileDownload,
   type ProfileModels,
   packsForSettings,
   profileModels,
 } from '@/ui/models';
+import { Scene, type SceneKind } from '@/ui/scenes';
 import { SpokenLanguages } from '@/ui/spoken';
 
-const SECTIONS = [
-  { id: 'models', label: 'Models' },
-  { id: 'languages', label: 'Languages' },
-  { id: 'glossary', label: 'Glossary' },
-  { id: 'subtitles', label: 'Subtitles' },
-  { id: 'ahead', label: 'Ahead of time' },
-  { id: 'shortcuts', label: 'Shortcuts' },
-  { id: 'privacy', label: 'Privacy' },
-] as const;
+const SECTIONS: readonly { id: string; label: string; icon: IconName }[] = [
+  { id: 'models', label: 'Models', icon: 'layers' },
+  { id: 'languages', label: 'Languages', icon: 'globe' },
+  { id: 'glossary', label: 'Glossary', icon: 'book' },
+  { id: 'subtitles', label: 'Subtitles', icon: 'subtitles' },
+  { id: 'ahead', label: 'Ahead of time', icon: 'ahead' },
+  { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
+  { id: 'privacy', label: 'Privacy', icon: 'lock' },
+];
+
+/** The section being read: the last whose top has scrolled near the top of the window. */
+function useCurrentSection(): string {
+  const [current, setCurrent] = useState<string>(SECTIONS[0]?.id ?? '');
+  useEffect(() => {
+    const onScroll = () => {
+      let id = SECTIONS[0]?.id ?? '';
+      for (const s of SECTIONS) {
+        const el = document.getElementById(s.id);
+        if (el && el.getBoundingClientRect().top <= window.innerHeight / 3) id = s.id;
+      }
+      // At the very bottom, the last section is the one being read.
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+        id = SECTIONS.at(-1)?.id ?? id;
+      }
+      setCurrent(id);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  return current;
+}
 
 export function Options({ initial }: { initial: Settings }) {
   const [settings, update] = useSettings(initial);
+  const current = useCurrentSection();
 
   // The page renders after load, so the browser's own jump to #section missed it.
   useEffect(() => {
@@ -46,19 +94,17 @@ export function Options({ initial }: { initial: Settings }) {
   }, []);
 
   return (
-    <div className="mx-auto flex max-w-[1040px] gap-10 px-6 py-8 text-[14px] leading-[1.5]">
-      <nav aria-label="Sections" className="sticky top-8 hidden h-fit w-[168px] flex-none md:block">
-        <div className="mb-6 flex items-center gap-2.5">
-          <Logo size={26} />
-          <span className="text-[16px] font-semibold tracking-[-0.01em]">Murmur</span>
+    <div className="page">
+      <nav className="nav" aria-label="Sections">
+        <div className="nav-brand">
+          <Logo size={32} />
+          <span className="t-heading">Murmur</span>
         </div>
-        <ul className="grid gap-0.5">
+        <ul className="nav-list">
           {SECTIONS.map((s) => (
             <li key={s.id}>
-              <a
-                href={`#${s.id}`}
-                className="block rounded-lg px-2.5 py-1.5 text-[var(--color-muted)] hover:bg-[var(--color-hover)] hover:text-[var(--color-ink)]"
-              >
+              <a className="nav-item" href={`#${s.id}`} aria-current={s.id === current}>
+                <Icon name={s.icon} size={20} />
                 {s.label}
               </a>
             </li>
@@ -66,10 +112,10 @@ export function Options({ initial }: { initial: Settings }) {
         </ul>
       </nav>
 
-      <main className="flex min-w-0 flex-1 flex-col gap-12">
-        <header>
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em]">Settings</h1>
-          <p className="text-[var(--color-muted)]">Changes are saved as you make them.</p>
+      <main className="main">
+        <header className="page-head">
+          <h1 className="t-display">Settings</h1>
+          <p className="muted">Changes are saved as you make them.</p>
         </header>
         <ModelsSection settings={settings} update={update} />
         <LanguagesSection settings={settings} update={update} />
@@ -97,44 +143,49 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-8">
-      <h2 id={`${id}-title`} className="text-[18px] font-semibold tracking-[-0.01em]">
-        {title}
-      </h2>
-      {intro && <p className="mt-1 max-w-[62ch] text-[var(--color-muted)]">{intro}</p>}
-      <div className="mt-4 flex flex-col gap-4">{children}</div>
+    <section id={id} aria-labelledby={`${id}-title`} className="section">
+      <div className="section-head">
+        <h2 id={`${id}-title`} className="t-title">
+          {title}
+        </h2>
+        {intro && <p>{intro}</p>}
+      </div>
+      {children}
     </section>
   );
 }
 
+/** A row in a card: a label (and hint) on the left, its control on the right. */
 function Row({
   label,
   hint,
   htmlFor,
   id,
+  disabled,
   children,
 }: {
   label: string;
   hint?: string | undefined;
   htmlFor?: string;
   id?: string;
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3">
-      <div className="min-w-[180px] flex-1">
+    <div className="list-row" data-disabled={disabled ? 'true' : undefined}>
+      <div className="grow">
         {htmlFor ? (
-          <label htmlFor={htmlFor} className="font-medium">
+          <label htmlFor={htmlFor} className="t-label">
             {label}
           </label>
         ) : (
-          <span id={id} className="font-medium">
+          <p id={id} className="t-label">
             {label}
-          </span>
+          </p>
         )}
-        {hint && <p className="text-[13px] text-[var(--color-muted)]">{hint}</p>}
+        {hint && <p className="hint">{hint}</p>}
       </div>
-      <div className="flex items-center gap-3">{children}</div>
+      <div className="control">{children}</div>
     </div>
   );
 }
@@ -149,7 +200,6 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
   const modelsOf = (p: ProfileId | 'custom'): ProfileModels | null =>
     hardware ? profileModels(p, settings, registry, hardware, view, fit) : null;
   const selected = modelsOf(settings.profile);
-  const suggested = hardware ? recommendProfile(hardware) : null;
   const packs = useMemo(
     () => (hardware ? packsForSettings(settings, registry, hardware) : []),
     [settings, registry, hardware],
@@ -162,40 +212,32 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
       title="Models"
       intro="Murmur turns speech into text and translates it on this computer. Larger models make fewer mistakes, but need a faster device and a bigger one-time download."
     >
-      <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
-        <ProfileCards
-          value={settings.profile}
-          onChange={(profile) => update({ profile })}
-          hardware={hardware}
-          modelsOf={(p) =>
-            modelsOf(p) ?? {
-              models: [],
-              totalMB: 0,
-              missingMB: 0,
-              ready: false,
-              downloading: null,
-            }
+      <DeviceCard hardware={hardware} />
+      <BrowserGaps />
+      <ProfileCards
+        value={settings.profile}
+        onChange={(profile) => update({ profile })}
+        hardware={hardware}
+        modelsOf={(p) =>
+          modelsOf(p) ?? {
+            models: [],
+            totalMB: 0,
+            missingMB: 0,
+            ready: false,
+            downloading: null,
           }
-        />
-        <aside className="card h-fit p-4" aria-label="This device">
-          <h3 className="flex items-center gap-2 font-semibold">
-            <Icon name="chip" /> This device
-          </h3>
-          <div className="mt-3">
-            <HardwareSummary hardware={hardware} />
-          </div>
-          <div className="mt-3">
-            <BrowserGaps />
-          </div>
-          {suggested && (
-            <p className="mt-3 text-[13px] text-[var(--color-muted)]">
-              Suggested:{' '}
-              <strong className="text-[var(--color-ink)]">{PROFILES[suggested].label}</strong>.
-              Based on the graphics and memory the browser reports.
-            </p>
-          )}
-        </aside>
-      </div>
+        }
+        foot={
+          selected && (
+            <ProfileDownload
+              label={selectedLabel}
+              models={selected}
+              packs={packs}
+              actions={actions}
+            />
+          )
+        }
+      />
 
       <ModelSizeOptions
         settings={settings}
@@ -214,111 +256,53 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
         />
       )}
 
-      {selected && selected.totalMB > 0 && (
-        <div
-          className="card flex flex-wrap items-center gap-x-4 gap-y-3 p-4"
-          data-testid="selected-models"
-        >
-          {selected.downloading !== null ? (
-            <>
-              <div className="min-w-[220px] flex-1">
-                <p className="font-medium">
-                  Downloading {selectedLabel} models… {Math.round(selected.downloading * 100)}%
-                </p>
-                <div className="mt-2">
-                  <ProgressBar
-                    value={selected.downloading}
-                    label={`Downloading ${selectedLabel} models`}
-                  />
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  for (const m of selected.models) actions.cancel(m.id);
-                }}
-              >
-                Cancel
-              </button>
-            </>
-          ) : selected.ready ? (
-            <p className="flex items-center gap-2 font-medium">
-              <span className="text-[var(--color-accent)]">
-                <Icon name="check" />
-              </span>
-              {selectedLabel} models are downloaded ({formatSize(selected.totalMB)}).
-            </p>
-          ) : (
-            <>
-              <p className="min-w-[220px] flex-1">
-                <span className="font-medium">
-                  {selectedLabel} needs {formatSize(selected.missingMB)} of models.
-                </span>{' '}
-                <span className="text-[var(--color-muted)]">
-                  Downloaded once, then kept on this computer.
-                </span>
-              </p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => actions.download(selected.models.map((m) => m.id))}
-                data-testid="download-selected"
-              >
-                <Icon name="download" /> Download {formatSize(selected.missingMB)}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {packs.length > 0 && (
-        <div className="card p-4" data-testid="chrome-packs">
-          <h3 className="font-semibold">Chrome language packs</h3>
-          <p className="mt-0.5 text-[13px] text-[var(--color-muted)]">
-            {selectedLabel} uses Chrome’s own{' '}
-            {packs.some((p) => p.kind === 'speech-pack')
-              ? 'speech recognition and translation'
-              : 'translation'}
-            . Chrome downloads and keeps a pack for each language, after a click.
-          </p>
-          <div className="mt-1">
-            <ChromePacks actions={packs} />
-          </div>
-        </div>
-      )}
-
-      <div className="card p-4" id="downloads">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="font-semibold">Models from Murmur</h3>
+      <details
+        className="card disclosure"
+        id="downloads"
+        data-testid="manage-downloads"
+        open={location.hash === '#downloads' || undefined}
+      >
+        <summary>
+          <span className="grow stack">
+            <span className="t-heading">Manage downloads</span>
+            <span className="t-small muted">Each model from Murmur, one by one.</span>
+          </span>
           {view && (
-            <p className="text-[13px] text-[var(--color-muted)]" data-testid="disk-usage">
+            <span className="t-small muted num" data-testid="disk-usage">
               {formatSize(view.storage.modelsMB)} used
               {freeSpaceText(view.storage.availableMB) !== null &&
                 ` · ${freeSpaceText(view.storage.availableMB)}`}
-            </p>
+            </span>
+          )}
+          <span className="chev">
+            <Icon name="chevron" size={20} />
+          </span>
+        </summary>
+        <div className="topline">
+          {error && (
+            <div className="block-row">
+              <Notice tone="error" icon="alert">
+                {error}
+              </Notice>
+            </div>
+          )}
+          {view ? (
+            view.models.length > 0 ? (
+              <ModelList view={view} actions={actions} />
+            ) : (
+              <p className="block-row muted">
+                None of the model sizes needs a download from Murmur on this device.
+              </p>
+            )
+          ) : (
+            <p className="block-row muted">Loading…</p>
           )}
         </div>
-        {error && (
-          <p className="notice mt-3" data-tone="error">
-            {error}
-          </p>
-        )}
-        {view ? (
-          view.models.length > 0 ? (
-            <div className="mt-1">
-              <ModelList view={view} actions={actions} />
-            </div>
-          ) : (
-            <p className="mt-3 text-[var(--color-muted)]">
-              None of the model sizes needs a download from Murmur on this device.
-            </p>
-          )
-        ) : (
-          <p className="mt-3 text-[var(--color-muted)]">Loading…</p>
-        )}
-        {view && view.storage.modelsMB > 0 && (
-          <div className="mt-2 flex justify-end">
+        <div className="card-foot">
+          <span className="t-small muted">
+            Models are downloaded from Hugging Face and kept on this computer.
+          </span>
+          {view && view.storage.modelsMB > 0 && (
             <button
               type="button"
               className="btn btn-sm btn-quiet"
@@ -328,11 +312,11 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
                     actions.remove(m.info.id);
               }}
             >
-              <Icon name="trash" size={14} /> Delete all
+              <Icon name="trash" /> Delete all
             </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </details>
     </Section>
   );
 }
@@ -349,11 +333,10 @@ function CustomEngines({
   registry: ReturnType<typeof createBuiltinRegistry>;
 }) {
   return (
-    <div className="card divide-y divide-[var(--color-line)] px-4">
+    <div className="card rows">
       <Row label="Speech recognition" htmlFor="custom-asr">
-        <select
+        <Select
           id="custom-asr"
-          className="input"
           value={settings.custom.asr}
           onChange={(e) => update({ custom: { asr: e.target.value } })}
         >
@@ -362,12 +345,11 @@ function CustomEngines({
               {e.unavailable ? `${e.label} (${e.unavailable})` : e.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Row>
       <Row label="Translation" htmlFor="custom-mt">
-        <select
+        <Select
           id="custom-mt"
-          className="input"
           value={settings.custom.translation}
           onChange={(e) => update({ custom: { translation: e.target.value } })}
         >
@@ -376,7 +358,7 @@ function CustomEngines({
               {e.unavailable ? `${e.label} (${e.unavailable})` : e.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Row>
     </div>
   );
@@ -398,11 +380,14 @@ function LanguagesSection({ settings, update }: { settings: Settings; update: Up
       title="Languages"
       intro="Each line is translated on its own, so a video that switches language part way through is fine."
     >
-      <div className="card divide-y divide-[var(--color-line)] px-4">
-        <Row label="Translate into" htmlFor="target">
-          <select
+      <div className="card rows">
+        <Row
+          label="Translate into"
+          hint="Lines already in this language are shown as they are."
+          htmlFor="target"
+        >
+          <Select
             id="target"
-            className="input"
             value={settings.targetLanguage}
             onChange={(e) => update({ targetLanguage: e.target.value })}
           >
@@ -411,7 +396,7 @@ function LanguagesSection({ settings, update }: { settings: Settings; update: Up
                 {l.name}
               </option>
             ))}
-          </select>
+          </Select>
         </Row>
         <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
       </div>
@@ -435,17 +420,9 @@ function GlossarySection({ settings, update }: { settings: Settings; update: Upd
 
 // ---------------------------------------------------------------------------------------------
 
-type Scene = 'dark' | 'bright';
-
-const SCENES: Record<Scene, string> = {
-  dark: 'radial-gradient(120% 80% at 70% 20%, #3a4a6b 0%, #1b2236 45%, #0c0f18 100%)',
-  bright:
-    'linear-gradient(180deg, #bfe1ff 0%, #e9f4ff 46%, #f6efe0 62%, #efe1c4 80%, #f8f1e2 100%)',
-};
-
 function SubtitlesSection({ settings, update }: { settings: Settings; update: Update }) {
   const o = settings.overlay;
-  const [scene, setScene] = useState<Scene>('dark');
+  const [scene, setScene] = useState<SceneKind>('dark');
   const [playing, setPlaying] = useState(false);
   const [sitesMoved, setSitesMoved] = useState(0);
   const reduced = useReducedMotion();
@@ -479,17 +456,18 @@ function SubtitlesSection({ settings, update }: { settings: Settings; update: Up
 
   return (
     <Section id="subtitles" title="Subtitles" intro="How subtitles look on videos.">
-      <div className="card overflow-hidden">
+      <div className="card">
         <div
-          ref={box}
-          className="relative aspect-video w-full"
-          style={{ background: SCENES[scene] }}
+          className="preview"
           role="img"
           aria-label="Preview of subtitles on a video"
           data-testid="preview"
-        />
-        <div className="divider flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-          <Segmented<Scene>
+        >
+          <Scene kind={scene} />
+          <div ref={box} className="fill" />
+        </div>
+        <div className="card-foot">
+          <Segmented<SceneKind>
             label="Preview background"
             value={scene}
             onChange={setScene}
@@ -505,25 +483,30 @@ function SubtitlesSection({ settings, update }: { settings: Settings; update: Up
             disabled={reduced}
             aria-pressed={playing}
           >
-            {playing ? 'Stop' : 'Play a sample'}
+            <Icon name={playing ? 'stop' : 'play'} /> {playing ? 'Stop' : 'Play a sample'}
           </button>
         </div>
       </div>
 
-      <div className="card divide-y divide-[var(--color-line)] px-4">
+      <div className="card rows">
         <Row label="Show" id="show-label">
           <Segmented<CaptionDisplay>
             label="Show"
             value={o.display}
             onChange={(display) => update({ overlay: { display } })}
             options={[
-              { value: 'both', label: 'Original and translation' },
               { value: 'translation', label: 'Translation' },
+              { value: 'both', label: 'Original and translation' },
               { value: 'original', label: 'Original' },
             ]}
           />
         </Row>
-        <Row label="Original line" hint="Shown smaller than the translation." id="placement-label">
+        <Row
+          label="Original line"
+          hint="Shown smaller than the translation."
+          id="placement-label"
+          disabled={o.display !== 'both'}
+        >
           <Segmented
             label="Original line"
             value={o.originalPlacement}
@@ -536,23 +519,13 @@ function SubtitlesSection({ settings, update }: { settings: Settings; update: Up
           />
         </Row>
         <Row label="Text size" hint="Scales with the video, like TV subtitles." htmlFor="size">
-          <input
+          <Range
             id="size"
-            type="range"
             min={0.5}
             max={2}
-            step={0.05}
             value={o.fontScale}
-            onChange={(e) => update({ overlay: { fontScale: Number(e.target.value) } })}
-            className="w-[180px]"
-            aria-valuetext={`${Math.round(o.fontScale * 100)}%`}
+            onChange={(fontScale) => update({ overlay: { fontScale } })}
           />
-          <output
-            htmlFor="size"
-            className="w-[44px] text-right tabular-nums text-[var(--color-muted)]"
-          >
-            {Math.round(o.fontScale * 100)}%
-          </output>
         </Row>
         <Row label="Background" hint="A box reads best over busy or bright pictures." id="bg-label">
           <Segmented<CaptionBackground>
@@ -568,23 +541,13 @@ function SubtitlesSection({ settings, update }: { settings: Settings; update: Up
         </Row>
         {o.background !== 'outline' && (
           <Row label={strengthLabel} htmlFor="opacity">
-            <input
+            <Range
               id="opacity"
-              type="range"
               min={0}
               max={1}
-              step={0.05}
               value={o.backgroundOpacity}
-              onChange={(e) => update({ overlay: { backgroundOpacity: Number(e.target.value) } })}
-              className="w-[180px]"
-              aria-valuetext={`${Math.round(o.backgroundOpacity * 100)}%`}
+              onChange={(backgroundOpacity) => update({ overlay: { backgroundOpacity } })}
             />
-            <output
-              htmlFor="opacity"
-              className="w-[44px] text-right tabular-nums text-[var(--color-muted)]"
-            >
-              {Math.round(o.backgroundOpacity * 100)}%
-            </output>
           </Row>
         )}
         <Row
@@ -632,54 +595,198 @@ function SubtitlesSection({ settings, update }: { settings: Settings; update: Up
   );
 }
 
+/** A slider with its value in per cent beside it. */
+function Range({
+  id,
+  min,
+  max,
+  value,
+  onChange,
+}: {
+  id: string;
+  min: number;
+  max: number;
+  value: number;
+  onChange(next: number): void;
+}) {
+  const pct = `${Math.round(value * 100)}%`;
+  const at = `${((value - min) / (max - min)) * 100}%`;
+  return (
+    <>
+      <input
+        id={id}
+        type="range"
+        className="range"
+        min={min}
+        max={max}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-valuetext={pct}
+        style={{ '--at': at } as React.CSSProperties}
+      />
+      <output htmlFor={id} className="range-value">
+        {pct}
+      </output>
+    </>
+  );
+}
+
 function SwitchRow({
   label,
   hint,
   checked,
   onChange,
+  testId,
 }: {
   label: string;
   hint?: string | undefined;
   checked: boolean;
   onChange(next: boolean): void;
+  testId?: string;
 }) {
   const id = `sw-${label.replace(/\W+/g, '-').toLowerCase()}`;
   return (
     <Row label={label} hint={hint} id={id}>
-      <Switch checked={checked} onChange={onChange} labelledBy={id} />
+      <Switch checked={checked} onChange={onChange} labelledBy={id} testId={testId} />
     </Row>
   );
 }
 
 // ---------------------------------------------------------------------------------------------
 
+/** Where adding a site is: asking Chrome for access, refused, or added (until a reload). */
+type AddState =
+  | { state: 'asking'; site: string }
+  | { state: 'refused'; site: string }
+  | { state: 'added'; site: string }
+  | { state: 'failed'; message: string }
+  | { state: 'invalid' }
+  | { state: 'already'; site: string };
+
 function AheadSection({ settings, update }: { settings: Settings; update: Update }) {
   const { sites, off } = settings.lookahead;
+  const [text, setText] = useState('');
+  const [adding, setAdding] = useState<AddState | null>(null);
+  const site = siteFromInput(text);
+
+  /**
+   * Adds the typed site: access to it is asked for straight from the submit (the click or Enter
+   * is what lets Chrome ask), then the service worker turns lookahead on there.
+   */
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    if (!site) {
+      setAdding(text.trim() ? { state: 'invalid' } : null);
+      return;
+    }
+    if (sites.includes(site)) {
+      setAdding({ state: 'already', site });
+      return;
+    }
+    setAdding({ state: 'asking', site });
+    let request: Promise<boolean>;
+    try {
+      request = browser.permissions.request({ origins: sitePatterns(site) });
+    } catch (err) {
+      request = Promise.reject(err);
+    }
+    const fail = (err: unknown) =>
+      setAdding({ state: 'failed', message: err instanceof Error ? err.message : String(err) });
+    request.then((granted) => {
+      if (!granted) {
+        setAdding({ state: 'refused', site });
+        return;
+      }
+      call('setLookahead', { site, on: true }).then((result) => {
+        if (!result.sites.includes(site)) {
+          setAdding({
+            state: 'failed',
+            message: `Murmur can’t show subtitles ahead of time on ${site}.`,
+          });
+          return;
+        }
+        setText('');
+        setAdding({ state: 'added', site });
+      }, fail);
+    }, fail);
+  };
+
+  const note = (() => {
+    switch (adding?.state) {
+      case undefined:
+        return null;
+      case 'asking':
+        return (
+          <Notice tone="translating" icon="clock">
+            Waiting for access to {adding.site}… Chrome asks at the top of the window.
+          </Notice>
+        );
+      case 'refused':
+        return (
+          <Notice tone="error" icon="alert">
+            Murmur needs access to {adding.site} for this. Chrome didn’t give it.
+          </Notice>
+        );
+      case 'added':
+        return (
+          <Notice tone="success" icon="check">
+            On for {adding.site}. It starts when a page there loads or reloads.
+          </Notice>
+        );
+      case 'failed':
+        return (
+          <Notice tone="error" icon="alert">
+            Couldn’t add it: {adding.message}
+          </Notice>
+        );
+      case 'invalid':
+        return (
+          <Notice tone="behind" icon="info">
+            That isn’t a site address. Type one such as video.example.com.
+          </Notice>
+        );
+      case 'already':
+        return (
+          <Notice tone="behind" icon="info">
+            {adding.site} is already in the list.
+          </Notice>
+        );
+    }
+  })();
+
   return (
     <Section
       id="ahead"
       title="Subtitles ahead of time (beta)"
-      intro="On the sites you choose, Murmur reads the audio the video player has already loaded and makes subtitles before the speech plays, so they show on time. Turn it on for a site in the popup. It needs the Balanced or Best model size."
+      intro="On the sites you choose, Murmur reads the audio the video player has already loaded and makes subtitles before the speech plays, so they show on time. Turn it on for a site in the popup, or add it below. It needs the Balanced or Best model size."
     >
-      <div className="card divide-y divide-[var(--color-line)] px-4" data-testid="ahead">
+      <div className="card rows" data-testid="ahead">
         <SwitchRow
           label="On for the sites below"
           hint="Off: Murmur leaves every site’s player alone. Takes effect when a page reloads."
           checked={!off}
           onChange={(on) => update({ lookahead: { off: !on } })}
+          testId="ahead-all"
         />
         {sites.length === 0 ? (
-          <p className="py-3 text-[var(--color-muted)]">No sites yet.</p>
+          <div className="list-row">
+            <p className="muted">No sites yet.</p>
+          </div>
         ) : (
-          sites.map((site) => (
-            <div key={site} className="flex items-center justify-between gap-4 py-3">
-              <span>{site}</span>
+          sites.map((s) => (
+            <div key={s} className="list-row" data-testid={`ahead-site-${s}`}>
+              <span className="tile">
+                <Icon name="globe" />
+              </span>
+              <span className="grow t-label">{s}</span>
               <button
                 type="button"
-                className="btn btn-sm"
+                className="btn btn-sm btn-quiet"
+                aria-label={`Remove ${s}`}
                 onClick={() =>
                   update((current) => ({
-                    lookahead: { sites: current.lookahead.sites.filter((s) => s !== site) },
+                    lookahead: { sites: current.lookahead.sites.filter((x) => x !== s) },
                   }))
                 }
               >
@@ -688,6 +795,40 @@ function AheadSection({ settings, update }: { settings: Settings; update: Update
             </div>
           ))
         )}
+        <form className="stack g3 block-row" onSubmit={add} data-testid="ahead-add">
+          <div className="row g3">
+            <span className="tile">
+              <Icon name="plus" />
+            </span>
+            <label htmlFor="ahead-site" className="sr-only">
+              Site to add
+            </label>
+            <input
+              id="ahead-site"
+              className="input grow"
+              value={text}
+              placeholder="Add a site, such as video.example.com"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (adding?.state !== 'asking') setAdding(null);
+              }}
+            />
+            <button
+              type="submit"
+              className="btn"
+              disabled={!text.trim() || adding?.state === 'asking'}
+            >
+              Add
+            </button>
+          </div>
+          {note && (
+            <div role="status" data-testid="ahead-add-note">
+              {note}
+            </div>
+          )}
+        </form>
       </div>
     </Section>
   );
@@ -708,28 +849,22 @@ function ShortcutsSection() {
   }, []);
   return (
     <Section id="shortcuts" title="Keyboard shortcuts">
-      <div className="card divide-y divide-[var(--color-line)] px-4" data-testid="shortcuts">
+      <div className="card rows" data-testid="shortcuts">
         {commands.map((c) => (
-          <div key={c.name} className="flex items-center justify-between gap-4 py-3">
-            <span>{c.name === '_execute_action' ? 'Open Murmur' : c.description}</span>
+          <div key={c.name} className="list-row">
+            <span className="grow t-label">
+              {c.name === '_execute_action' ? 'Open Murmur' : c.description}
+            </span>
             {c.shortcut ? (
-              <span className="flex gap-1">
-                {c.shortcut.split('+').map((k) => (
-                  <kbd key={k}>{k}</kbd>
-                ))}
-              </span>
+              <Keys shortcut={c.shortcut} />
             ) : (
-              <span className="text-[var(--color-muted)]">Not set</span>
+              <span className="t-small muted">Not set</span>
             )}
           </div>
         ))}
       </div>
       <div>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => void browser.tabs.create({ url: 'chrome://extensions/shortcuts' })}
-        >
+        <button type="button" className="btn" onClick={openShortcutSettings}>
           <Icon name="keyboard" /> Change shortcuts
         </button>
       </div>
@@ -739,29 +874,34 @@ function ShortcutsSection() {
 
 function PrivacySection() {
   const version = browser.runtime.getManifest().version;
+  const points = [
+    'The tab’s audio is turned into subtitles on this computer and never sent anywhere.',
+    'Subtitles and translations aren’t saved or sent.',
+    'On sites where subtitles ahead of time are on, Murmur reads the audio the video player loads, on this computer, while subtitles are on.',
+    'No account, no analytics, no tracking.',
+    'The network is used only to download a model you choose, once.',
+  ];
   return (
     <Section id="privacy" title="Privacy">
-      <div className="card p-5">
-        <p className="flex items-center gap-2 text-[15px] font-semibold">
-          <span className="text-[var(--color-accent)]">
-            <Icon name="lock" size={18} />
+      <div className="card card-pad stack g4">
+        <div className="row g3">
+          <span className="tile tile-lg" data-tone="success">
+            <Icon name="lock" size={20} />
           </span>
-          Everything stays on this computer.
-        </p>
-        <ul className="mt-3 grid list-disc gap-1.5 pl-5 text-[var(--color-muted)]">
-          <li>
-            The tab’s audio is turned into subtitles on this computer and never sent anywhere.
-          </li>
-          <li>Subtitles and translations aren’t saved or sent.</li>
-          <li>
-            On sites where subtitles ahead of time are on, Murmur reads the audio the video player
-            loads, on this computer, while subtitles are on.
-          </li>
-          <li>No account, no analytics, no tracking.</li>
-          <li>The network is used only to download a model you choose, once.</li>
+          <p className="t-heading">Everything stays on this computer.</p>
+        </div>
+        <ul className="stack g2 muted">
+          {points.map((t) => (
+            <li key={t} className="row top g3">
+              <span className="privacy-check" data-tone="success">
+                <Icon name="check" />
+              </span>
+              <span>{t}</span>
+            </li>
+          ))}
         </ul>
       </div>
-      <p className="text-[13px] text-[var(--color-muted)]">
+      <p className="t-small muted">
         Murmur {version} ·{' '}
         <a className="link" href={REPO_URL} target="_blank" rel="noreferrer">
           Source code

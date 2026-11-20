@@ -18,7 +18,7 @@ import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/
 import { type MemoryFit, resolveOptions, saveMemoryFit } from '@/settings/memoryfit';
 import type { Settings, SettingsChange } from '@/settings/settings';
 import { browserGaps } from './browser';
-import { Icon, Meter, ProgressBar } from './components';
+import { Checkbox, Icon, Meter, Notice, ProgressBar, State } from './components';
 import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from './fitcopy';
 import type { ModelActions } from './hooks';
 import { PackRow, usePacks } from './setup';
@@ -147,6 +147,7 @@ export function ProfileCards({
   modelsOf,
   includeCustom = true,
   name = 'profile',
+  foot,
 }: {
   value: ProfileChoice;
   onChange(next: ProfileChoice): void;
@@ -154,95 +155,97 @@ export function ProfileCards({
   modelsOf(profile: ProfileId): ProfileModels;
   includeCustom?: boolean;
   name?: string;
+  /** Drawn inside the chosen card, under its facts (its download). */
+  foot?: ReactNode;
 }) {
   const suggested = hardware ? recommendProfile(hardware) : null;
   return (
-    <div role="radiogroup" aria-label="Model size" className="grid gap-2.5">
+    <div role="radiogroup" aria-label="Model size" className="stack g3">
       {PROFILE_ORDER.map((id) => {
         const copy = PROFILE_COPY[id];
         const models = modelsOf(id);
         const warning = fitWarning(id, hardware);
         return (
-          <label key={id} className="option-card" data-testid={`profile-${id}`}>
-            <input
-              type="radio"
-              name={name}
-              value={id}
-              checked={value === id}
-              onChange={() => onChange(id)}
-              aria-describedby={`${name}-${id}-desc`}
-            />
-            <div className="flex items-start gap-3">
-              <span
-                aria-hidden="true"
-                className="mt-0.5 grid size-4 flex-none place-items-center rounded-full border border-[var(--color-line-strong)]"
-              >
-                {value === id && <span className="size-2 rounded-full bg-[var(--color-accent)]" />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[15px] font-semibold">{PROFILES[id].label}</span>
-                  {suggested === id && (
-                    <span className="badge badge-accent">Suits this device</span>
-                  )}
-                  <ModelStateBadge models={models} />
-                </div>
-                <div id={`${name}-${id}-desc`}>
-                  <p className="mt-0.5 text-[var(--color-muted)]">{copy.suits}</p>
-                  <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-                    <dt className="text-[var(--color-muted)]">Accuracy</dt>
-                    <dd>
+          <div key={id} className="option" data-testid={`profile-${id}`}>
+            <label>
+              <input
+                type="radio"
+                className="native"
+                name={name}
+                value={id}
+                checked={value === id}
+                onChange={() => onChange(id)}
+                aria-describedby={`${name}-${id}-desc`}
+              />
+              <span className="radio" aria-hidden="true" />
+              <div className="grow stack g3">
+                <div className="stack g1">
+                  <div className="row between g4">
+                    <span className="row g2 wrap">
+                      <span className="t-heading">{PROFILES[id].label}</span>
+                      {suggested === id && (
+                        <span className="badge" data-tone="accent">
+                          Suits this device
+                        </span>
+                      )}
+                      <ModelStateBadge models={models} />
+                    </span>
+                    <span className="row g2 t-small">
+                      <span className="muted">Accuracy</span>
                       <Meter level={copy.accuracy.level} text={copy.accuracy.text} />
-                    </dd>
-                    <dt className="text-[var(--color-muted)]">Download</dt>
+                    </span>
+                  </div>
+                  <p className="muted">{copy.suits}</p>
+                </div>
+                <div id={`${name}-${id}-desc`} className="stack g3">
+                  <dl className="facts">
+                    <dt>Download</dt>
                     <dd>
                       {models.totalMB > 0
                         ? downloadText(models.models)
                         : 'Chrome’s language packs only'}
                     </dd>
-                    <dt className="text-[var(--color-muted)]">Runs</dt>
+                    <dt>Runs</dt>
                     <dd>
                       {id !== 'light' && models.runs
                         ? `${models.runs}, ${copy.runsOn}`
                         : copy.runsOn}
                     </dd>
                   </dl>
-                  <p className="mt-2 text-[13px] text-[var(--color-muted)]">{copy.tradeoff}</p>
+                  <p className="t-small muted">{copy.tradeoff}</p>
                   {warning && (
-                    <p className="mt-2 text-[13px] text-[var(--color-warn)]">{warning}</p>
+                    <Notice tone="behind" icon="clock">
+                      {warning}
+                    </Notice>
                   )}
                 </div>
               </div>
-            </div>
-          </label>
+            </label>
+            {value === id && foot}
+          </div>
         );
       })}
       {includeCustom && (
-        <label className="option-card" data-testid="profile-custom">
-          <input
-            type="radio"
-            name={name}
-            value="custom"
-            checked={value === 'custom'}
-            onChange={() => onChange('custom')}
-          />
-          <div className="flex items-start gap-3">
-            <span
-              aria-hidden="true"
-              className="mt-0.5 grid size-4 flex-none place-items-center rounded-full border border-[var(--color-line-strong)]"
-            >
-              {value === 'custom' && (
-                <span className="size-2 rounded-full bg-[var(--color-accent)]" />
-              )}
-            </span>
-            <div>
-              <span className="text-[15px] font-semibold">Custom</span>
-              <p className="mt-0.5 text-[var(--color-muted)]">
+        <div className="option" data-testid="profile-custom">
+          <label>
+            <input
+              type="radio"
+              className="native"
+              name={name}
+              value="custom"
+              checked={value === 'custom'}
+              onChange={() => onChange('custom')}
+            />
+            <span className="radio" aria-hidden="true" />
+            <div className="grow stack g1">
+              <span className="t-heading">Custom</span>
+              <p className="muted">
                 Choose the speech recognition and translation engines yourself.
               </p>
             </div>
-          </div>
-        </label>
+          </label>
+          {value === 'custom' && foot}
+        </div>
       )}
     </div>
   );
@@ -251,19 +254,118 @@ export function ProfileCards({
 function ModelStateBadge({ models }: { models: ProfileModels }) {
   if (models.downloading !== null) {
     return (
-      <span className="badge badge-accent">
+      <span className="badge num" data-tone="translating">
         Downloading {Math.round(models.downloading * 100)}%
       </span>
     );
   }
   if (models.ready && models.totalMB > 0) {
     return (
-      <span className="badge">
-        <Icon name="check" size={12} /> Downloaded
+      <span className="badge" data-tone="success">
+        <Icon name="check" size={12} stroke={2.5} /> Downloaded
       </span>
     );
   }
   return null;
+}
+
+/**
+ * The chosen profile's download, inside its card: what it needs from Murmur (one button for all
+ * of it, its progress, or that it's done) and Chrome's language packs for its languages. Each
+ * file is also listed under Manage downloads (options page).
+ */
+export function ProfileDownload({
+  label,
+  models,
+  packs,
+  actions,
+  compact,
+  welcome,
+}: {
+  /** The profile's name ("Balanced"). */
+  label: string;
+  models: ProfileModels;
+  /** Chrome packs it needs here (`packsForSettings`). */
+  packs: readonly SetupAction[];
+  actions: ModelActions;
+  compact?: boolean;
+  /** On the welcome page: the copy says where the models come from. */
+  welcome?: boolean;
+}) {
+  if (models.totalMB === 0 && packs.length === 0) return null;
+  const murmur = models.models.length > 0 && models.totalMB > 0;
+  return (
+    <div className="option-foot">
+      {murmur && (
+        <div className="row g4 wrap" data-testid="selected-models">
+          {models.downloading !== null ? (
+            <>
+              <div className="grow stack g2">
+                <p className="t-label">
+                  Downloading {label} models…{' '}
+                  <span className="num">{Math.round(models.downloading * 100)}%</span>
+                </p>
+                <ProgressBar value={models.downloading} label={`Downloading ${label} models`} />
+              </div>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  for (const m of models.models) actions.cancel(m.id);
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : models.ready ? (
+            <State tone="success" icon="check">
+              <span className="t-label">
+                {label} models are downloaded ({formatSize(models.totalMB)}).
+              </span>
+            </State>
+          ) : (
+            <>
+              <p className="grow">
+                <span className="t-label">
+                  {label} needs {formatSize(models.missingMB)} of models.
+                </span>{' '}
+                <span className="muted">
+                  {welcome
+                    ? 'From Hugging Face, downloaded once and kept on this computer.'
+                    : 'Downloaded once, then kept on this computer.'}
+                </span>
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => actions.download(models.models.map((m) => m.id))}
+                data-testid="download-selected"
+              >
+                <Icon name="download" /> Download {formatSize(models.missingMB)}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {packs.length > 0 && (
+        <div className="stack g2" data-testid="chrome-packs">
+          <div className="stack">
+            <p className="t-label">Chrome language packs</p>
+            <p className="t-small muted">
+              {murmur
+                ? `${label} uses Chrome’s own translation where its model is late. Chrome downloads and keeps a pack for each language, after a click.`
+                : `${label} uses Chrome’s own ${
+                    packs.some((p) => p.kind === 'speech-pack')
+                      ? 'speech recognition and translation'
+                      : 'translation'
+                  }. Chrome downloads and keeps a pack for each language, after a click.`}
+            </p>
+          </div>
+          <ChromePacks actions={packs} compact={compact} bare />
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -288,27 +390,27 @@ export function ModelSizeOptions({
   const smaller = profile === 'balanced' ? smallerSpeechCopy(registry) : null;
   const fit = models?.engines ? memoryFitCopy(models.engines, registry) : null;
   const ladder = models?.engines?.ladder;
-  if (!smaller && !fit) return null;
+  if (!smaller && !(fit && hardware && ladder)) return null;
   return (
-    <div className="card grid gap-3 p-4" data-testid="model-size">
+    <div className="card rows" data-testid="model-size">
       {smaller && (
-        <label className="flex items-start gap-3">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={settings.smallerSpeech}
-            onChange={(e) => update({ smallerSpeech: e.target.checked })}
-            data-testid="smaller-speech"
-          />
-          <span>
-            <span className="font-medium">{smaller.label}</span>
-            <span className="block text-[13px] text-[var(--color-muted)]">{smaller.hint}</span>
+        <label className="list-row top">
+          <span className="row" style={{ paddingTop: 'var(--inset-hair)' }}>
+            <Checkbox
+              checked={settings.smallerSpeech}
+              onChange={(smallerSpeech) => update({ smallerSpeech })}
+              testId="smaller-speech"
+            />
           </span>
+          <div className="grow">
+            <p className="t-label">{smaller.label}</p>
+            <p className="hint">{smaller.hint}</p>
+          </div>
         </label>
       )}
       {fit && hardware && ladder && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="memory-fit">
-          <p className="min-w-[220px] flex-1 text-[13px]">{fit.text}</p>
+        <div className="list-row" data-testid="memory-fit">
+          <p className="grow t-small">{fit.text}</p>
           {fit.retry && (
             <button
               type="button"
@@ -336,11 +438,13 @@ export function ModelList({
   view,
   actions,
   filter,
+  compact,
 }: {
   view: ModelsView;
   actions: ModelActions;
   /** Show only these ids (in this order). */
   filter?: readonly string[];
+  compact?: boolean;
 }) {
   const entries = filter
     ? filter
@@ -348,24 +452,32 @@ export function ModelList({
         .filter((m): m is ModelEntry => !!m)
     : view.models;
   return (
-    <ul className="divide-y divide-[var(--color-line)]" aria-label="Models">
+    <ul className="rows" aria-label="Models">
       {entries.map((m) => (
-        <ModelRow key={m.info.id} entry={m} actions={actions} />
+        <ModelRow key={m.info.id} entry={m} actions={actions} compact={compact ?? false} />
       ))}
     </ul>
   );
 }
 
-function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions }) {
+function ModelRow({
+  entry,
+  actions,
+  compact,
+}: {
+  entry: ModelEntry;
+  actions: ModelActions;
+  compact: boolean;
+}) {
   const { info, status, profiles } = entry;
   let state: ReactNode;
   let action: ReactNode;
   switch (status.state) {
     case 'ready':
       state = (
-        <span className="inline-flex items-center gap-1 text-[var(--color-accent)]">
-          <Icon name="check" size={14} /> Downloaded
-        </span>
+        <State tone="success" icon="check">
+          Downloaded
+        </State>
       );
       action = (
         <button
@@ -374,7 +486,7 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
           onClick={() => actions.remove(info.id)}
           aria-label={`Delete ${info.label}`}
         >
-          <Icon name="trash" size={14} /> Delete
+          <Icon name="trash" /> Delete
         </button>
       );
       break;
@@ -385,8 +497,8 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
       const fraction =
         status.state === 'downloading' ? (checking ?? status.receivedMB / info.sizeMB) : 0;
       state = (
-        <span className="flex min-w-[140px] flex-col gap-1">
-          <span className="text-[var(--color-muted)]">
+        <div>
+          <span className="t-small muted num">
             {status.state === 'queued'
               ? 'Waiting…'
               : checking !== undefined
@@ -395,9 +507,10 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
           </span>
           <ProgressBar
             value={fraction}
+            tone={checking !== undefined ? 'success' : 'translating'}
             label={checking !== undefined ? `Checking ${info.label}` : `Downloading ${info.label}`}
           />
-        </span>
+        </div>
       );
       action = (
         <button
@@ -413,19 +526,19 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
     }
     case 'partial':
       state = (
-        <span className="text-[var(--color-muted)]">
+        <span className="t-small muted num">
           Stopped at {formatSize(status.receivedMB)} of {formatSize(info.sizeMB)}
         </span>
       );
       action = (
-        <span className="flex gap-2">
+        <>
           <button
             type="button"
             className="btn btn-sm btn-quiet"
             onClick={() => actions.remove(info.id)}
             aria-label={`Delete the part of ${info.label} downloaded so far`}
           >
-            <Icon name="trash" size={14} /> Delete
+            <Icon name="trash" /> Delete
           </button>
           <button
             type="button"
@@ -433,21 +546,25 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
             onClick={() => actions.download([info.id])}
             aria-label={`Resume downloading ${info.label}`}
           >
-            <Icon name="download" size={14} /> Resume
+            <Icon name="download" /> Resume
           </button>
-        </span>
+        </>
       );
       break;
     case 'error':
-      state = <span className="text-[var(--color-danger)]">{status.message}</span>;
+      state = (
+        <span className="state top" data-tone="error">
+          {status.message}
+        </span>
+      );
       action = (
         <button type="button" className="btn btn-sm" onClick={() => actions.download([info.id])}>
-          Try again
+          <Icon name="reload" /> Try again
         </button>
       );
       break;
     case 'absent':
-      state = <span className="text-[var(--color-muted)]">Not downloaded</span>;
+      state = <span className="t-small muted">Not downloaded</span>;
       action = (
         <button
           type="button"
@@ -455,28 +572,25 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
           onClick={() => actions.download([info.id])}
           aria-label={`Download ${info.label}, ${formatSize(info.sizeMB)}`}
         >
-          <Icon name="download" size={14} /> Download
+          <Icon name="download" /> Download
         </button>
       );
       break;
   }
   return (
-    <li
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3"
-      data-testid={`model-${info.id}`}
-    >
-      <span className="grid size-8 flex-none place-items-center rounded-lg bg-[var(--color-sunken)] text-[var(--color-muted)]">
-        <Icon name={info.role === 'speech' ? 'speech' : 'globe'} />
+    <li className={compact ? 'model-row compact' : 'model-row'} data-testid={`model-${info.id}`}>
+      <span className="tile">
+        <Icon name={info.role === 'speech' ? 'wave' : 'globe'} />
       </span>
-      <span className="min-w-[180px] flex-1">
-        <span className="block font-medium">{info.label}</span>
-        <span className="block text-[12px] text-[var(--color-muted)]">
+      <div>
+        <p className="t-label">{info.label}</p>
+        <p className="t-caption muted num">
           {formatSize(info.sizeMB)}
           {profiles.length > 0 ? ` · ${profiles.map((p) => PROFILES[p].label).join(', ')}` : ''}
-        </span>
-      </span>
-      <span className="text-[13px]">{state}</span>
-      <span className="ml-auto">{action}</span>
+        </p>
+      </div>
+      <div>{state}</div>
+      <div className="actions">{action}</div>
     </li>
   );
 }
@@ -486,37 +600,60 @@ export function BrowserGaps() {
   const gaps = browserGaps();
   if (gaps.length === 0) return null;
   return (
-    <ul className="grid gap-1.5 text-[13px]" data-testid="browser-gaps">
+    <div className="stack g2" data-testid="browser-gaps">
       {gaps.map((g) => (
-        <li key={g.api}>{g.text}</li>
+        <Notice key={g.api} tone="behind">
+          {g.text}
+        </Notice>
       ))}
-    </ul>
+    </div>
   );
 }
 
-/** What this device offers, in plain words. */
-export function HardwareSummary({ hardware }: { hardware: HardwareInfo | null }) {
-  if (!hardware) return <p className="text-[var(--color-muted)]">Checking this device…</p>;
-  const gpu = hardware.webgpu.available
-    ? hardware.webgpu.shaderF16
-      ? 'WebGPU, with 16-bit floats'
-      : 'WebGPU'
-    : 'No WebGPU';
-  const memory = memoryText(hardware.deviceMemoryGB);
-  const rows: [string, string][] = [
-    ['Graphics', gpu],
-    ['Memory', memory],
-    ['Processor', `${hardware.cores} threads`],
-  ];
+/** This device: what it offers, in plain words, and the model size that suits it. */
+export function DeviceCard({ hardware }: { hardware: HardwareInfo | null }) {
+  const suggested = hardware ? recommendProfile(hardware) : null;
+  const rows: [string, string][] = hardware
+    ? [
+        [
+          'Graphics',
+          hardware.webgpu.available
+            ? hardware.webgpu.shaderF16
+              ? 'WebGPU, with 16-bit floats'
+              : 'WebGPU'
+            : 'No WebGPU',
+        ],
+        ['Memory', memoryText(hardware.deviceMemoryGB)],
+        ['Processor', `${hardware.cores} threads`],
+      ]
+    : [];
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]" data-testid="hardware">
+    <aside className="card device" aria-label="This device" data-testid="hardware">
+      <div className="row g3">
+        <span className="tile tile-lg" data-tone="listening">
+          <Icon name="chip" size={20} />
+        </span>
+        <div className="stack">
+          <h3 className="t-heading">This device</h3>
+          <p className="t-small muted">
+            {suggested ? (
+              <>
+                Suggested: <strong className="ink">{PROFILES[suggested].label}</strong>. Based on
+                the graphics and memory the browser reports.
+              </>
+            ) : (
+              'Checking this device…'
+            )}
+          </p>
+        </div>
+      </div>
       {rows.map(([k, v]) => (
-        <div key={k} className="contents">
-          <dt className="text-[var(--color-muted)]">{k}</dt>
-          <dd className="whitespace-nowrap">{v}</dd>
+        <div key={k} className="stat">
+          <span className="t-caption muted">{k}</span>
+          <span className="t-label">{v}</span>
         </div>
       ))}
-    </dl>
+    </aside>
   );
 }
 
@@ -533,13 +670,16 @@ export function engineFits(
 export function ChromePacks({
   actions,
   compact,
+  bare,
 }: {
   actions: readonly SetupAction[];
-  compact?: boolean;
+  compact?: boolean | undefined;
+  /** Rows without side padding (inside a card that has its own). */
+  bare?: boolean;
 }) {
   const [states, run] = usePacks(actions);
   return (
-    <ul className="divide-y divide-[var(--color-line)]" aria-label="Chrome language packs">
+    <ul className={bare ? 'rows bare' : 'rows'} aria-label="Chrome language packs">
       {actions.map((a) => (
         <PackRow key={a.id} action={a} state={states[a.id]} run={run} compact={compact ?? false} />
       ))}

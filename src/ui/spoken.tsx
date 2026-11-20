@@ -6,7 +6,7 @@ import {
   type SettingsChange,
   spokenLanguages,
 } from '@/settings/settings';
-import { Switch } from './components';
+import { Icon, Notice, Switch } from './components';
 import { LANGUAGES, languageOptions, listNames } from './languages';
 
 /** The languages a session will listen for, as the picker shows them. */
@@ -37,41 +37,51 @@ export function SpokenLanguages({
     });
   };
   const heard = chosen.slice(0, MAX_SPOKEN_FOR_CHROME);
+  const hintId = useId();
   return (
-    <div className="grid gap-3 py-3">
-      <fieldset className="grid gap-3" data-testid="spoken">
-        <legend className="contents">
-          <span className="font-medium">Spoken languages</span>
-        </legend>
-        <p className="-mt-2 text-[13px] text-[var(--color-muted)]">
-          The languages in the videos you watch. Chrome’s speech recognition listens for these (up
-          to {MAX_SPOKEN_FOR_CHROME}). Whisper detects the language of each line.
-        </p>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-4">
-          {options.map((l) => (
-            <label key={l.tag} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={chosen.includes(l.tag)}
-                onChange={(e) => toggle(l.tag, e.target.checked)}
-              />
-              {l.name}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {chromeSpeech && chosen.length > MAX_SPOKEN_FOR_CHROME && (
-        <p className="text-[13px] text-[var(--color-warn)]" data-testid="spoken-limit">
-          Chrome’s speech recognition listens for the first {MAX_SPOKEN_FOR_CHROME} chosen:{' '}
-          {listNames(heard)}.
-        </p>
-      )}
-      <div className="flex items-center justify-between gap-6 pt-1">
-        <div>
-          <span id={anyId} className="font-medium">
+    <>
+      <div className="stack g3 block-row">
+        <fieldset className="stack g3" data-testid="spoken" aria-describedby={hintId}>
+          <legend className="sr-only">Spoken languages</legend>
+          <div className="stack">
+            <p className="t-label" aria-hidden="true">
+              Spoken languages
+            </p>
+            <p id={hintId} className="t-small muted">
+              The languages in the videos you watch. Chrome’s speech recognition listens for these
+              (up to {MAX_SPOKEN_FOR_CHROME}). Whisper detects the language of each line.
+            </p>
+          </div>
+          <div className="chips">
+            {options.map((l) => {
+              const on = chosen.includes(l.tag);
+              return (
+                <label key={l.tag} className="chip">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => toggle(l.tag, e.target.checked)}
+                  />
+                  {on && <Icon name="check" />}
+                  {l.name}
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+        {chromeSpeech && chosen.length > MAX_SPOKEN_FOR_CHROME && (
+          <Notice tone="behind" testId="spoken-limit">
+            Chrome’s speech recognition listens for the first {MAX_SPOKEN_FOR_CHROME} chosen:{' '}
+            {listNames(heard)}.
+          </Notice>
+        )}
+      </div>
+      <div className="list-row">
+        <div className="grow">
+          <p id={anyId} className="t-label">
             Detect any language
-          </span>
-          <p className="text-[13px] text-[var(--color-muted)]">
+          </p>
+          <p className="hint">
             Whisper picks each line’s language from all it knows. Turn off to pick only from the
             languages above.
           </p>
@@ -83,6 +93,6 @@ export function SpokenLanguages({
           testId="detect-any"
         />
       </div>
-    </div>
+    </>
   );
 }
