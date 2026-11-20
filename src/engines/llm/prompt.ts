@@ -1,6 +1,6 @@
 /**
- * The translation prompt for the LLM engine (prompt v3, as benchmarked in murmur-notes
- * bench/results/summary_prompt_hillclimb.md): a short system message that says what to do, and a
+ * The translation prompt for the LLM engine (prompt v3, chosen by a blind-judged benchmark):
+ * a short system message that says what to do, and a
  * user turn with the glossary entries the line uses, the last few finished lines (each with its
  * language and translation) and the line itself, with the language the speech engine heard it in.
  *

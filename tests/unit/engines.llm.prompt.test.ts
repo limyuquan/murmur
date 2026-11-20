@@ -8,8 +8,7 @@ import {
 } from '@/engines/llm/prompt';
 
 /**
- * Golden prompts: what the benchmark's own renderer gives for these inputs with prompt v3 (bench
- * prompts/llm_subtitle/v3, chosen in murmur-notes bench/results/summary_prompt_hillclimb.md), with
+ * Golden prompts: what the benchmark's own renderer gives for these inputs with prompt v3, with
  * the session's languages and no kind of video. Any change to the wording changes what was
  * measured: re-run the benchmark before updating these.
  */
