@@ -137,3 +137,23 @@ export function useReducedMotion(): boolean {
   }, []);
   return reduced;
 }
+
+/**
+ * The key binding of a command (`COMMANDS`, src/shared/commands.ts) as Chrome has it now:
+ * "Alt+Shift+S", "" when none is set, or null until read.
+ */
+export function useShortcut(name: string): string | null {
+  const [shortcut, setShortcut] = useState<string | null>(null);
+  useEffect(() => {
+    browser.commands.getAll().then(
+      (commands) => setShortcut(commands.find((c) => c.name === name)?.shortcut ?? ''),
+      () => setShortcut(''),
+    );
+  }, [name]);
+  return shortcut;
+}
+
+/** Chrome's page for changing extension shortcuts (only an extension page can open it). */
+export function openShortcutSettings(): void {
+  void browser.tabs.create({ url: 'chrome://extensions/shortcuts' });
+}
