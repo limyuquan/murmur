@@ -5,7 +5,7 @@ import type { HardwareInfo } from '@/engines/hardware';
 import { resolveEngines } from '@/engines/profiles';
 import { EngineRegistry } from '@/engines/registry';
 import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from '@/ui/fitcopy';
-import { fitWarning, PROFILE_COPY } from '@/ui/models';
+import { downloadText, fitWarning, PROFILE_COPY } from '@/ui/models';
 
 const NVIDIA: HardwareInfo = {
   webgpu: { available: true, shaderF16: true, maxBufferMB: 2048, vendor: 'nvidia' },
@@ -93,8 +93,19 @@ describe('model size copy', () => {
     const all = JSON.stringify(PROFILE_COPY);
     // The engines come from what the profile resolves to here, not from fixed copy.
     expect(all).not.toMatch(/Whisper|Qwen|Gemma/);
-    expect(PROFILE_COPY.balanced.tradeoff).toContain('smaller speech model');
+    // The smaller speech model is offered (ModelSizeOptions) only where this build has it.
+    expect(all).not.toContain('smaller speech model');
+    expect(all).not.toMatch(/companion/i);
     expect(PROFILE_COPY.balanced.tradeoff).toContain('graphics memory is short');
     expect(PROFILE_COPY.best.tradeoff).toContain('graphics memory is short');
+  });
+
+  it('gives the download by kind of model', () => {
+    const model = (role: 'speech' | 'translation', sizeMB: number) =>
+      ({ id: role, label: role, role, sizeMB, runtime: 'browser', source: {} }) as never;
+    expect(downloadText([model('speech', 1611), model('translation', 2008)])).toBe(
+      '3.6 GB: speech recognition 1.6 GB, translation 2.0 GB',
+    );
+    expect(downloadText([model('speech', 80)])).toBe('80 MB');
   });
 });

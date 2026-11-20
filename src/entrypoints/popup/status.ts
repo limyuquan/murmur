@@ -53,7 +53,7 @@ export function describeStatus(view: TabView): StatusLine {
     case 'loading':
       return { tone: 'busy', title: `${s.detail}…`, progress: s.progress };
     case 'error':
-      return describeError(s.code, s.message, view.profile, (s.missingModels ?? []).length > 0);
+      return describeError(s.code, s.message, (s.missingModels ?? []).length > 0);
     case 'running':
       return withNote(
         describeRunning(view, s.heard, s.activity, s.setup, s.problems),
@@ -148,7 +148,6 @@ function describeRunning(
 function describeError(
   code: string | undefined,
   message: string,
-  profile: ProfileChoice,
   notDownloaded = false,
 ): StatusLine {
   switch (code) {
@@ -172,16 +171,6 @@ function describeError(
         title: 'This tab is already being captured',
         detail: 'Stop the other recording or extension, then try again.',
         action: { kind: 'retry', label: 'Try again' },
-      };
-    case 'companion':
-      return {
-        tone: 'error',
-        title: 'The companion app isn’t running',
-        detail: 'Start it, or use models that run in the browser.',
-        action:
-          profile !== 'balanced'
-            ? { kind: 'profile', label: 'Use Balanced', profile: 'balanced' }
-            : { kind: 'retry', label: 'Try again' },
       };
     case 'navigated':
       return {

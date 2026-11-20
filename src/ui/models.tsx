@@ -17,6 +17,7 @@ import { modelsFor, totalMB } from '@/models/catalog';
 import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/models/types';
 import { type MemoryFit, resolveOptions, saveMemoryFit } from '@/settings/memoryfit';
 import type { Settings, SettingsPatch } from '@/settings/settings';
+import { browserGaps } from './browser';
 import { Icon, Meter, ProgressBar } from './components';
 import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from './fitcopy';
 import type { ModelActions } from './hooks';
@@ -42,11 +43,11 @@ export const PROFILE_COPY: Record<ProfileId, ProfileCopy> = {
       'Nothing to download from Murmur: Chrome downloads a small pack for each language. More mistakes with fast speech, music and names.',
   },
   balanced: {
-    suits: 'Computers with a graphics card or a recent graphics chip, including Apple silicon.',
+    suits: 'Computers with a graphics card or recent built-in graphics, including Apple silicon.',
     accuracy: { level: 2, text: 'Good' },
     runsOn: 'on the graphics card',
     tradeoff:
-      'A large one-time download, mostly the speech model; you can choose a smaller speech model. Where graphics memory is short, smaller models run instead.',
+      'A large one-time download. Where graphics memory is short, smaller models run instead.',
   },
   best: {
     suits: 'Graphics cards with their own memory, 6 GB or more.',
@@ -112,6 +113,19 @@ export function profileModels(
   };
 }
 
+/**
+ * "3.6 GB: speech recognition 1.6 GB, translation 2.0 GB", or just the size with models of one
+ * kind.
+ */
+export function downloadText(models: readonly ModelInfo[]): string {
+  const total = formatSize(totalMB(models));
+  const of = (role: ModelInfo['role']) => totalMB(models.filter((m) => m.role === role));
+  const speech = of('speech');
+  const translation = of('translation');
+  if (speech === 0 || translation === 0) return total;
+  return `${total}: speech recognition ${formatSize(speech)}, translation ${formatSize(translation)}`;
+}
+
 /** A plain warning when `profile` is heavier than this device suits, else null. */
 export function fitWarning(profile: ProfileId, hardware: HardwareInfo | null): string | null {
   if (!hardware) return null;
@@ -123,7 +137,7 @@ export function fitWarning(profile: ProfileId, hardware: HardwareInfo | null): s
   if (sharesMemory(hardware.webgpu)) {
     return 'On graphics that share the computer’s memory, Best starts with Balanced’s models: its largest translation model falls behind here. You can still choose it below.';
   }
-  return 'Needs a stronger graphics card or the companion app; subtitles may fall behind.';
+  return 'Needs a stronger graphics card; subtitles may fall behind.';
 }
 
 export function ProfileCards({
@@ -183,7 +197,7 @@ export function ProfileCards({
                     <dt className="text-[var(--color-muted)]">Download</dt>
                     <dd>
                       {models.totalMB > 0
-                        ? formatSize(models.totalMB)
+                        ? downloadText(models.models)
                         : 'Chrome’s language packs only'}
                     </dd>
                     <dt className="text-[var(--color-muted)]">Runs</dt>
@@ -459,12 +473,24 @@ function ModelRow({ entry, actions }: { entry: ModelEntry; actions: ModelActions
         <span className="block text-[12px] text-[var(--color-muted)]">
           {formatSize(info.sizeMB)}
           {profiles.length > 0 ? ` · ${profiles.map((p) => PROFILES[p].label).join(', ')}` : ''}
-          {info.runtime === 'companion' && ' · companion app'}
         </span>
       </span>
       <span className="text-[13px]">{state}</span>
       <span className="ml-auto">{action}</span>
     </li>
+  );
+}
+
+/** What this browser can't do that the models need (ui/browser.ts), as notes; none: nothing. */
+export function BrowserGaps() {
+  const gaps = browserGaps();
+  if (gaps.length === 0) return null;
+  return (
+    <ul className="grid gap-1.5 text-[13px]" data-testid="browser-gaps">
+      {gaps.map((g) => (
+        <li key={g.api}>{g.text}</li>
+      ))}
+    </ul>
   );
 }
 
@@ -481,7 +507,6 @@ export function HardwareSummary({ hardware }: { hardware: HardwareInfo | null })
     ['Graphics', gpu],
     ['Memory', memory],
     ['Processor', `${hardware.cores} threads`],
-    ['Companion app', hardware.companion ? 'Running' : 'Not running'],
   ];
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]" data-testid="hardware">

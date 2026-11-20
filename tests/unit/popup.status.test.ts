@@ -179,7 +179,6 @@ describe('describeStatus', () => {
       );
     expect(err('page').action).toBeUndefined();
     expect(err('busy').action).toMatchObject({ kind: 'retry' });
-    expect(err('companion').action).toMatchObject({ kind: 'profile', profile: 'balanced' });
     expect(err('model')).toMatchObject({
       title: 'A model didn’t load',
       action: { kind: 'settings', label: 'Models' },

@@ -81,7 +81,9 @@ export default defineConfig({
   manifest: ({ mode }) => ({
     name: 'Murmur',
     description: 'Live translated subtitles over any video, made on your own machine.',
-    minimum_chrome_version: '120',
+    // Chrome's translator (Light, and the backup for late lines) is 138+; Light's on-device speech
+    // recognition is 139+ (older: Whisper base); the translation model's runtime is 137+.
+    minimum_chrome_version: '138',
     key: PUBLIC_KEY,
     permissions: [
       // Tab audio, minted by the service worker and opened by the offscreen document.

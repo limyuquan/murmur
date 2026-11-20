@@ -13,6 +13,7 @@ import { GlossaryEditor } from '@/ui/glossary';
 import { useHardware, useMemoryFit, useModels, useReducedMotion, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
+  BrowserGaps,
   ChromePacks,
   engineFits,
   HardwareSummary,
@@ -182,6 +183,9 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
           </h3>
           <div className="mt-3">
             <HardwareSummary hardware={hardware} />
+          </div>
+          <div className="mt-3">
+            <BrowserGaps />
           </div>
           {suggested && (
             <p className="mt-3 text-[13px] text-[var(--color-muted)]">
@@ -751,9 +755,6 @@ function PrivacySection() {
           </li>
           <li>No account, no analytics, no tracking.</li>
           <li>The network is used only to download a model you choose, once.</li>
-          <li>
-            With the companion app, audio goes to that app on this computer, and nowhere else.
-          </li>
         </ul>
       </div>
       <p className="text-[13px] text-[var(--color-muted)]">

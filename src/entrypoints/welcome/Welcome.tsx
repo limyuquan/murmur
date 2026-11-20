@@ -13,6 +13,7 @@ import { Icon, type IconName, Logo, ProgressBar } from '@/ui/components';
 import { useHardware, useMemoryFit, useModels, useSettings } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
+  BrowserGaps,
   ChromePacks,
   ModelList,
   ModelSizeOptions,
@@ -113,6 +114,7 @@ export function Welcome({ initial }: { initial: Settings }) {
             Larger models make fewer mistakes, but need a faster device and a bigger download. You
             can change this later in Settings.
           </p>
+          <BrowserGaps />
           <ProfileCards
             value={settings.profile}
             onChange={(profile) => {
@@ -177,7 +179,7 @@ export function Welcome({ initial }: { initial: Settings }) {
             this computer. You can close this page: the download carries on.
             {view &&
               freeSpaceText(view.storage.availableMB) !== null &&
-              ` This disk has ${freeSpaceText(view.storage.availableMB)}.`}
+              ` There’s ${freeSpaceText(view.storage.availableMB)}.`}
           </p>
           {selected.downloading !== null && (
             <div>

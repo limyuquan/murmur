@@ -121,13 +121,12 @@ export const PROFILES: Record<ProfileId, ModelProfile> = {
     asr: [QWEN3_ASR_17B_ID, QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
     translation: [GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
-  // Until the companion app exists, the best the browser runs: the larger speech and translation
-  // models, giving way to smaller ones where they don't fit (`LADDERS`).
+  // The larger speech and translation models, giving way to smaller ones where they don't fit
+  // (`LADDERS`).
   best: {
     id: 'best',
     label: 'Best',
-    description:
-      'The largest models in the browser: needs a graphics card with its own memory, or the companion app.',
+    description: 'The largest models: needs a graphics card with its own memory.',
     asr: [QWEN3_ASR_17B_ID, QWEN3_ASR_ID, WHISPER_TURBO_ID, WHISPER_BASE_ID],
     translation: [GEMMA_E4B_ID, GEMMA_E2B_ID, CHROME_TRANSLATOR_ID],
   },
