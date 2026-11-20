@@ -353,7 +353,7 @@ export function ProfileDownload({
         </div>
       )}
       {packs.length > 0 && (
-        <div className="stack g2" data-testid="chrome-packs">
+        <div className="stack g3" data-testid="chrome-packs">
           <div className="stack">
             <p className="t-label">Chrome language packs</p>
             <p className="t-small muted">
@@ -638,7 +638,7 @@ export function DeviceCard({ hardware }: { hardware: HardwareInfo | null }) {
         <span className="tile tile-lg" data-tone="listening">
           <Icon name="chip" size={20} />
         </span>
-        <div className="stack">
+        <div className="stack g1">
           <h3 className="t-heading">This device</h3>
           <p className="t-small muted">
             {suggested ? (

@@ -288,7 +288,7 @@ function LanguageStep({
   const languages = useMemo(languageOptions, []);
   return (
     <>
-      <div className="stack g2">
+      <div className="stack g1">
         <label htmlFor="welcome-target" className="t-label">
           Translate into
         </label>
@@ -340,10 +340,10 @@ function Done({ ready }: { ready: boolean }) {
           The models aren’t downloaded yet. You can download them any time from Settings.
         </Notice>
       )}
-      <ol className="stack g4">
+      <ol className="list numbers">
         {steps.map((s, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed list.
-          <li key={i} className="row top g3">
+          <li key={i}>
             <span className="numbered">{i + 1}</span>
             <span>{s}</span>
           </li>

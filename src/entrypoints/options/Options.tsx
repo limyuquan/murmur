@@ -263,7 +263,7 @@ function ModelsSection({ settings, update }: { settings: Settings; update: Updat
         open={location.hash === '#downloads' || undefined}
       >
         <summary>
-          <span className="grow stack">
+          <span className="grow stack g1">
             <span className="t-heading">Manage downloads</span>
             <span className="t-small muted">Each model from Murmur, one by one.</span>
           </span>
@@ -883,17 +883,17 @@ function PrivacySection() {
   ];
   return (
     <Section id="privacy" title="Privacy">
-      <div className="card card-pad stack g4">
+      <div className="card card-pad stack g3">
         <div className="row g3">
           <span className="tile tile-lg" data-tone="success">
             <Icon name="lock" size={20} />
           </span>
           <p className="t-heading">Everything stays on this computer.</p>
         </div>
-        <ul className="stack g2 muted">
+        <ul className="list under-tile muted">
           {points.map((t) => (
-            <li key={t} className="row top g3">
-              <span className="privacy-check" data-tone="success">
+            <li key={t}>
+              <span className="mark" data-tone="success">
                 <Icon name="check" />
               </span>
               <span>{t}</span>
