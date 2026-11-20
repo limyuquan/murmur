@@ -83,14 +83,18 @@ export interface LineFallbackOptions {
   /**
    * The translator finished a live line (one whose request names no budget: not made ahead of
    * time) within its budget, or ran out of it (`slow`). Lines it failed on don't count.
+   * `waitedMs`: how long it waited for finished lines requested before it (the translator does
+   * one at a time), as far as can be told from here.
    */
-  onLine?(line: { segmentId: string; slow: boolean }): void;
+  onLine?(line: { segmentId: string; slow: boolean; waitedMs: number }): void;
 }
 
 export class LineFallbackTranslator implements TranslationEngine {
   private backupEngine: Promise<TranslationEngine> | null = null;
   /** Why the primary translator can't be used any more. */
   private broken: string | null = null;
+  /** When the last finished line before now was done with (answered, cut or failed). */
+  private lastSettledAt = 0;
 
   constructor(
     private readonly primary: TranslationEngine,
@@ -130,9 +134,19 @@ export class LineFallbackTranslator implements TranslationEngine {
       return;
     }
     const budget = request.budgetMs ?? this.options.budgetMs ?? LINE_BUDGET_MS;
+    const requestedAt = Date.now();
+    let settled = false;
+    const settle = (): number => {
+      // Lines before this one that finished after it was asked for: it waited for them.
+      const waited = Math.max(0, this.lastSettledAt - requestedAt);
+      if (!settled) this.lastSettledAt = Math.max(this.lastSettledAt, Date.now());
+      settled = true;
+      return waited;
+    };
     const timed = (slow: boolean) => {
+      const waitedMs = settle();
       if (request.budgetMs === undefined) {
-        this.options.onLine?.({ segmentId: request.segmentId, slow });
+        this.options.onLine?.({ segmentId: request.segmentId, slow, waitedMs });
       }
     };
     const timer = new AbortController();
@@ -183,6 +197,7 @@ export class LineFallbackTranslator implements TranslationEngine {
       }
     } finally {
       clearTimeout(timeout);
+      settle();
     }
     const chunks = await this.viaBackup(request);
     this.options.onFallback?.({ segmentId: request.segmentId, reason, permanent });

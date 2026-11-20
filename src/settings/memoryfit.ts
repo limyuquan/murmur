@@ -1,11 +1,17 @@
 /**
- * Which step of each profile's memory ladder (engines/profiles.ts `LADDERS`) last worked on this
- * device, in `chrome.storage.local` under `MEMORY_FIT_KEY`, per graphics card (`gpuKey`): when a
- * model runs out of graphics memory the session steps down, and the next session starts at the
- * step it reached instead of failing the same way again. So does a session whose models keep
- * falling behind the speech (engines/slowness.ts): the next one starts a step lower. "Try the
- * larger models" (options page) sets the step back to the top; a session that runs out again, or
- * falls behind again, steps down and records that.
+ * Which step of each profile's memory ladder (engines/profiles.ts `LADDERS`) to start at on this
+ * device, in `chrome.storage.local` under `MEMORY_FIT_KEY`, per graphics card (`gpuKey`), for the
+ * ladder it was made on (`ladder`: the engines of every step, `ladderId`; a record made on other
+ * engines doesn't apply).
+ *
+ * - Running out of graphics memory: the session steps down, and the next session starts at the
+ *   step it reached instead of failing the same way again. That holds.
+ * - Falling behind the speech (engines/slowness.ts) is weaker evidence (another program can have
+ *   the graphics card for a while): one session that falls behind is only noted (a strike, under
+ *   `SLOW_STRIKES_KEY`); a second, at the same step within `STRIKE_MS`, steps down one step. That
+ *   step down never leaves the ladder and moves back up with time (profiles.ts `SLOW_FIT_MS`).
+ * - "Try the larger models" (options page) sets the step back to the top; a session already
+ *   running when the person chose it doesn't overwrite that (background/session.ts).
  *
  * Written by the service worker (the offscreen document has no storage access: it reports a step
  * down as a `memory-fit` event) and by the options page.
@@ -17,7 +23,14 @@ import type { Settings } from './settings';
 
 export const MEMORY_FIT_KEY = 'memoryFit';
 
+export const SLOW_STRIKES_KEY = 'slowStrikes';
+
+/** How long a session that fell behind counts towards a step down for slowness. */
+export const STRIKE_MS = 14 * 24 * 60 * 60 * 1000;
+
 export interface MemoryFitRecord {
+  /** The ladder the step is on (`ladderId`, as resolved on this device). */
+  ladder: string;
   /** The ladder step to start at (`LADDERS[profile]` index; its length: below the last step). */
   step: number;
   /** When it was recorded, epoch ms. */
@@ -51,7 +64,10 @@ export function cleanMemoryFit(stored: unknown): MemoryFit {
     for (const profile of ['light', 'balanced', 'best'] as const) {
       const r = profiles[profile];
       if (!isObject(r) || !Number.isInteger(r.step) || (r.step as number) < 0) continue;
+      // Made before records named their ladder: it may describe other engines.
+      if (typeof r.ladder !== 'string') continue;
       kept[profile] = {
+        ladder: r.ladder.slice(0, 1000),
         step: r.step as number,
         at: typeof r.at === 'number' ? r.at : 0,
         ...(r.cause === 'memory' || r.cause === 'slow' ? { cause: r.cause } : {}),
@@ -119,6 +135,65 @@ export function watchMemoryFit(listener: (fit: MemoryFit) => void): () => void {
   };
   browser.storage.onChanged.addListener(onChanged);
   return () => browser.storage.onChanged.removeListener(onChanged);
+}
+
+/** A session that fell behind at `step` of `ladder`, at `at` (one strike). */
+export interface SlowStrike {
+  ladder: string;
+  step: number;
+  at: number;
+}
+
+export type SlowStrikes = Record<string, Partial<Record<ProfileId, SlowStrike>>>;
+
+/**
+ * What a session that fell behind at step `from` of `ladder` leaves: a strike when there is no
+ * recent one at the same step (`record: false`), else a step down to `to` (`record: true`, and
+ * the strike is used up).
+ */
+export function afterSlowSession(
+  strike: SlowStrike | null,
+  event: { ladder: string; from: number },
+  now: number,
+): { record: boolean; strike: SlowStrike | null } {
+  const counts =
+    strike !== null &&
+    strike.ladder === event.ladder &&
+    strike.step === event.from &&
+    now - strike.at >= 0 &&
+    now - strike.at <= STRIKE_MS;
+  if (counts) return { record: true, strike: null };
+  return { record: false, strike: { ladder: event.ladder, step: event.from, at: now } };
+}
+
+export async function loadSlowStrikes(): Promise<SlowStrikes> {
+  const stored = (await browser.storage.local.get(SLOW_STRIKES_KEY))[SLOW_STRIKES_KEY];
+  const out: SlowStrikes = {};
+  if (!isObject(stored)) return out;
+  for (const [gpu, profiles] of Object.entries(stored).slice(-MAX_GPUS)) {
+    if (!isObject(profiles)) continue;
+    const kept: Partial<Record<ProfileId, SlowStrike>> = {};
+    for (const profile of ['balanced', 'best'] as const) {
+      const r = profiles[profile];
+      if (!isObject(r) || typeof r.ladder !== 'string') continue;
+      if (!Number.isInteger(r.step) || typeof r.at !== 'number') continue;
+      kept[profile] = { ladder: r.ladder, step: r.step as number, at: r.at };
+    }
+    out[gpu] = kept;
+  }
+  return out;
+}
+
+/** Sets (or, with null, clears) the strike for `gpu` and `profile`. */
+export async function saveSlowStrike(
+  gpu: string,
+  profile: ProfileId,
+  strike: SlowStrike | null,
+): Promise<void> {
+  const { [gpu]: current, ...others } = await loadSlowStrikes();
+  const { [profile]: _, ...rest } = current ?? {};
+  const next = { ...others, [gpu]: strike ? { ...rest, [profile]: strike } : rest };
+  await browser.storage.local.set({ [SLOW_STRIKES_KEY]: next });
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

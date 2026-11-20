@@ -133,6 +133,8 @@ browser.runtime.onConnect.addListener((port) => {
       host.addOverlay(overlay, typeof message.frameUrl === 'string' ? message.frameUrl : '');
     } else if (message?.type === 'video' && counted) {
       host.setOverlayVideo(overlay, message.present === true);
+    } else if (message?.type === 'visible' && counted) {
+      host.setOverlayVisible(overlay, message.visible === true);
     } else if (message?.type === 'tee' && counted && isTeeWire(message.wire)) {
       host.onLookahead(overlay, message);
     } else if (message?.type === 'playhead' && counted && isPlayheadReport(message.report)) {

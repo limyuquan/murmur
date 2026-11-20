@@ -7,12 +7,20 @@
  * Two signs, judged over recent lines rather than moments, so a hard passage or a pause doesn't
  * count:
  * - the translator took longer than its budget (`LINE_BUDGET_MS`, the backup then translated the
- *   line) on at least `maxSlowShare` of the last `lines` finished live lines;
+ *   line) on at least `maxSlowShare` of the last `lines` finished live lines, once that many
+ *   lines have been seen, with the late ones spread over at least `minSpanMs` (a stall of a few
+ *   seconds makes several lines in a row late). A late line that spent most of its budget
+ *   waiting for the line before it (`waitedMs`) counts neither way: one stall makes every line
+ *   queued behind it late too;
  * - speech recognition's real-time factor (the median of its last few decodes, `AsrHealth.rtf`)
  *   stayed above `maxRtf` for the last `rtfLines` finished lines in a row.
  *
- * Pure: the offscreen host feeds it and decides what stepping down means (the next ladder step,
- * the translator's first: the ladder's steps shrink the translator before the speech model).
+ * The host leaves out lines while the tab is hidden or Murmur's own lookahead is busy on the same
+ * models (`offscreen/host.ts`). One finding is only a strike: the service worker steps down after
+ * a second session falls behind at the same step (settings/memoryfit.ts).
+ *
+ * Pure: the offscreen host feeds it and decides what stepping down means (the next ladder step:
+ * a smaller translator for the translator, a smaller speech model for speech recognition).
  */
 export interface SlownessOptions {
   /** Finished live lines the translator's share is over. Default 30. */
@@ -23,6 +31,18 @@ export interface SlownessOptions {
   maxRtf?: number;
   /** Finished lines in a row with the factor above `maxRtf`. Default 15. */
   rtfLines?: number;
+  /** Shortest time the translator's late lines in the window may span, ms. Default 2 minutes. */
+  minSpanMs?: number;
+  /** The translator's budget per line, ms (for `waitedMs`). Default 3000. */
+  budgetMs?: number;
+}
+
+/** A finished live line from the translator. */
+export interface TranslatedLine {
+  /** It ran out of its budget. */
+  slow: boolean;
+  /** How long it waited for lines before it to finish first, ms. */
+  waitedMs?: number;
 }
 
 export type Slowness =
@@ -34,8 +54,10 @@ export class SlownessWatch {
   private readonly maxSlow: number;
   private readonly maxRtf: number;
   private readonly rtfLines: number;
-  /** The last `lines` translated lines, true where too slow. */
-  private readonly outcomes: boolean[] = [];
+  private readonly minSpanMs: number;
+  private readonly budgetMs: number;
+  /** The last `lines` translated lines: when, and whether too slow. */
+  private readonly outcomes: { at: number; slow: boolean }[] = [];
   /** Finished lines in a row with the factor above `maxRtf`, and the latest factor. */
   private overRtf = 0;
   private lastRtf = 0;
@@ -46,15 +68,24 @@ export class SlownessWatch {
     this.maxSlow = Math.max(1, Math.ceil(this.lines * (options.maxSlowShare ?? 0.2)));
     this.maxRtf = options.maxRtf ?? 0.6;
     this.rtfLines = options.rtfLines ?? 15;
+    this.minSpanMs = options.minSpanMs ?? 2 * 60_000;
+    this.budgetMs = options.budgetMs ?? 3000;
   }
 
-  /** The translator finished a live line: within its budget, or too slow (`slow`). */
-  onTranslated(slow: boolean): Slowness | null {
+  /** The translator finished a live line at `now` (epoch ms): within its budget, or too slow. */
+  onTranslated(line: TranslatedLine, now: number = Date.now()): Slowness | null {
     if (this.fired) return null;
-    this.outcomes.push(slow);
+    // Late mostly from waiting behind a late line: says little about this one.
+    if (line.slow && (line.waitedMs ?? 0) > this.budgetMs / 2) return null;
+    this.outcomes.push({ at: now, slow: line.slow });
     if (this.outcomes.length > this.lines) this.outcomes.shift();
-    const count = this.outcomes.filter(Boolean).length;
+    if (this.outcomes.length < this.lines) return null;
+    const slow = this.outcomes.filter((o) => o.slow);
+    const count = slow.length;
     if (count < this.maxSlow) return null;
+    // Late lines all within a short stretch: something else had the graphics card for a while.
+    const spread = (slow.at(-1) as { at: number }).at - (slow[0] as { at: number }).at;
+    if (spread < this.minSpanMs) return null;
     return this.fire({ engine: 'translator', slow: count, lines: this.outcomes.length });
   }
 

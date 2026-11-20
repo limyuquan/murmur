@@ -187,10 +187,14 @@ describe('memory ladders', () => {
       translation: sent()?.translationEngine,
     });
     // A step down below the last step: next time, Chrome's own engines.
+    expect(ladder?.id).toBeTruthy();
     const event = {
       sessionId: lastSessionId,
       profile: 'balanced' as const,
       gpu: 'none',
+      ladder: ladder?.id as string,
+      startedAt: ladder?.startedAt as number,
+      from: 2,
       step: 3,
       engine: 'qwen3-asr-0.6b',
       message: 'out of memory',
@@ -213,5 +217,58 @@ describe('memory ladders', () => {
     });
     expect(sent()?.ladder).toBeUndefined();
     expect(sent()?.simulateOutOfMemory).toBeUndefined();
+  });
+
+  it('steps down for slowness after the second session, and keeps “Try the larger models”', async () => {
+    const { saveSettings } = await import('@/settings/settings');
+    const { fitFor, loadMemoryFit, saveMemoryFit } = await import('@/settings/memoryfit');
+    await saveSettings({ profile: 'balanced' });
+    const slowSession = async () => {
+      await session.stopSession();
+      await session.startSession(TAB, { source: 'tone' });
+      const ladder = sent()?.ladder;
+      await session.onMemoryFit({
+        sessionId: lastSessionId,
+        profile: 'balanced',
+        gpu: 'none',
+        ladder: ladder?.id as string,
+        startedAt: ladder?.startedAt as number,
+        from: 0,
+        step: 1,
+        engine: 'gemma4-e2b',
+        message: 'slow',
+        cause: 'slow',
+      });
+      return ladder;
+    };
+    const ladder = await slowSession();
+    expect(fitFor(await loadMemoryFit(), 'none', 'balanced')).toBeNull();
+    await slowSession();
+    expect(fitFor(await loadMemoryFit(), 'none', 'balanced')).toMatchObject({
+      step: 1,
+      cause: 'slow',
+      ladder: ladder?.id,
+    });
+    // The person tries the larger models while a session runs: its report doesn't undo that.
+    await session.stopSession();
+    await session.startSession(TAB, { source: 'tone' });
+    const running = sent()?.ladder;
+    await saveMemoryFit('none', 'balanced', {
+      ladder: ladder?.id as string,
+      step: 0,
+      at: (running?.startedAt as number) + 1,
+    });
+    await session.onMemoryFit({
+      sessionId: lastSessionId,
+      profile: 'balanced',
+      gpu: 'none',
+      ladder: running?.id as string,
+      startedAt: running?.startedAt as number,
+      from: 1,
+      step: 2,
+      engine: 'qwen3-asr-0.6b',
+      message: 'out of memory',
+    });
+    expect(fitFor(await loadMemoryFit(), 'none', 'balanced')?.step).toBe(0);
   });
 });

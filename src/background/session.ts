@@ -32,7 +32,14 @@ import type {
   SessionStatus,
 } from '@/messaging/protocol';
 import { modelsFor, splitMissing } from '@/models/catalog';
-import { saveMemoryFit } from '@/settings/memoryfit';
+import {
+  afterSlowSession,
+  fitFor,
+  loadMemoryFit,
+  loadSlowStrikes,
+  saveMemoryFit,
+  saveSlowStrike,
+} from '@/settings/memoryfit';
 import { loadSettings, type Settings, spokenLanguages } from '@/settings/settings';
 import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
@@ -123,6 +130,8 @@ async function sessionLadder(engines: ResolvedEngines): Promise<SessionLadder | 
   if (steps.length === 0) return undefined;
   return {
     profile: ladder.profile,
+    id: ladder.id,
+    startedAt: Date.now(),
     gpu: gpuKey(await deviceHardware()),
     steps,
     length: ladder.steps.length,
@@ -132,15 +141,20 @@ async function sessionLadder(engines: ResolvedEngines): Promise<SessionLadder | 
 }
 
 /**
- * The offscreen document stepped down a memory ladder (out of memory, or falling behind): start
- * there next time on this device.
+ * The offscreen document stepped down a memory ladder (out of memory), or its models kept falling
+ * behind: start there next time on this device (settings/memoryfit.ts). Running out of memory is
+ * recorded at once; falling behind only the second time at the same step (`afterSlowSession`),
+ * and never below the ladder.
  * Kept even when the session then fails (a smaller model not downloaded yet), so the popup offers
- * the right download.
+ * the right download. Not when the person chose the larger models after the session started.
  */
 export async function onMemoryFit(event: {
   sessionId: string;
   profile: SessionLadder['profile'];
   gpu: string;
+  ladder: string;
+  startedAt: number;
+  from: number;
   step: number;
   engine: string;
   message: string;
@@ -148,9 +162,21 @@ export async function onMemoryFit(event: {
 }): Promise<void> {
   const status = await getStatus();
   if (status.state === 'idle' || status.sessionId !== event.sessionId) return;
+  const now = Date.now();
+  const current = fitFor(await loadMemoryFit(), event.gpu, event.profile);
+  // "Try the larger models" while this session ran: the next session tries them.
+  if (current && current.cause === undefined && current.at >= event.startedAt) return;
+  if (event.cause === 'slow') {
+    if (event.step <= event.from) return;
+    const strikes = await loadSlowStrikes();
+    const outcome = afterSlowSession(strikes[event.gpu]?.[event.profile] ?? null, event, now);
+    await saveSlowStrike(event.gpu, event.profile, outcome.strike);
+    if (!outcome.record) return;
+  }
   await saveMemoryFit(event.gpu, event.profile, {
+    ladder: event.ladder,
     step: event.step,
-    at: Date.now(),
+    at: now,
     cause: event.cause ?? 'memory',
     engine: event.engine,
     message: event.message,

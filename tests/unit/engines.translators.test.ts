@@ -164,8 +164,44 @@ describe('line fallback', () => {
     );
     await collect(broken.translate(request('Bonjour', { segmentId: 'e' })));
     expect(lines).toEqual([
-      { segmentId: 'a', slow: false },
-      { segmentId: 'b', slow: true },
+      { segmentId: 'a', slow: false, waitedMs: 0 },
+      { segmentId: 'b', slow: true, waitedMs: 0 },
+    ]);
+  });
+
+  it('says how long a late line waited for the one before it', async () => {
+    vi.useFakeTimers();
+    // One generation at a time: each line waits for the one before.
+    let free: Promise<void> = Promise.resolve();
+    const primary = scripted(INFO, async function* (r) {
+      const before = free;
+      let done = () => {};
+      free = new Promise((resolve) => {
+        done = resolve;
+      });
+      await before;
+      try {
+        await aborted(r.signal);
+      } finally {
+        done();
+      }
+      yield { text: 'never', final: true };
+    });
+    const lines: { segmentId: string; slow: boolean; waitedMs: number }[] = [];
+    const t = new LineFallbackTranslator(primary, {
+      backup: async () => backup(),
+      budgetMs: 3000,
+      onLine: (line) => lines.push(line),
+    });
+    const first = collect(t.translate(request('Un', { segmentId: 'a' })));
+    await vi.advanceTimersByTimeAsync(2000);
+    const second = collect(t.translate(request('Deux', { segmentId: 'b' })));
+    await vi.advanceTimersByTimeAsync(3000);
+    await Promise.all([first, second]);
+    expect(lines).toEqual([
+      { segmentId: 'a', slow: true, waitedMs: 0 },
+      // Asked for at 2 s, the line before was done with at 3 s.
+      { segmentId: 'b', slow: true, waitedMs: 1000 },
     ]);
   });
 

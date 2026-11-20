@@ -68,6 +68,8 @@ const CONFIG: SessionConfig = {
   translatePartials: false,
   ladder: {
     profile: 'best',
+    id: 'best-ladder',
+    startedAt: 1000,
     gpu: 'nvidia|ampere||2048',
     steps: [
       { index: 0, asr: 'qwen3-asr-1.7b', translation: 'gemma4-e4b' },
@@ -118,6 +120,9 @@ describe('OffscreenHost memory ladder', () => {
         sessionId: 's1',
         profile: 'best',
         gpu: 'nvidia|ampere||2048',
+        ladder: 'best-ladder',
+        startedAt: 1000,
+        from: 0,
         step: 1,
         engine: 'gemma4-e4b',
         message: 'Gemma 4 E4B: The graphics card ran out of memory.',
@@ -185,7 +190,7 @@ describe('OffscreenHost falling behind', () => {
     untranslated: 'pending',
   });
 
-  it('steps down for the next session when speech recognition stays slow', async () => {
+  it('tells the service worker when speech recognition stays slow: a smaller speech model', async () => {
     loads.log = [];
     const events: OffscreenEvent[] = [];
     const slow: unknown[] = [];
@@ -222,21 +227,24 @@ describe('OffscreenHost falling behind', () => {
         sessionId: 's1',
         profile: 'best',
         gpu: 'nvidia|ampere||2048',
-        // The next step down: the translator first (it shares the graphics card).
-        step: 1,
+        ladder: 'best-ladder',
+        startedAt: 1000,
+        from: 0,
+        // The next step with a smaller speech model, not just a smaller translator.
+        step: 2,
         engine: 'qwen3-asr-1.7b',
         message: 'Qwen3-ASR 1.7B took 0.8 s per second of speech for 15 lines in a row.',
         cause: 'slow',
       },
     ]);
-    expect(slow).toEqual([{ found: { engine: 'asr', rtf: 0.8, lines: 15 }, next: 1 }]);
+    expect(slow).toEqual([{ found: { engine: 'asr', rtf: 0.8, lines: 15 }, next: 2 }]);
     const statuses = events.flatMap((e) => (e.type === 'session-status' ? [e.status] : []));
     expect(statuses.at(-1)).toMatchObject({
       state: 'running',
       asr: 'Qwen3-ASR 1.7B',
       translation: 'Gemma 4 E4B',
       fitNote:
-        'Qwen3-ASR 1.7B is falling behind the speech here, so the next session starts with smaller models.',
+        'Qwen3-ASR 1.7B is falling behind the speech here. If it happens again, Murmur will start with smaller models.',
     });
     // Once a session.
     for (let i = 15; i < 40; i++) pipeline.onCue(line(i));
@@ -244,7 +252,7 @@ describe('OffscreenHost falling behind', () => {
     await host.stop();
   });
 
-  it('below the last step, Chrome’s own engines come next; no ladder, no step down', async () => {
+  it('never steps below the last step for slowness; no ladder, no step down', async () => {
     const ladder = CONFIG.ladder as NonNullable<SessionConfig['ladder']>;
     const last = { index: 3, asr: 'qwen3-asr-0.6b', translation: 'chrome-translator' };
     const atLast = {
@@ -254,7 +262,7 @@ describe('OffscreenHost falling behind', () => {
       ladder: { ...ladder, steps: [last] },
     };
     for (const [config, expected] of [
-      [atLast, [4]],
+      [atLast, []],
       [(({ ladder: _, ...plain }) => plain)(CONFIG), []],
     ] as const) {
       const events: OffscreenEvent[] = [];
@@ -284,5 +292,40 @@ describe('OffscreenHost falling behind', () => {
       expect(events.flatMap((e) => (e.type === 'memory-fit' ? [e.step] : []))).toEqual(expected);
       await host.stop();
     }
+  });
+  it('doesn’t count lines while the tab is hidden', async () => {
+    const events: OffscreenEvent[] = [];
+    const host = new OffscreenHost({
+      send: async (event) => {
+        events.push(event);
+      },
+      loadVad: async () => {
+        throw new Error('no VAD here');
+      },
+      languageDetector: async () => null,
+    });
+    const port = {
+      sender: { tab: { id: CONFIG.tabId }, frameId: 0 },
+      postMessage: () => {},
+      onDisconnect: { addListener: () => {} },
+    };
+    host.addOverlay(port);
+    host.setOverlayVisible(port, false);
+    await host.start(CONFIG);
+    await host.loaded();
+    const pipeline = pipelines.last as {
+      onCue(cue: Cue): void;
+      onHealth(health: Record<string, unknown>): void;
+    };
+    pipeline.onHealth({
+      behind: false,
+      backlogMs: 0,
+      droppedPartials: 0,
+      droppedSegments: 0,
+      rtf: 2,
+    });
+    for (let i = 0; i < 40; i++) pipeline.onCue(line(i));
+    expect(events.filter((e) => e.type === 'memory-fit')).toEqual([]);
+    await host.stop();
   });
 });

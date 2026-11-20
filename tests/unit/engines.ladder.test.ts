@@ -33,6 +33,7 @@ import {
   QWEN3_ASR_ID,
   recommendProfile,
   resolveEngines,
+  SLOW_FIT_MS,
   SLOW_ON_SHARED_MEMORY,
   WHISPER_BASE_ID,
   WHISPER_TURBO_ID,
@@ -187,6 +188,44 @@ describe('memory ladders', () => {
     ]);
     const memory = resolveEngines('best', none, r, NVIDIA, { fit: { step: 1, cause: 'memory' } });
     expect(memory.ladder?.reason).toBe('record');
+  });
+
+  it('a step down for falling behind moves back up with time, and never leaves the ladder', () => {
+    const r = published();
+    const now = 100 * SLOW_FIT_MS;
+    const slow = (step: number, age: number) =>
+      resolveEngines('best', none, r, NVIDIA, {
+        fit: { step, cause: 'slow', at: now - age },
+        now,
+      });
+    expect(slow(2, 0).ladder?.start).toBe(2);
+    // A week on: one step up; two weeks: back to where the guess starts, no note.
+    expect(slow(2, SLOW_FIT_MS).ladder?.start).toBe(1);
+    expect(slow(2, 2 * SLOW_FIT_MS).ladder?.start).toBe(0);
+    expect(slow(2, 2 * SLOW_FIT_MS).ladder?.reason).toBeNull();
+    // Below the ladder for slowness: the last step at most (Chrome's own engines only when
+    // models don't fit).
+    expect(pair(slow(4, 0))).toEqual([QWEN3_ASR_ID, CHROME_TRANSLATOR_ID]);
+    // Running out of memory holds.
+    const memory = resolveEngines('best', none, r, NVIDIA, {
+      fit: { step: 2, cause: 'memory', at: 0 },
+      now,
+    });
+    expect(memory.ladder?.start).toBe(2);
+  });
+
+  it('applies a record only to the engines it was made on', () => {
+    // Made where Qwen3-ASR's files weren't published: turbo ran out of memory, below the ladder.
+    const before = resolveEngines('balanced', none, createBuiltinRegistry(), NVIDIA);
+    const id = before.ladder?.id as string;
+    const fit = { step: 3, cause: 'memory' as const, ladder: id };
+    const same = resolveEngines('balanced', none, createBuiltinRegistry(), NVIDIA, { fit });
+    expect(pair(same)).toEqual([CHROME_WEBSPEECH_ID, CHROME_TRANSLATOR_ID]);
+    // Once Qwen3-ASR is available, the ladder is another one: the record doesn't apply.
+    const after = resolveEngines('balanced', none, published(), NVIDIA, { fit });
+    expect(after.ladder?.id).not.toBe(id);
+    expect(pair(after)).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(after.ladder?.reason).toBeNull();
   });
 
   it('Balanced can use the smaller speech model by choice', () => {

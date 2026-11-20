@@ -64,6 +64,12 @@ export const SPEED_NOTE =
 /** How often the session's activity is checked (and reported, when it changed). */
 const ACTIVITY_MS = 1000;
 
+/**
+ * After the tab is shown again, how long lines still don't count towards falling behind (the
+ * program that had the graphics card may still be letting go of it), ms.
+ */
+const SHOWN_GRACE_MS = 10_000;
+
 /** Lookahead messages kept from before a session starts, at most (base64 bytes). */
 const EARLY_LOOKAHEAD_BYTES = 32 * 1024 * 1024;
 
@@ -188,6 +194,11 @@ export class OffscreenHost {
    */
   private early: { port: OverlayPort; message: LookaheadMessage; size: number }[] = [];
   private earlyBytes = 0;
+  /**
+   * Per tab, until when its lines don't count towards falling behind (Infinity: hidden now), as
+   * its top frame reports.
+   */
+  private readonly unseenUntil = new Map<number, number>();
 
   constructor(private readonly deps: HostDeps) {}
 
@@ -215,6 +226,25 @@ export class OffscreenHost {
     if (!entry || entry.video === present) return;
     entry.video = present;
     this.updateFrames(port.sender?.tab?.id);
+  }
+
+  /** The top frame's tab was shown or hidden. */
+  setOverlayVisible(port: OverlayPort, visible: boolean): void {
+    const tabId = port.sender?.tab?.id;
+    if (tabId === undefined || !isTopFrame(port) || !this.ports.has(port)) return;
+    if (!visible) this.unseenUntil.set(tabId, Number.POSITIVE_INFINITY);
+    else if (this.unseenUntil.has(tabId)) this.unseenUntil.set(tabId, Date.now() + SHOWN_GRACE_MS);
+  }
+
+  /**
+   * Whether the session's lines now say little about its models' speed: the tab is hidden (or
+   * just shown again), so another program may have the graphics card, or lookahead is making
+   * subtitles ahead of time on the same models.
+   */
+  private unseen(running: Running): boolean {
+    const until = this.unseenUntil.get(running.config.tabId);
+    if (until !== undefined && Date.now() < until) return true;
+    return running.livePaused || (running.lookahead?.busy ?? false);
   }
 
   /** Lookahead from an overlay: the tee's events, or where its video plays. */
@@ -441,7 +471,7 @@ export class OffscreenHost {
           signal,
           onTranslatorFallback,
           asrMemoryFailure: (engine) => engine.memoryFailure?.() ?? null,
-          onStepDown: (next, engine, err) => {
+          onStepDown: (next, engine, err, from) => {
             console.warn(LOG_PREFIX, `${engine} ran out of graphics memory`, err.message);
             this.deps.onStepDown?.(engine, err, next);
             if (!this.isCurrent(running)) return;
@@ -454,6 +484,9 @@ export class OffscreenHost {
                 sessionId: config.sessionId,
                 profile: ladder.profile,
                 gpu: ladder.gpu,
+                ladder: ladder.id,
+                startedAt: ladder.startedAt,
+                from: from.index,
                 step: next?.index ?? ladder.length,
                 engine,
                 message: err.message,
@@ -681,9 +714,9 @@ export class OffscreenHost {
     let fellBack = 0;
     return sessionTranslator(translator, {
       glossary: config.glossary ?? [],
-      onLine: ({ slow }) => {
-        if (!this.isCurrent(running)) return;
-        const found = running.slowness?.onTranslated(slow);
+      onLine: ({ slow, waitedMs }) => {
+        if (!this.isCurrent(running) || this.unseen(running)) return;
+        const found = running.slowness?.onTranslated({ slow, waitedMs });
         if (found) this.stepDownForSpeed(running, found);
       },
       backup: backupId
@@ -717,15 +750,18 @@ export class OffscreenHost {
     if (running.recognized.size > 64) {
       running.recognized.delete(running.recognized.values().next().value as string);
     }
+    if (this.unseen(running)) return;
     const found = running.slowness.onRecognized(running.rtf);
     if (found) this.stepDownForSpeed(running, found);
   }
 
   /**
-   * The session's models keep falling behind: the next session on this device starts one step
-   * down its ladder (the step after the one that loaded: the ladder shrinks the translator first,
-   * then the speech model), as after running out of memory. This one runs on as it is; the
-   * per-line backup covers the translator's late lines.
+   * The session's models keep falling behind. The service worker counts it (settings/
+   * memoryfit.ts): after a second session that falls behind at this step, the next one starts a
+   * step down its ladder, with a smaller translator when the translator fell behind, a smaller
+   * speech model when speech recognition did. Never below the ladder's last step: Chrome's own
+   * engines take over only when models don't fit. This session runs on as it is; the per-line
+   * backup covers the translator's late lines.
    */
   private stepDownForSpeed(running: Running, found: Slowness): void {
     const { config } = running;
@@ -733,29 +769,40 @@ export class OffscreenHost {
     const at = running.ladderStep;
     if (!ladder || !at) return;
     const i = ladder.steps.findIndex((step) => step.index === at.index);
-    const next = ladder.steps[i + 1] ?? null;
+    const below = ladder.steps.slice(i + 1);
+    const next =
+      (found.engine === 'translator'
+        ? below[0]
+        : below.find((step) => step.asr !== at.asr && step.asr !== running.asr?.info.id)) ?? null;
     const engine = found.engine === 'translator' ? at.translation : at.asr;
     const label =
       (found.engine === 'translator'
         ? this.registry.translationInfo(engine)?.label
         : this.registry.asrInfo(engine)?.label) ?? engine;
     const message = `${label} ${describeSlowness(found, LINE_BUDGET_MS)}.`;
-    console.warn(LOG_PREFIX, 'falling behind, smaller models next time:', message);
+    console.warn(LOG_PREFIX, 'falling behind:', message);
     this.deps.onSlow?.(found, next);
-    this.deps
-      .send({
-        target: 'background',
-        type: 'memory-fit',
-        sessionId: config.sessionId,
-        profile: ladder.profile,
-        gpu: ladder.gpu,
-        step: next?.index ?? ladder.length,
-        engine,
-        message,
-        cause: 'slow',
-      })
-      .catch(() => {});
-    running.fitNote = `${label} is falling behind the speech here, so the next session starts with smaller models.`;
+    if (next) {
+      this.deps
+        .send({
+          target: 'background',
+          type: 'memory-fit',
+          sessionId: config.sessionId,
+          profile: ladder.profile,
+          gpu: ladder.gpu,
+          ladder: ladder.id,
+          startedAt: ladder.startedAt,
+          from: at.index,
+          step: next.index,
+          engine,
+          message,
+          cause: 'slow',
+        })
+        .catch(() => {});
+    }
+    running.fitNote = next
+      ? `${label} is falling behind the speech here. If it happens again, Murmur will start with smaller models.`
+      : `${label} is falling behind the speech here.`;
     this.reportRunning(running);
   }
 

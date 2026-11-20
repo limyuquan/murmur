@@ -130,6 +130,14 @@ export function startOverlay(): void {
   port.onMessage.addListener(onMessage);
   port.onDisconnect.addListener(stop);
   port.postMessage({ type: 'hello', frameUrl: location.href } satisfies OverlayToHost);
+  // Whether the tab is shown: a session doesn't count lines that fell behind while it was hidden.
+  if (window === window.top) {
+    const onVisibility = (): void =>
+      post({ type: 'visible', visible: document.visibilityState !== 'hidden' });
+    onVisibility();
+    document.addEventListener('visibilitychange', onVisibility);
+    unwatch.push(() => document.removeEventListener('visibilitychange', onVisibility));
+  }
   // Lookahead can read this page: what the player did so far, then as it happens (after the
   // hello, which the session counts the port by), and where the video is.
   if (relay) {

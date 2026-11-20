@@ -242,6 +242,10 @@ export interface SessionConfig {
 
 export interface SessionLadder {
   profile: ProfileId;
+  /** The ladder as resolved on this device (profiles.ts `ladderId`), for the record. */
+  id: string;
+  /** When the service worker started the session, epoch ms. */
+  startedAt: number;
   /** This device's graphics (`gpuKey`), for the record of what fits. */
   gpu: string;
   /** The steps from where the session starts, the first being the config's engines. */
@@ -289,13 +293,19 @@ export type OffscreenEvent =
       sessionId: string;
       profile: ProfileId;
       gpu: string;
+      /** `SessionLadder.id` and `startedAt`. */
+      ladder: string;
+      startedAt: number;
+      /** The step the session was on (`LadderStep.index`) and the one to start at next time. */
+      from: number;
       step: number;
       /** The engine that ran out, and what it said. */
       engine: string;
       message: string;
       /**
        * Not out of memory: the session's models kept falling behind the speech (slowness.ts).
-       * The session runs on; the next one starts at `step`.
+       * The session runs on; the service worker decides whether the next one starts at `step`
+       * (settings/memoryfit.ts `afterSlowSession`).
        */
       cause?: 'slow';
     };
@@ -361,6 +371,9 @@ export type OverlayHello = { type: 'hello'; frameUrl: string };
 export type OverlayToHost =
   | OverlayHello
   | { type: 'video'; present: boolean }
+  /** The tab is shown or hidden (top frame only): a session that falls behind while hidden
+   * doesn't count it (another program likely has the graphics card). */
+  | { type: 'visible'; visible: boolean }
   /** Lookahead: what the page's player did (from the relay), or an answer to a `fetch`. */
   | { type: 'tee'; wire: TeeWire }
   /** Lookahead: where the video this frame follows is, and what it plays. */

@@ -236,6 +236,11 @@ export class LookaheadHost {
     await this.runner.stop();
   }
 
+  /** Whether lookahead is making subtitles now, on the session's models. */
+  get busy(): boolean {
+    return this.runner.busy;
+  }
+
   snapshot(): LookaheadSnapshot {
     const decoded: Record<string, Span[]> = {};
     for (const [id, t] of this.pcm) decoded[id] = t.coverage();

@@ -119,6 +119,11 @@ export class LookaheadRunner {
   constructor(private readonly deps: RunnerDeps) {}
 
   /** What is playing now (a new report from the overlay). */
+  /** Whether a job is making subtitles now (on the session's models). */
+  get busy(): boolean {
+    return this.job !== null;
+  }
+
   setTarget(target: RunnerTarget | null): void {
     this.target = target;
     this.kick();

@@ -273,6 +273,7 @@ export function ModelSizeOptions({
   if (profile !== 'balanced' && profile !== 'best') return null;
   const smaller = profile === 'balanced' ? smallerSpeechCopy(registry) : null;
   const fit = models?.engines ? memoryFitCopy(models.engines, registry) : null;
+  const ladder = models?.engines?.ladder;
   if (!smaller && !fit) return null;
   return (
     <div className="card grid gap-3 p-4" data-testid="model-size">
@@ -291,7 +292,7 @@ export function ModelSizeOptions({
           </span>
         </label>
       )}
-      {fit && hardware && (
+      {fit && hardware && ladder && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="memory-fit">
           <p className="min-w-[220px] flex-1 text-[13px]">{fit.text}</p>
           {fit.retry && (
@@ -299,7 +300,11 @@ export function ModelSizeOptions({
               type="button"
               className="btn btn-sm"
               onClick={() =>
-                void saveMemoryFit(gpuKey(hardware), profile, { step: 0, at: Date.now() })
+                void saveMemoryFit(gpuKey(hardware), profile, {
+                  ladder: ladder.id,
+                  step: 0,
+                  at: Date.now(),
+                })
               }
               data-testid="try-larger"
             >

@@ -186,6 +186,11 @@ export interface LadderStep extends EnginePair {
 export interface ResolvedLadder {
   profile: ProfileId;
   /**
+   * The engines of every step as they run here (`ladderId`): a device's record (settings/
+   * memoryfit.ts) applies only to the ladder it was made on.
+   */
+  id: string;
+  /**
    * Every step of the profile's ladder as it runs here: an engine that can't run here for another
    * reason than memory (not in this build, no 16-bit float shaders) is replaced by the next one in
    * the profile's list, as without a ladder.
@@ -212,6 +217,20 @@ export type LadderReason = 'estimate' | 'record' | 'slow' | 'speed' | 'smaller';
 /** Why a device's record moved a ladder down (settings/memoryfit.ts). */
 export type FitCause = 'memory' | 'slow';
 
+/**
+ * How long a step down for slowness holds: after this long without falling behind again, the
+ * session tries one step up, then another after as long again. Running out of memory holds.
+ */
+export const SLOW_FIT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * A ladder's identity: the engines each step runs here, in order. A record made on another
+ * ladder (the engines changed in an update, a model became available) doesn't apply.
+ */
+export function ladderId(steps: readonly EnginePair[]): string {
+  return steps.map((step) => `${step.asr}+${step.translation}`).join('>');
+}
+
 export interface ResolvedEngines {
   asr: string;
   translation: string;
@@ -226,7 +245,9 @@ export interface ResolveOptions {
    * This device's record for the profile (settings/memoryfit.ts): the step that last worked, and
    * why the session stepped down to it (none: the person chose it).
    */
-  fit?: { step: number; cause?: FitCause } | null;
+  fit?: { step: number; cause?: FitCause; at?: number; ladder?: string } | null;
+  /** Now, epoch ms (tests); for how long a step down for slowness holds. */
+  now?: number;
   /** Balanced with the smaller speech model (Qwen3-ASR 0.6B): a smaller download. */
   smallerSpeech?: boolean;
 }
@@ -262,7 +283,7 @@ export function resolveEngines(
       options.smallerSpeech && choice === 'balanced'
         ? ladder.findIndex((pair) => pair.asr !== QWEN3_ASR_17B_ID)
         : 0;
-    const recorded = options.fit ? Math.min(Math.max(0, options.fit.step), steps.length) : null;
+    const id = ladderId(steps);
     // Graphics that share the computer's memory start below the translators too slow there.
     const fast = sharesMemory(hardware.webgpu)
       ? Math.max(
@@ -271,6 +292,9 @@ export function resolveEngines(
         )
       : 0;
     const guessed = Math.max(estimated, fast);
+    let recorded = recordedStep(options.fit ?? null, id, steps.length, options.now ?? Date.now());
+    // A step down for slowness that has moved back up to the guess is over.
+    if (options.fit?.cause === 'slow' && recorded !== null && recorded <= guessed) recorded = null;
     const start = Math.max(recorded ?? guessed, smallest);
     const top = steps[0];
     const chosen = steps[start];
@@ -301,7 +325,7 @@ export function resolveEngines(
         'Smaller models: the largest translation model is too slow for live subtitles on graphics that share the computer’s memory.',
       );
     }
-    const resolved = { profile: choice, steps, start, estimated, estimateMB, reason };
+    const resolved = { profile: choice, id, steps, start, estimated, estimateMB, reason };
     const step = steps[start];
     if (step) return { asr: step.asr, translation: step.translation, notes, ladder: resolved };
     return {
@@ -319,6 +343,26 @@ export function resolveEngines(
 }
 
 type Info = (id: string) => EngineInfo | undefined;
+
+/**
+ * The step a device's record starts a ladder of `length` steps at, or null when it has none
+ * that applies: one made on another ladder (`id`) doesn't. A step down for slowness never goes
+ * below the last step (only running out of memory leaves the ladder), and moves one step back
+ * up for each `SLOW_FIT_MS` since it was made.
+ */
+function recordedStep(
+  fit: ResolveOptions['fit'] | null,
+  id: string,
+  length: number,
+  now: number,
+): number | null {
+  if (!fit) return null;
+  if (fit.ladder !== undefined && fit.ladder !== id) return null;
+  const step = Math.min(Math.max(0, fit.step), length);
+  if (fit.cause !== 'slow') return step;
+  const age = Math.max(0, now - (fit.at ?? now));
+  return Math.max(0, Math.min(step, length - 1) - Math.floor(age / SLOW_FIT_MS));
+}
 
 /** `list` from `id` on (just `id` when it isn't in the list). */
 function from(id: string, list: readonly string[]): readonly string[] {
