@@ -8,6 +8,10 @@
  * `mergeSettings`. Stored objects are merged over the defaults on read, so old data keeps working.
  * Changing a default: every save stores the whole object, so a stored value equal to the old
  * default may never have been chosen. Bump `SETTINGS_VERSION` and decide in `migrate`.
+ *
+ * Writing: only through `saveSettings`, with the fields changed (or a function of the current
+ * settings). It reads, patches and stores under a Web Lock shared by every extension context, so
+ * two contexts writing at once never undo each other's change.
  */
 import { browser } from 'wxt/browser';
 // Not the ids from engines/profiles.ts: the overlay bundles settings, and shouldn't bundle the
@@ -263,10 +267,49 @@ export async function loadSettings(): Promise<Settings> {
   return readStoredSettings(stored[SETTINGS_KEY]);
 }
 
-export async function saveSettings(patch: SettingsPatch): Promise<Settings> {
-  const next = applyPatch(await loadSettings(), patch);
-  await browser.storage.local.set({ [SETTINGS_KEY]: { ...next, version: SETTINGS_VERSION } });
-  return next;
+/**
+ * A change to settings: a patch of the fields changed, or a function that makes one from the
+ * stored settings at the time of writing (for a change that depends on them, like adding to a
+ * list), so a change made meanwhile in another context is never written back over.
+ */
+export type SettingsChange = SettingsPatch | ((current: Settings) => SettingsPatch);
+
+/** The Web Lock every settings write holds (one origin: pages and service worker share it). */
+export const SETTINGS_LOCK = 'murmur-settings';
+
+/** Writes in a context without Web Locks, one at a time. */
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs `work` holding the settings lock: a read-modify-write of the stored object in one context
+ * (popup, options page, service worker) never interleaves with one in another, so neither loses
+ * the other's change.
+ */
+function withSettingsLock<T>(work: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  if (locks) return locks.request(SETTINGS_LOCK, work);
+  const run = queue.then(work, work);
+  queue = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Applies `change` to the stored settings and stores them. Only the fields the change names are
+ * written: the rest come from storage as it is now, under the settings lock.
+ */
+export function saveSettings(change: SettingsChange): Promise<Settings> {
+  return withSettingsLock(async () => {
+    const current = await loadSettings();
+    const patch = typeof change === 'function' ? change(current) : change;
+    const next = applyPatch(current, patch);
+    await browser.storage.local.set({ [SETTINGS_KEY]: { ...next, version: SETTINGS_VERSION } });
+    return next;
+  });
+}
+
+/** `change` applied to `current` (what a page shows before storage confirms it). */
+export function applyChange(current: Settings, change: SettingsChange): Settings {
+  return applyPatch(current, typeof change === 'function' ? change(current) : change);
 }
 
 /** Calls `listener` with the new settings whenever they change. Returns an unsubscribe. */

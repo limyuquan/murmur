@@ -16,7 +16,7 @@ import type { SetupAction } from '@/engines/types';
 import { modelsFor, totalMB } from '@/models/catalog';
 import { formatSize, type ModelEntry, type ModelInfo, type ModelsView } from '@/models/types';
 import { type MemoryFit, resolveOptions, saveMemoryFit } from '@/settings/memoryfit';
-import type { Settings, SettingsPatch } from '@/settings/settings';
+import type { Settings, SettingsChange } from '@/settings/settings';
 import { browserGaps } from './browser';
 import { Icon, Meter, ProgressBar } from './components';
 import { engineNames, memoryFitCopy, memoryText, smallerSpeechCopy } from './fitcopy';
@@ -278,7 +278,7 @@ export function ModelSizeOptions({
   models,
 }: {
   settings: Settings;
-  update(patch: SettingsPatch): void;
+  update(change: SettingsChange): void;
   registry: EngineRegistry;
   hardware: HardwareInfo | null;
   models: ProfileModels | null;

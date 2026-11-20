@@ -8,6 +8,7 @@ import {
   mergeSettings,
   readStoredSettings,
   SETTINGS_KEY,
+  SETTINGS_LOCK,
   SETTINGS_VERSION,
   saveSettings,
   spokenLanguages,
@@ -127,5 +128,54 @@ describe('storage', () => {
     expect(stored[SETTINGS_KEY]).toMatchObject({ targetLanguage: 'ja' });
     expect(seen).toEqual(['ja']);
     stop();
+  });
+});
+
+describe('writers that run at once (popup, options page, service worker)', () => {
+  it('keep each other’s changes: each writes only the fields it changed', async () => {
+    await saveSettings({ spokenLanguages: ['en', 'ko', 'ja'] });
+    // Four writers at once, as from the popup, the options page and the service worker.
+    await Promise.all([
+      saveSettings({ overlay: { fontScale: 1.3 } }),
+      saveSettings({ lookahead: { sites: ['example.com'] } }),
+      saveSettings({ overlay: { background: 'outline' } }),
+      saveSettings({ glossary: [{ source: 'Murmur', target: 'Murmur' }] }),
+    ]);
+    const s = await loadSettings();
+    expect(s.spokenLanguages).toEqual(['en', 'ko', 'ja']);
+    expect(s.overlay).toMatchObject({ fontScale: 1.3, background: 'outline' });
+    expect(s.lookahead.sites).toEqual(['example.com']);
+    expect(s.glossary).toHaveLength(1);
+  });
+
+  it('compute a change from the stored settings at the time of writing', async () => {
+    await saveSettings({ spokenLanguages: ['en'], lookahead: { sites: ['a.example.com'] } });
+    const add = (tag: string) =>
+      saveSettings((s) => ({ spokenLanguages: [...s.spokenLanguages, tag] }));
+    const site = (name: string) =>
+      saveSettings((s) => ({ lookahead: { sites: [...s.lookahead.sites, name] } }));
+    await Promise.all([add('ko'), site('b.example.com'), add('ja'), site('c.example.com')]);
+    const s = await loadSettings();
+    expect(s.spokenLanguages).toEqual(['en', 'ko', 'ja']);
+    expect(s.lookahead.sites).toEqual(['a.example.com', 'b.example.com', 'c.example.com']);
+  });
+
+  it('hold a Web Lock every extension context shares', async () => {
+    const held: string[] = [];
+    const locks = navigator.locks;
+    const request = locks.request.bind(locks) as (name: string, cb: () => unknown) => unknown;
+    const spy = Object.assign(Object.create(locks), {
+      request: (name: string, cb: () => unknown) => {
+        held.push(name);
+        return request(name, cb);
+      },
+    });
+    Object.defineProperty(navigator, 'locks', { value: spy, configurable: true });
+    try {
+      await saveSettings({ targetLanguage: 'ja' });
+    } finally {
+      Object.defineProperty(navigator, 'locks', { value: locks, configurable: true });
+    }
+    expect(held).toEqual([SETTINGS_LOCK]);
   });
 });

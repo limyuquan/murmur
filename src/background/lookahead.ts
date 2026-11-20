@@ -71,10 +71,11 @@ export function syncLookaheadScripts(): Promise<void> {
 
 /** Turns lookahead on or off for `site` (access must already be granted to turn it on). */
 export async function setLookaheadSite(site: string, on: boolean): Promise<LookaheadSettings> {
-  const current = (await loadSettings()).lookahead;
-  const sites = current.sites.filter((s) => s !== site);
-  if (on) sites.push(site);
-  const next = await saveSettings({ lookahead: { sites } });
+  const next = await saveSettings((current) => {
+    const sites = current.lookahead.sites.filter((s) => s !== site);
+    if (on) sites.push(site);
+    return { lookahead: { sites } };
+  });
   await syncLookaheadScripts();
   return next.lookahead;
 }

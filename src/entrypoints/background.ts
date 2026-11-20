@@ -17,7 +17,7 @@ import { OFFSCREEN_PATH } from '@/capture/offscreen';
 import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/profiles';
 import { isOffscreenEvent, isRequest, type Response } from '@/messaging/protocol';
 import { isExtensionPage, isOffscreenDocument } from '@/messaging/senders';
-import { loadSettings, saveSettings, spokenLanguages, watchSettings } from '@/settings/settings';
+import { saveSettings, spokenLanguages, watchSettings } from '@/settings/settings';
 import { COMMANDS } from '@/shared/commands';
 import { IS_E2E } from '@/shared/e2e';
 import { LOG_PREFIX } from '@/shared/ids';
@@ -39,10 +39,19 @@ export default defineBackground(() => {
     if (reason !== 'install') return;
     // Start with the browser's language as the target, when it's offered, and its languages as
     // the ones spoken.
-    void saveSettings({
-      targetLanguage: defaultTarget(),
-      spokenLanguages: spokenLanguages({ spokenLanguages: [] }, navigator.languages, LANGUAGES),
-    }).finally(() => {
+    // Only while nothing was chosen yet: a page or a test may already have written its own.
+    void saveSettings((current) =>
+      current.spokenLanguages.length > 0
+        ? {}
+        : {
+            targetLanguage: defaultTarget(),
+            spokenLanguages: spokenLanguages(
+              { spokenLanguages: [] },
+              navigator.languages,
+              LANGUAGES,
+            ),
+          },
+    ).finally(() => {
       if (!IS_E2E) void browser.tabs.create({ url: browser.runtime.getURL('/welcome.html') });
     });
   });
@@ -52,11 +61,9 @@ export default defineBackground(() => {
     if (command === COMMANDS.toggle && tab?.id !== undefined) {
       void toggleSession(tab.id);
     } else if (command === COMMANDS.original) {
-      void loadSettings().then((s) =>
-        saveSettings({
-          overlay: { display: s.overlay.display === 'both' ? 'translation' : 'both' },
-        }),
-      );
+      void saveSettings((s) => ({
+        overlay: { display: s.overlay.display === 'both' ? 'translation' : 'both' },
+      }));
     }
   });
 

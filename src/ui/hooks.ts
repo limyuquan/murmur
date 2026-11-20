@@ -6,22 +6,31 @@ import { call } from '@/messaging/client';
 import { DOWNLOADS_KEY, type DownloadProgress, type ModelsView } from '@/models/types';
 import { loadMemoryFit, type MemoryFit, watchMemoryFit } from '@/settings/memoryfit';
 import {
-  applyPatch,
+  applyChange,
   loadSettings,
   type Settings,
-  type SettingsPatch,
+  type SettingsChange,
   saveSettings,
   watchSettings,
 } from '@/settings/settings';
 
-/** Settings, kept in step with storage (another page or the popup may change them). */
-export function useSettings(initial: Settings): [Settings, (patch: SettingsPatch) => void] {
+/**
+ * Settings, kept in step with storage (another page, the popup or the service worker may change
+ * them). `update` stores only the fields it is given (or a function of the stored settings): the
+ * page's copy is never written back, so it can't undo a change made elsewhere.
+ */
+export function useSettings(initial: Settings): [Settings, (change: SettingsChange) => void] {
   const [settings, setSettings] = useState(initial);
   useEffect(() => watchSettings(setSettings), []);
-  const update = useCallback((patch: SettingsPatch) => {
-    // Show the change at once (controls stay in step with the click), then store it.
-    setSettings((s) => applyPatch(s, patch));
-    saveSettings(patch).then(setSettings, (err: unknown) => console.error(err));
+  const update = useCallback((change: SettingsChange) => {
+    // Show the change at once (controls stay in step with the click), then store it. The stored
+    // result comes back through `watchSettings`, in the order writes happened; the value a save
+    // resolves with may already be older than a change from elsewhere.
+    setSettings((s) => applyChange(s, change));
+    saveSettings(change).catch((err: unknown) => {
+      console.error(err);
+      loadSettings().then(setSettings, () => {});
+    });
   }, []);
   return [settings, update];
 }

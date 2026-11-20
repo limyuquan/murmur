@@ -677,7 +677,11 @@ function AheadSection({ settings, update }: { settings: Settings; update: Update
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => update({ lookahead: { sites: sites.filter((s) => s !== site) } })}
+                onClick={() =>
+                  update((current) => ({
+                    lookahead: { sites: current.lookahead.sites.filter((s) => s !== site) },
+                  }))
+                }
               >
                 Remove
               </button>

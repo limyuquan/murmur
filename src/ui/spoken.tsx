@@ -3,7 +3,7 @@ import { useId, useMemo } from 'react';
 import {
   MAX_SPOKEN_FOR_CHROME,
   type Settings,
-  type SettingsPatch,
+  type SettingsChange,
   spokenLanguages,
 } from '@/settings/settings';
 import { Switch } from './components';
@@ -20,7 +20,7 @@ export function SpokenLanguages({
   chromeSpeech,
 }: {
   settings: Settings;
-  update(patch: SettingsPatch): void;
+  update(change: SettingsChange): void;
   /** The chosen models use Chrome's speech recognition (it hears only the first few). */
   chromeSpeech: boolean;
 }) {
@@ -28,9 +28,13 @@ export function SpokenLanguages({
   const chosen = chosenSpoken(settings);
   const anyId = useId();
   const toggle = (tag: string, on: boolean) => {
-    const next = on ? [...chosen, tag] : chosen.filter((t) => t !== tag);
-    // At least one: Chrome's speech recognition needs a language to listen for.
-    if (next.length > 0) update({ spokenLanguages: next });
+    // From the stored list at the time of writing, not this page's copy of it.
+    update((current) => {
+      const list = chosenSpoken(current);
+      const next = on ? [...list.filter((t) => t !== tag), tag] : list.filter((t) => t !== tag);
+      // At least one: Chrome's speech recognition needs a language to listen for.
+      return next.length > 0 ? { spokenLanguages: next } : {};
+    });
   };
   const heard = chosen.slice(0, MAX_SPOKEN_FOR_CHROME);
   return (

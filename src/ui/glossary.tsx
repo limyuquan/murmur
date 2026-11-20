@@ -18,7 +18,7 @@ import {
   MAX_GLOSSARY_ALIASES,
   MAX_GLOSSARY_TEXT,
   type Settings,
-  type SettingsPatch,
+  type SettingsChange,
 } from '@/settings/settings';
 
 /** One entry as edited: the ways it's said as one text, `|` between them. */
@@ -65,7 +65,7 @@ export function GlossaryEditor({
   update,
 }: {
   settings: Settings;
-  update(patch: SettingsPatch): void;
+  update(change: SettingsChange): void;
 }) {
   // Edited here, saved on blur: a save per keystroke would re-render every open page. Each row
   // has a key of its own, since its fields can change.
@@ -110,7 +110,10 @@ export function GlossaryEditor({
     }
     const parsed = parseGlossaryFile(await file.text());
     const merged = mergeGlossary(rows.map(toEntry), parsed.entries);
-    if (merged.added > 0 || merged.extended > 0) update({ glossary: merged.entries });
+    // Merged into the stored glossary when written (the counts below are from this page's copy).
+    if (merged.added > 0 || merged.extended > 0) {
+      update((current) => ({ glossary: mergeGlossary(current.glossary, parsed.entries).entries }));
+    }
     const parts: string[] = [];
     if (merged.added > 0) parts.push(`Added ${count(merged.added, 'entry', 'entries')}.`);
     if (merged.extended > 0) {

@@ -253,6 +253,68 @@ test('options: spoken languages', async ({ context, serviceWorker }) => {
   await expect(spoken.getByRole('checkbox', { name: 'English' })).toBeChecked();
 });
 
+test('settings changed in several places at once are all kept', async ({
+  murmur,
+  serviceWorker,
+}) => {
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
+  const options = await page.context().newPage();
+  await options.goto(url('options.html#languages'));
+  const spoken = options.getByTestId('spoken');
+  await spoken.getByRole('checkbox', { name: 'Korean' }).check();
+  await spoken.getByRole('checkbox', { name: 'Japanese' }).check();
+  const stored = () =>
+    serviceWorker.evaluate(async () => {
+      const s = await (
+        globalThis as unknown as { chrome: typeof import('wxt/browser').browser }
+      ).chrome.storage.local.get('settings');
+      const v = s.settings as import('@/settings/settings').Settings;
+      return {
+        spoken: v.spokenLanguages,
+        onlySpoken: v.onlySpoken,
+        fontScale: v.overlay.fontScale,
+        sites: v.lookahead.sites,
+      };
+    });
+  await expect.poll(async () => (await stored()).spoken).toEqual(['en', 'ko', 'ja']);
+
+  const popup = await page.context().newPage();
+  await popup.goto(url(`popup.html?tab=${tabId}`));
+  await expect(popup.getByTestId('status')).toHaveText(/^Off/);
+  // Each round, the popup, the service worker (lookahead) and the options page write at once.
+  for (let i = 0; i < 4; i++) {
+    await Promise.all([
+      popup.evaluate(
+        (site) =>
+          (
+            globalThis as unknown as { chrome: typeof import('wxt/browser').browser }
+          ).chrome.runtime.sendMessage({
+            target: 'background',
+            op: 'setLookahead',
+            args: { site, on: true },
+          }),
+        `s${i}.example.com`,
+      ),
+      popup
+        .getByTestId('size')
+        .getByTitle(i % 2 ? 'Medium' : 'Large')
+        .click(),
+      options.getByTestId('detect-any').click(),
+    ]);
+  }
+  await expect.poll(stored).toEqual({
+    spoken: ['en', 'ko', 'ja'],
+    onlySpoken: false,
+    fontScale: 1,
+    sites: ['s0.example.com', 's1.example.com', 's2.example.com', 's3.example.com'],
+  });
+  // The options page still shows what is stored.
+  await expect(spoken.getByRole('checkbox', { name: 'Korean' })).toBeChecked();
+  await expect(spoken.getByRole('checkbox', { name: 'Japanese' })).toBeChecked();
+  await expect(options.getByTestId('ahead')).toContainText('s3.example.com');
+});
+
 test('options: glossary entries are added, edited and removed', async ({
   context,
   serviceWorker,
