@@ -254,18 +254,15 @@ describe('Qwen3-ASR engine info', () => {
 
   it('is unavailable while its files aren’t published, where models come from Hugging Face', () => {
     expect(isPublished(MURMUR_MODELS)).toBe(false);
-    expect(qwen3Unavailable(HUGGING_FACE)).toBe('model files not published yet');
+    expect(qwen3Unavailable(HUGGING_FACE)).toBe('comes in a later update');
     expect(qwen3Unavailable('http://127.0.0.1:4392/hf')).toBeUndefined();
     // Unit tests build like production: Balanced skips it for turbo.
-    expect(QWEN3_ASR_INFO.unavailable).toBe('model files not published yet');
+    expect(QWEN3_ASR_INFO.unavailable).toBe('comes in a later update');
     const registry = createBuiltinRegistry();
     const custom = { asr: 'qwen3-asr-0.6b', translation: 'chrome-translator' };
     expect(resolveEngines('balanced', custom, registry, GPU)).toMatchObject({
       asr: 'whisper-large-v3-turbo',
-      notes: [
-        'Qwen3-ASR 1.7B: model files not published yet',
-        'Qwen3-ASR 0.6B: model files not published yet',
-      ],
+      notes: ['Qwen3-ASR 1.7B: comes in a later update', 'Qwen3-ASR 0.6B: comes in a later update'],
     });
     expect(resolveEngines('custom', custom, registry, GPU).asr).toBe('whisper-base');
   });
@@ -364,7 +361,7 @@ describe('Qwen3-ASR 1.7B', () => {
     ).toBe(false);
     expect(checkEngine(info, NO_HARDWARE).ok).toBe(false);
     // Unit tests build like production: not offered until the files are published.
-    expect(QWEN3_ASR_17B_INFO.unavailable).toBe('model files not published yet');
+    expect(QWEN3_ASR_17B_INFO.unavailable).toBe('comes in a later update');
   });
 
   it('reads token embeddings from the tied 8-bit lm_head at its width', () => {

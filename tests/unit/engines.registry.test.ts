@@ -244,8 +244,8 @@ describe('profiles', () => {
     expect(resolveEngines('best', none, createBuiltinRegistry(), NVIDIA)).toMatchObject({
       asr: WHISPER_TURBO_ID,
       notes: expect.arrayContaining([
-        'Qwen3-ASR 1.7B: model files not published yet',
-        'Qwen3-ASR 0.6B: model files not published yet',
+        'Qwen3-ASR 1.7B: comes in a later update',
+        'Qwen3-ASR 0.6B: comes in a later update',
       ]),
     });
   });

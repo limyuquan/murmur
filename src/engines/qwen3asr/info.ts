@@ -119,7 +119,7 @@ const downloadMB = (id: Qwen3AsrId) =>
  */
 export function qwen3Unavailable(host = MODEL_HOST): string | undefined {
   return !isPublished(MURMUR_MODELS) && host === HUGGING_FACE
-    ? 'model files not published yet'
+    ? 'comes in a later update'
     : undefined;
 }
 
