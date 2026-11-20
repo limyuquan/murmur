@@ -331,28 +331,42 @@ describe('CaptionStore roll-up', () => {
 });
 
 describe('CaptionStore language tags', () => {
-  it('tags lines only when their language differs from the one mostly spoken', () => {
+  /** Tags are off by default; these tests turn them on. */
+  const tagged = (patch: Partial<ViewOptions> = {}) => view({ languageTags: true, ...patch });
+
+  it('are off by default', () => {
+    expect(DEFAULT_VIEW.languageTags).toBe(false);
     const s = new CaptionStore();
     s.apply(cue('a', 1), 0);
     s.apply(cue('b', 2), 0);
     s.apply(cue('c', 3, { source: { text: 'gesagt', language: 'de', final: true } }), 0);
     const blocks = s.visible(0, view());
+    expect(blocks.flatMap((b) => b.lines.map((l) => l.tag))).toEqual([null, null, null, null]);
+  });
+
+  it('tags lines only when their language differs from the one mostly spoken', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1), 0);
+    s.apply(cue('b', 2), 0);
+    s.apply(cue('c', 3, { source: { text: 'gesagt', language: 'de', final: true } }), 0);
+    const blocks = s.visible(0, tagged());
     const tags = blocks.flatMap((b) => b.lines.map((l) => l.tag));
     expect(tags).toEqual([null, null, 'de', null]);
     // On the original line when it's shown, else on the main line.
     const c = blocks.at(-1);
     expect(c?.lines.find((l) => l.tag)?.role).toBe('original');
-    const only = s.visible(0, view({ display: 'translation' })).at(-1);
+    const only = s.visible(0, tagged({ display: 'translation' })).at(-1);
     expect(only?.lines[0]?.tag).toBe('de');
   });
 
   it('shows no tags until a mostly-spoken language is clear, or when tags are off', () => {
     const s = new CaptionStore();
     s.apply(cue('a', 1, { source: { text: 'gesagt', language: 'de', final: true } }), 0);
-    expect(s.visible(0, view()).flatMap((b) => b.lines.map((l) => l.tag))).toEqual([null, null]);
+    expect(s.visible(0, tagged()).flatMap((b) => b.lines.map((l) => l.tag))).toEqual([null, null]);
     for (const [i, id] of ['b', 'c', 'd'].entries()) s.apply(cue(id, i + 2), 0);
     s.apply(cue('e', 5, { source: { text: 'gesagt', language: 'de', final: true } }), 0);
     expect(s.dominantLanguage()).toBe('fr');
+    expect(s.visible(0, tagged()).flatMap((b) => b.lines.map((l) => l.tag))).toContain('de');
     const off = s.visible(0, view({ languageTags: false }));
     expect(off.flatMap((b) => b.lines.map((l) => l.tag)).every((t) => t === null)).toBe(true);
   });
@@ -364,7 +378,7 @@ describe('CaptionStore language tags', () => {
     s.apply(cue('c', 3, partialSource('…', 'und')), 0);
     expect(
       s
-        .visible(0, view())
+        .visible(0, tagged())
         .at(-1)
         ?.lines.map((l) => l.tag),
     ).toEqual([null]);

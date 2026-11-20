@@ -522,9 +522,14 @@ test('options: the preview follows the subtitle settings', async ({ context }) =
   await expect(host.locator('.line[data-role="main"]').last()).toContainText(
     'Yes, but I might be a little late.',
   );
-  // The translation only by default: the tag goes on it, no original line, nowhere to place one.
-  await expect(host.locator('.line[data-role="main"] .tag')).toHaveText('DE');
+  // The translation only by default: no original line, nowhere to place one. No tags by default;
+  // turned on, the tag goes on the translation.
   await expect(page.getByRole('radio', { name: 'Translation', exact: true })).toBeChecked();
+  const tags = page.getByRole('switch', { name: 'Tag lines in another language' });
+  await expect(tags).not.toBeChecked();
+  await expect(host.locator('.tag')).toHaveCount(0);
+  await tags.click();
+  await expect(host.locator('.line[data-role="main"] .tag')).toHaveText('DE');
   await expect(host.locator('.line[data-role="original"]')).toHaveCount(0);
   await expect(page.getByRole('radio', { name: 'Below' })).toBeDisabled();
 

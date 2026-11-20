@@ -147,6 +147,62 @@ describe('display default', () => {
   });
 });
 
+describe('language tags default', () => {
+  const stored = (version: number | undefined, languageTags: unknown) => ({
+    ...DEFAULT_SETTINGS,
+    ...(version !== undefined && { version }),
+    overlay: { ...DEFAULT_SETTINGS.overlay, languageTags },
+  });
+
+  it('is off', () => {
+    expect(DEFAULT_SETTINGS.overlay.languageTags).toBe(false);
+    expect(readStoredSettings(undefined).overlay.languageTags).toBe(false);
+    expect(readStoredSettings({ version: SETTINGS_VERSION }).overlay.languageTags).toBe(false);
+  });
+
+  it('takes the old default, stored before version 3, as unset', () => {
+    // Before version 3 every save wrote the whole object, `languageTags: true` included.
+    expect(readStoredSettings(stored(2, true)).overlay.languageTags).toBe(false);
+    expect(readStoredSettings(stored(1, true)).overlay.languageTags).toBe(false);
+    expect(readStoredSettings(stored(undefined, true)).overlay.languageTags).toBe(false);
+    // The rest of what was stored stays.
+    const s = readStoredSettings({
+      version: 2,
+      targetLanguage: 'ja',
+      overlay: { languageTags: true, display: 'both', fontScale: 1.5 },
+    });
+    expect(s.targetLanguage).toBe('ja');
+    expect(s.overlay).toEqual({
+      ...DEFAULT_SETTINGS.overlay,
+      display: 'both',
+      fontScale: 1.5,
+      languageTags: false,
+    });
+  });
+
+  it('migrates display and tags together from before version 2', () => {
+    const s = readStoredSettings({ overlay: { display: 'both', languageTags: true } });
+    expect(s.overlay.display).toBe('translation');
+    expect(s.overlay.languageTags).toBe(false);
+  });
+
+  it('keeps off, and on once chosen from version 3 on', () => {
+    expect(readStoredSettings(stored(2, false)).overlay.languageTags).toBe(false);
+    expect(readStoredSettings(stored(SETTINGS_VERSION, true)).overlay.languageTags).toBe(true);
+  });
+
+  it('a choice of tags made now survives a reload', async () => {
+    await fakeBrowser.storage.local.set({ [SETTINGS_KEY]: stored(2, true) });
+    expect((await loadSettings()).overlay.languageTags).toBe(false);
+    // Saving anything stores the new version with tags off.
+    await saveSettings({ targetLanguage: 'ja' });
+    const after = (await fakeBrowser.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY];
+    expect(after).toMatchObject({ version: SETTINGS_VERSION, overlay: { languageTags: false } });
+    await saveSettings({ overlay: { languageTags: true } });
+    expect((await loadSettings()).overlay.languageTags).toBe(true);
+  });
+});
+
 describe('spokenLanguages', () => {
   it('uses the chosen languages, else the browser’s offered ones, else English', () => {
     expect(spokenLanguages({ spokenLanguages: ['ja', 'de'] }, ['fr-FR'])).toEqual(['ja', 'de']);

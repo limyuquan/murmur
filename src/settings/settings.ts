@@ -26,8 +26,9 @@ export const SETTINGS_KEY = 'settings';
 /**
  * Version of the stored object (its `version` field; none before 2).
  * 2: subtitles show the translation only by default, no longer the original too.
+ * 3: lines in another language are no longer tagged by default.
  */
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 export type CaptionDisplay = 'both' | 'translation' | 'original';
 export type CaptionPosition = 'bottom' | 'top';
@@ -125,7 +126,7 @@ export const DEFAULT_SETTINGS: Settings = {
     background: 'box',
     backgroundOpacity: 0.75,
     showPartials: true,
-    languageTags: true,
+    languageTags: false,
     avoidControls: true,
   },
   lookahead: { sites: [], off: false },
@@ -283,18 +284,25 @@ export function readStoredSettings(stored: unknown): Settings {
 }
 
 /**
- * Before version 2 every save wrote `display: 'both'`, the default then, whether or not the
- * person chose it; such a value is taken as unset, so it becomes the new default. Any other
- * display was a choice and stays.
+ * Every save writes the whole object, so a stored value equal to the default of its time may
+ * never have been chosen; such a value is taken as unset, so it becomes the new default. Any other
+ * value was a choice and stays.
+ * - Before version 2, `display: 'both'`.
+ * - Before version 3, `languageTags: true`.
  */
 function migrate(stored: unknown): unknown {
-  if (!isObject(stored)) return stored;
+  if (!isObject(stored) || !isObject(stored.overlay)) return stored;
   const version = typeof stored.version === 'number' ? stored.version : 1;
-  if (version < 2 && isObject(stored.overlay) && stored.overlay.display === 'both') {
-    const { display: _old, ...overlay } = stored.overlay;
-    return { ...stored, overlay };
+  let overlay = stored.overlay;
+  if (version < 2 && overlay.display === 'both') {
+    const { display: _old, ...rest } = overlay;
+    overlay = rest;
   }
-  return stored;
+  if (version < 3 && overlay.languageTags === true) {
+    const { languageTags: _old, ...rest } = overlay;
+    overlay = rest;
+  }
+  return overlay === stored.overlay ? stored : { ...stored, overlay };
 }
 
 export async function loadSettings(): Promise<Settings> {

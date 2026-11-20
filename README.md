@@ -24,7 +24,8 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   to show only that. A line already in your language shows as said, and so does a line whose
   translation failed, at full size. Each line is translated on
   its own, so a video that switches language mid-way is fine, and so is a line that switches
-  inside it; a line in a different language from the rest gets a small tag (such as `DE`).
+  inside it. Turn on "Tag lines in another language" in the options to mark a line in a
+  different language from the rest with a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Or ahead of time (beta).** On sites you choose, Murmur reads the audio the video player has
   already loaded and makes the subtitles before the speech plays, so each line appears right on

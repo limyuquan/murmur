@@ -74,7 +74,7 @@ export const DEFAULT_VIEW: ViewOptions = {
   display: 'translation',
   showPartials: true,
   originalPlacement: 'above',
-  languageTags: true,
+  languageTags: false,
   showOriginal: true,
   fit: { main: { maxUnits: 42 }, original: { maxUnits: 42 } },
 };

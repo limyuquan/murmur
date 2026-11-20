@@ -27,13 +27,16 @@ function lasting(id: string, seq: number): Cue {
 
 /**
  * Opens the player fixture with a running session whose cues the test controls. `both` shows the
- * original line too (the default is the translation only).
+ * original line too (the default is the translation only); `tags` turns language tags on (off by
+ * default).
  */
 async function player(
   murmur: import('./fixtures').MurmurHelpers,
-  { both = false } = {},
+  { both = false, tags = false } = {},
 ): Promise<Page> {
-  if (both) await murmur.display('both');
+  if (both || tags) {
+    await murmur.overlay({ ...(both && { display: 'both' }), ...(tags && { languageTags: true }) });
+  }
   const page = await murmur.open('player.html');
   await page.waitForFunction(() => {
     const v = document.querySelector('video');
@@ -172,9 +175,8 @@ test('the translation only by default; a line already in the target language sho
       untranslated: 'same-language',
     }),
   });
-  // (Line a may carry an FR tag: half of what was heard is English now.)
   await expect(host.locator('.line[data-role="main"] .text')).toHaveText([
-    /Line a$/,
+    'Line a',
     'See you tomorrow',
   ]);
   await expect(host.locator('.line[data-role="main"]').last()).toHaveAttribute(
@@ -184,8 +186,8 @@ test('the translation only by default; a line already in the target language sho
   await expect(host.locator('.line[data-role="original"]')).toHaveCount(0);
 });
 
-test('only lines in a less common language are tagged', async ({ murmur }) => {
-  const page = await player(murmur, { both: true });
+test('with tags on, only lines in a less common language are tagged', async ({ murmur }) => {
+  const page = await player(murmur, { both: true, tags: true });
   const host = page.locator('murmur-overlay');
   await send(page, { cue: cue('a', 1) });
   await send(page, { cue: cue('b', 2) });
