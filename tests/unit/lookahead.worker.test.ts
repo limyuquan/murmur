@@ -10,6 +10,7 @@ import { Relay } from '@/lookahead/relay';
 import {
   BILIBILI,
   lookaheadSiteFor,
+  sitePatterns,
   type TimelineVideo,
   TWITCH,
   videoTimeline,
@@ -300,6 +301,15 @@ const lookup = {
 const loc = (pathname: string, search = '') => ({ pathname, search });
 
 describe('sites', () => {
+  it('asks for a site and its www. form, but no www. form of an address or a one-word host', () => {
+    expect(sitePatterns('example.com')).toEqual(['*://example.com/*', '*://www.example.com/*']);
+    expect(sitePatterns('www.example.com')).toEqual(['*://www.example.com/*']);
+    // Chrome refuses `*://www.127.0.0.1/*`, and with it the whole request.
+    expect(sitePatterns('127.0.0.1')).toEqual(['*://127.0.0.1/*']);
+    expect(sitePatterns('localhost')).toEqual(['*://localhost/*']);
+    expect(sitePatterns('[::1]')).toEqual(['*://[::1]/*']);
+  });
+
   it('knows Twitch VODs, and leaves its live channels to the live path', () => {
     expect(lookaheadSiteFor('www.twitch.tv')).toBe(TWITCH);
     expect(TWITCH.contentKey(loc('/videos/2012345678'))).toBe('twitch:v2012345678');

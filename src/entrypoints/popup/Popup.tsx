@@ -3,10 +3,10 @@ import { browser } from 'wxt/browser';
 import { PROFILES } from '@/engines/profiles';
 import { sitePatterns } from '@/lookahead/sites';
 import { call } from '@/messaging/client';
-import type { SessionStatus, TabView } from '@/messaging/protocol';
+import { LOOKAHEAD_PENDING_KEY, type SessionStatus, type TabView } from '@/messaging/protocol';
 import { DOWNLOADS_KEY, type DownloadProgress } from '@/models/types';
 import { loadPosition, savePosition, watchPositions } from '@/settings/positions';
-import { type Settings, SIZE_PRESETS } from '@/settings/settings';
+import { lookaheadOn, type Settings, SIZE_PRESETS } from '@/settings/settings';
 import { Dot, Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
 import { useSettings } from '@/ui/hooks';
 import { listNames } from '@/ui/languages';
@@ -32,51 +32,95 @@ function openOptions(section?: string): void {
 /**
  * Subtitles ahead of time on this site (beta). Turning it on asks for access to the site (the
  * click is what lets the browser ask), then registers the page scripts; they start with the next
- * page load.
+ * page load. The switch shows what is stored, and says so while access is being asked for, when
+ * it was refused, and that the page needs a reload. Chrome may close the popup while it asks: the
+ * service worker then turns it on once access is given (`LOOKAHEAD_PENDING_KEY`).
  */
-function AheadRow({ view, onChange }: { view: TabView; onChange(on: boolean): void }) {
+function AheadRow({ view, settings }: { view: TabView; settings: Settings }) {
   const site = view.site as string;
-  const [on, setOn] = useState(view.lookahead.on);
+  // Live from storage: a change from the service worker or the options page shows at once.
+  const on = lookaheadOn(settings, site);
+  /** The state a click asked for, while access or the change is under way. */
+  const [pending, setPending] = useState<{ on: boolean; asking: boolean } | null>(null);
   const [changed, setChanged] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const fail = (err: unknown) => {
+    setPending(null);
+    setProblem(`Couldn’t change this: ${err instanceof Error ? err.message : String(err)}`);
+  };
+  const apply = (next: boolean) => {
+    setPending({ on: next, asking: false });
+    call('setLookahead', { site, on: next }).then((result) => {
+      setPending(null);
+      if (result.sites.includes(site) !== next) {
+        setProblem(`Murmur can’t show subtitles ahead of time on ${site}.`);
+        return;
+      }
+      setChanged(true);
+    }, fail);
+  };
   const toggle = (next: boolean) => {
     setProblem(null);
-    const apply = () =>
-      call('setLookahead', { site, on: next }).then(
-        () => {
-          setOn(next);
-          setChanged(true);
-          onChange(next);
-        },
-        (err: unknown) => setProblem(err instanceof Error ? err.message : String(err)),
-      );
     if (!next) {
-      void apply();
+      apply(false);
       return;
     }
-    // Asked for straight from the click.
-    browser.permissions.request({ origins: sitePatterns(site) }).then(
+    setPending({ on: true, asking: true });
+    // Asked for straight from the click; noted first, in case the popup closes meanwhile.
+    void browser.storage.session
+      .set({ [LOOKAHEAD_PENDING_KEY]: { site, at: Date.now() } })
+      .catch(() => {});
+    let request: Promise<boolean>;
+    try {
+      request = browser.permissions.request({ origins: sitePatterns(site) });
+    } catch (err) {
+      request = Promise.reject(err);
+    }
+    request.then(
       (granted) => {
-        if (granted) void apply();
-        else setProblem(`Murmur needs access to ${site} for this.`);
+        if (granted) {
+          apply(true);
+        } else {
+          setPending(null);
+          setProblem(`Murmur needs access to ${site} for this. Chrome didn’t give it.`);
+        }
+        void browser.storage.session.remove(LOOKAHEAD_PENDING_KEY).catch(() => {});
       },
-      (err: unknown) => setProblem(err instanceof Error ? err.message : String(err)),
+      (err: unknown) => {
+        fail(err);
+        void browser.storage.session.remove(LOOKAHEAD_PENDING_KEY).catch(() => {});
+      },
     );
   };
+  const shown = pending?.on ?? on;
   return (
     <div data-testid="ahead">
       <div className="flex h-9 items-center justify-between gap-3">
         <span id="ahead-label">Show subtitles ahead of time (beta)</span>
-        <Switch checked={on} onChange={toggle} labelledBy="ahead-label" testId="ahead-switch" />
+        <Switch
+          checked={shown}
+          onChange={toggle}
+          labelledBy="ahead-label"
+          disabled={pending !== null}
+          testId="ahead-switch"
+        />
       </div>
-      {on && !view.lookahead.supported && (
+      {pending?.asking && (
+        <p className="text-[12px] text-[var(--color-muted)]" data-testid="ahead-note">
+          Waiting for access to {site}…
+        </p>
+      )}
+      {!pending && on && !view.lookahead.supported && (
         <p className="text-[12px] text-[var(--color-muted)]">
           Needs the Balanced or Best model size. Until then, subtitles come as they’re heard.
         </p>
       )}
-      {on && changed && (
-        <p className="flex items-center justify-between gap-3 text-[12px] text-[var(--color-muted)]">
-          <span>Starts when the page reloads.</span>
+      {!pending && changed && (
+        <p
+          className="flex items-center justify-between gap-3 text-[12px] text-[var(--color-muted)]"
+          data-testid="ahead-note"
+        >
+          <span>{on ? 'Starts when the page reloads.' : 'Stops when the page reloads.'}</span>
           <button
             type="button"
             className="link flex-none"
@@ -89,7 +133,11 @@ function AheadRow({ view, onChange }: { view: TabView; onChange(on: boolean): vo
           </button>
         </p>
       )}
-      {problem && <p className="text-[12px] text-[var(--color-danger)]">{problem}</p>}
+      {problem && (
+        <p className="text-[12px] text-[var(--color-danger)]" data-testid="ahead-problem">
+          {problem}
+        </p>
+      )}
     </div>
   );
 }
@@ -355,10 +403,7 @@ export function Popup({
           />
         </div>
         {view.site && !view.lookahead.off && view.tabId >= 0 && (
-          <AheadRow
-            view={view}
-            onChange={(on) => setView((v) => ({ ...v, lookahead: { ...v.lookahead, on } }))}
-          />
+          <AheadRow view={view} settings={settings} />
         )}
         {moved && view.site && (
           <div className="flex h-9 items-center justify-between gap-3">

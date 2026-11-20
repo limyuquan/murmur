@@ -186,6 +186,13 @@ export interface Ops {
   setLookahead: [{ site: string; on: boolean }, LookaheadSettings];
 }
 
+/**
+ * `storage.session`: a site whose access the popup asked for to turn lookahead on there,
+ * `{ site, at }` (epoch ms). Chrome may close the popup while it asks; the service worker then
+ * turns lookahead on once the access is given.
+ */
+export const LOOKAHEAD_PENDING_KEY = 'lookaheadPending';
+
 export type Op = keyof Ops;
 
 export interface Request<K extends Op = Op> {

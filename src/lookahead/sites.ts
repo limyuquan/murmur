@@ -171,9 +171,16 @@ function isHandle(object: unknown): boolean {
 
 /**
  * Match patterns for a site key (`example.com`: that host and its `www.`), as asked for when
- * lookahead is turned on there and as its page scripts are registered.
+ * lookahead is turned on there and as its page scripts are registered. An IP address or a
+ * one-label host (`localhost`) has no `www.` form: Chrome rejects such a pattern, and with it the
+ * whole request.
  */
 export function sitePatterns(site: string): string[] {
-  const hosts = site.startsWith('www.') ? [site] : [site, `www.${site}`];
+  const noWww = site.startsWith('www.') || !site.includes('.') || isIpAddress(site);
+  const hosts = noWww ? [site] : [site, `www.${site}`];
   return hosts.map((h) => `*://${h}/*`);
+}
+
+function isIpAddress(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith('[');
 }

@@ -9,6 +9,7 @@
  */
 import { browser } from 'wxt/browser';
 import { sitePatterns } from '@/lookahead/sites';
+import { LOOKAHEAD_PENDING_KEY } from '@/messaging/protocol';
 import { type LookaheadSettings, loadSettings, saveSettings } from '@/settings/settings';
 import { LOG_PREFIX } from '@/shared/ids';
 
@@ -78,4 +79,29 @@ export async function setLookaheadSite(site: string, on: boolean): Promise<Looka
   });
   await syncLookaheadScripts();
   return next.lookahead;
+}
+
+/** How long a site the popup asked access for is waited for. */
+export const PENDING_MS = 5 * 60_000;
+
+/**
+ * Turns lookahead on for the site the popup asked access for (`LOOKAHEAD_PENDING_KEY`), once the
+ * access is there: Chrome may close the popup while it asks, and the popup's own call never runs.
+ * A request older than `PENDING_MS` is dropped.
+ */
+export async function finishPendingLookahead(now = Date.now()): Promise<void> {
+  const stored = await browser.storage.session.get(LOOKAHEAD_PENDING_KEY);
+  const pending = stored[LOOKAHEAD_PENDING_KEY] as { site?: unknown; at?: unknown } | undefined;
+  if (!pending) return;
+  const { site, at } = pending;
+  if (typeof site !== 'string' || typeof at !== 'number' || now - at > PENDING_MS) {
+    await browser.storage.session.remove(LOOKAHEAD_PENDING_KEY);
+    return;
+  }
+  const granted = await browser.permissions
+    .contains({ origins: sitePatterns(site) })
+    .catch(() => false);
+  if (!granted) return;
+  await browser.storage.session.remove(LOOKAHEAD_PENDING_KEY);
+  await setLookaheadSite(site, true);
 }

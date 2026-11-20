@@ -46,6 +46,42 @@ test('popup quick settings change subtitles, from the keyboard too', async ({
   await expect.poll(async () => (await overlaySettings(serviceWorker)).fontScale).toBe(1.3);
 });
 
+test('popup: lookahead on this site turns on, and says the page needs a reload', async ({
+  murmur,
+  serviceWorker,
+}) => {
+  // 127.0.0.1: an address has no www. form to ask access for.
+  const page = await murmur.open('video.html');
+  const tabId = await murmur.tabId(page);
+  const popup = await page.context().newPage();
+  await popup.goto(url(`popup.html?tab=${tabId}`));
+  const ahead = popup.getByTestId('ahead-switch');
+  await expect(ahead).toHaveAttribute('aria-checked', 'false');
+  await ahead.click();
+  await expect(ahead).toHaveAttribute('aria-checked', 'true');
+  await expect(popup.getByTestId('ahead-note')).toHaveText(/Starts when the page reloads\./);
+  await expect(popup.getByTestId('ahead-problem')).toHaveCount(0);
+  const registered = () =>
+    serviceWorker.evaluate(async () => {
+      const chrome = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser })
+        .chrome;
+      const s = await chrome.storage.local.get('settings');
+      const scripts = await chrome.scripting.getRegisteredContentScripts();
+      return {
+        sites: (s.settings as import('@/settings/settings').Settings).lookahead.sites,
+        matches: scripts.map((x) => x.matches),
+      };
+    });
+  await expect
+    .poll(registered)
+    .toEqual({ sites: ['127.0.0.1'], matches: [['*://127.0.0.1/*'], ['*://127.0.0.1/*']] });
+
+  await ahead.click();
+  await expect(ahead).toHaveAttribute('aria-checked', 'false');
+  await expect(popup.getByTestId('ahead-note')).toHaveText(/Stops when the page reloads\./);
+  await expect.poll(registered).toEqual({ sites: [], matches: [] });
+});
+
 test('popup: a model that isn’t downloaded stops the start, with the fix', async ({ murmur }) => {
   const page = await murmur.open('video.html');
   const tabId = await murmur.tabId(page);

@@ -1,7 +1,11 @@
 import { browser } from 'wxt/browser';
 import { defineBackground } from 'wxt/utils/define-background';
 import { dispatch } from '@/background/api';
-import { setLookaheadSite, syncLookaheadScripts } from '@/background/lookahead';
+import {
+  finishPendingLookahead,
+  setLookaheadSite,
+  syncLookaheadScripts,
+} from '@/background/lookahead';
 import { models } from '@/background/models';
 import {
   installSessionListeners,
@@ -32,6 +36,8 @@ export default defineBackground(() => {
   void syncLookaheadScripts().catch(() => {});
   watchSettings(() => void syncLookaheadScripts().catch(() => {}));
   browser.permissions.onRemoved.addListener(() => void syncLookaheadScripts().catch(() => {}));
+  // Access asked for from the popup, which Chrome may have closed while asking.
+  browser.permissions.onAdded.addListener(() => void finishPendingLookahead().catch(() => {}));
 
   // First install: the welcome page (what Murmur does, pick a model, download). Not in e2e
   // builds, where a surprise tab would get in the tests' way.
