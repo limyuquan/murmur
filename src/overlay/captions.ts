@@ -10,6 +10,7 @@
  * - A segment stays while anything in it may still change (up to `STALE_MS` without a change),
  *   then for the reading time of what's left to read, plus a short linger.
  * - Lines that may change are marked `final: false` (dimmed); `showPartials: false` hides them.
+ * - A line whose translation failed shows the original in its place, as a finished line.
  * - A line's language is tagged when it differs from the language mostly spoken lately.
  */
 import { primaryLanguage } from '@/pipeline/language';
@@ -259,9 +260,19 @@ export class CaptionStore {
     return now >= main.finalAt + readingMs(page.flat().join(' '));
   }
 
-  /** The track drawn as the main line for `view`. */
+  /**
+   * The track drawn as the main line for `view`. A line whose translation failed shows what was
+   * said in its place, as a finished line of its own: full size, not dimmed, not hidden (a
+   * preview of the translation that never finished is dropped).
+   */
   private mainTrack(e: Entry, view: ViewOptions): Track | null {
-    if (view.display === 'original' || e.cue.untranslated === 'same-language') return e.source;
+    if (
+      view.display === 'original' ||
+      e.cue.untranslated === 'same-language' ||
+      e.cue.untranslated === 'failed'
+    ) {
+      return e.source;
+    }
     return e.translation;
   }
 

@@ -284,3 +284,38 @@ test('the session status shows on the picture', async ({ murmur }) => {
   await send(page, { message: { type: 'status', status: { state: 'running', behindMs: 7000 } } });
   await expect(pill).toContainText('7 s behind');
 });
+
+test('a line whose translation failed shows the original, full size and not dimmed', async ({
+  murmur,
+}) => {
+  // The default: the translation alone.
+  const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
+  // A preview of the translation was showing when the translation failed.
+  await send(page, {
+    cue: cue('f', 1, {
+      translation: { text: 'Yes, but I', language: 'en', final: false },
+      untranslated: 'pending',
+    }),
+  });
+  await expect(host.locator('.line[data-role="main"]')).toHaveAttribute('data-final', 'false');
+  await send(page, {
+    cue: cue('f', 1, {
+      source: { text: 'Ja, aber ich komme später.', language: 'de', final: true },
+      translation: { text: 'Yes, but I', language: 'en', final: false },
+      untranslated: 'failed',
+    }),
+  });
+  const line = host.locator('.line');
+  await expect(line).toHaveCount(1);
+  await expect(line).toHaveAttribute('data-role', 'main');
+  await expect(line).toHaveAttribute('data-final', 'true');
+  await expect(line.locator('.text')).toContainText('Ja, aber ich komme später.');
+  // Drawn as any finished translation: white, at the main line's size.
+  const style = await line
+    .locator('.text')
+    .evaluate((el) => ({ color: getComputedStyle(el).color, size: getComputedStyle(el).fontSize }));
+  expect(style.color).toBe('rgb(255, 255, 255)');
+  const main = await host.locator('.stack').evaluate((el) => getComputedStyle(el).fontSize);
+  expect(style.size).toBe(main);
+});

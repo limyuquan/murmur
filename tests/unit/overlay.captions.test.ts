@@ -97,6 +97,45 @@ describe('CaptionStore lines', () => {
     expect(texts(s, 0, { display: 'translation' })).toEqual([['main:said a:false']]);
   });
 
+  it('shows the original as a finished line when its translation failed (translation mode)', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1, { translation: null, untranslated: 'failed' }), 0);
+    expect(texts(s, 0, { display: 'translation' })).toEqual([['main:said a:true']]);
+    // Not hidden with partials off, and the store keeps it for its reading time.
+    expect(texts(s, 0, { display: 'translation', showPartials: false })).toEqual([
+      ['main:said a:true'],
+    ]);
+    expect(texts(s, readingMs('said a'), { display: 'translation' })).toEqual([
+      ['main:said a:true'],
+    ]);
+  });
+
+  it('drops a translation preview that never finished, for the original (translation mode)', () => {
+    const s = new CaptionStore();
+    s.apply(
+      cue('a', 1, {
+        translation: { text: 'meant', language: 'en', final: false },
+        untranslated: 'pending',
+      }),
+      0,
+    );
+    expect(texts(s, 0, { display: 'translation' })).toEqual([['main:meant:false']]);
+    s.apply(
+      cue('a', 1, {
+        translation: { text: 'meant', language: 'en', final: false },
+        untranslated: 'failed',
+      }),
+      10,
+    );
+    expect(texts(s, 10, { display: 'translation' })).toEqual([['main:said a:true']]);
+  });
+
+  it('shows a failed line once, at full size, with both lines on', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1, { translation: null, untranslated: 'failed' }), 0);
+    expect(texts(s, 0)).toEqual([['main:said a:true']]);
+  });
+
   it('original mode shows only what was said', () => {
     const s = new CaptionStore();
     s.apply(cue('a', 1), 0);
