@@ -1,34 +1,34 @@
 /**
- * First run, opened on install: what Murmur does → language → model size → download → done.
- * Every choice is saved as it's made, so leaving part way keeps what was chosen; the download
- * carries on in the background if the page is closed.
+ * First run, opened on install: what Murmur does → languages → model size and its download →
+ * done. Every choice is saved as it's made, so leaving part way keeps what was chosen; the
+ * download carries on in the background if the page is closed.
  */
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { createBuiltinRegistry } from '@/engines/builtin';
 import { PROFILES, type ProfileId, recommendProfile } from '@/engines/profiles';
-import { formatSize, freeSpaceText } from '@/models/types';
+import { freeSpaceText } from '@/models/types';
 import type { Settings } from '@/settings/settings';
-import { Icon, type IconName, Logo, ProgressBar } from '@/ui/components';
-import { useHardware, useMemoryFit, useModels, useSettings } from '@/ui/hooks';
+import { COMMANDS } from '@/shared/commands';
+import { Icon, type IconName, Keys, Logo, Notice, Select, type Tone } from '@/ui/components';
+import { useHardware, useMemoryFit, useModels, useSettings, useShortcut } from '@/ui/hooks';
 import { languageOptions } from '@/ui/languages';
 import {
   BrowserGaps,
-  ChromePacks,
-  ModelList,
   ModelSizeOptions,
   ProfileCards,
+  ProfileDownload,
   type ProfileModels,
   packsForSettings,
   profileModels,
 } from '@/ui/models';
+import { Scene } from '@/ui/scenes';
 import { SpokenLanguages } from '@/ui/spoken';
 
 const STEPS = [
   { id: 'intro', label: 'Welcome' },
-  { id: 'language', label: 'Language' },
-  { id: 'model', label: 'Model' },
-  { id: 'download', label: 'Download' },
+  { id: 'language', label: 'Languages' },
+  { id: 'model', label: 'Model size and download' },
   { id: 'done', label: 'Done' },
 ] as const;
 type Step = (typeof STEPS)[number]['id'];
@@ -77,19 +77,22 @@ export function Welcome({ initial }: { initial: Settings }) {
   const selected = modelsOf(settings.profile);
   const packs = hardware ? packsForSettings(settings, registry, hardware) : [];
   const profileLabel = settings.profile === 'custom' ? 'Custom' : PROFILES[settings.profile].label;
+  /** Something to download from Murmur that isn't on disk yet. */
+  const needsDownload = selected.totalMB > 0 && !selected.ready;
+  const next = (label: string, to: Step) => (
+    <button type="button" className="btn btn-primary btn-lg" onClick={() => go(to)}>
+      {label} <Icon name="arrow" />
+    </button>
+  );
 
   let body: ReactNode;
   let title: string;
-  let next: ReactNode = null;
+  let end: ReactNode = null;
   switch (step) {
     case 'intro':
       title = 'Live subtitles for any video';
       body = <Intro />;
-      next = (
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => go('language')}>
-          Get started <Icon name="arrow" />
-        </button>
-      );
+      end = next('Get started', 'language');
       break;
     case 'language':
       title = 'Your languages';
@@ -100,17 +103,14 @@ export function Welcome({ initial }: { initial: Settings }) {
           chromeSpeech={packs.some((p) => p.kind === 'speech-pack')}
         />
       );
-      next = (
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => go('model')}>
-          Continue <Icon name="arrow" />
-        </button>
-      );
+      end = next('Continue', 'model');
       break;
-    case 'model':
+    case 'model': {
       title = 'Choose a model size';
+      const free = view ? freeSpaceText(view.storage.availableMB) : null;
       body = (
-        <div className="grid gap-4">
-          <p className="text-[var(--color-muted)]">
+        <>
+          <p className="muted measure">
             Larger models make fewer mistakes, but need a faster device and a bigger download. You
             can change this later in Settings.
           </p>
@@ -125,6 +125,16 @@ export function Welcome({ initial }: { initial: Settings }) {
             modelsOf={modelsOf}
             includeCustom={false}
             name="welcome-profile"
+            foot={
+              <ProfileDownload
+                label={profileLabel}
+                models={selected}
+                packs={packs}
+                actions={actions}
+                compact
+                welcome
+              />
+            }
           />
           <ModelSizeOptions
             settings={settings}
@@ -133,95 +143,32 @@ export function Welcome({ initial }: { initial: Settings }) {
             hardware={hardware}
             models={selected}
           />
-        </div>
-      );
-      next = (
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => go('download')}>
-          Continue <Icon name="arrow" />
-        </button>
-      );
-      break;
-    case 'download': {
-      const ids = selected.models.map((m) => m.id);
-      const packList = packs.length > 0 && (
-        <div className="grid gap-2">
-          <p className="text-[var(--color-muted)]">
-            {ids.length > 0
-              ? 'Chrome also needs a language pack for each of your languages. It downloads each one after a click and keeps it.'
-              : 'Light uses Chrome’s own speech recognition and translation. Chrome downloads a pack for each language after a click, and keeps it.'}
-          </p>
-          <div className="card px-4 py-1">
-            <ChromePacks actions={packs} />
-          </div>
-        </div>
-      );
-      if (ids.length === 0) {
-        title = 'Chrome’s language packs';
-        body = (
-          <div className="grid gap-4">
-            {packList || (
-              <p className="text-[var(--color-muted)]">Nothing to download for these models.</p>
-            )}
-          </div>
-        );
-        next = (
-          <button type="button" className="btn btn-primary btn-lg" onClick={() => go('done')}>
-            Continue <Icon name="arrow" />
-          </button>
-        );
-        break;
-      }
-      title = selected.ready ? 'Models are ready' : `Download the ${profileLabel} models`;
-      body = (
-        <div className="grid gap-4">
-          <p className="text-[var(--color-muted)]">
-            {formatSize(selected.totalMB)} in all, from Hugging Face, downloaded once and kept on
-            this computer. You can close this page: the download carries on.
-            {view &&
-              freeSpaceText(view.storage.availableMB) !== null &&
-              ` There’s ${freeSpaceText(view.storage.availableMB)}.`}
-          </p>
-          {selected.downloading !== null && (
-            <div>
-              <p className="mb-2 font-medium">{Math.round(selected.downloading * 100)}%</p>
-              <ProgressBar value={selected.downloading} label="Downloading models" />
-            </div>
-          )}
-          {view && (
-            <div className="card px-4 py-1">
-              <ModelList view={view} actions={actions} filter={ids} />
-            </div>
-          )}
-          {packList}
-        </div>
-      );
-      next = selected.ready ? (
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => go('done')}>
-          Continue <Icon name="arrow" />
-        </button>
-      ) : (
-        <>
-          <button type="button" className="btn btn-lg btn-quiet" onClick={() => go('done')}>
-            {selected.downloading !== null ? 'Continue in the background' : 'Later'}
-          </button>
-          {selected.downloading === null && (
-            <button
-              type="button"
-              className="btn btn-primary btn-lg"
-              onClick={() => actions.download(ids)}
-              data-testid="welcome-download"
-            >
-              <Icon name="download" /> Download {formatSize(selected.missingMB)}
-            </button>
+          {needsDownload && (
+            <p className="t-small muted measure" data-testid="welcome-download-note">
+              You can close this page while the models download: the download carries on.
+              {free !== null && ` There’s ${free}.`}
+            </p>
           )}
         </>
       );
+      end =
+        needsDownload && selected.downloading !== null ? (
+          <button type="button" className="btn btn-lg" onClick={() => go('done')}>
+            Continue in the background
+          </button>
+        ) : needsDownload ? (
+          <button type="button" className="btn btn-lg btn-quiet" onClick={() => go('done')}>
+            Later
+          </button>
+        ) : (
+          next('Continue', 'done')
+        );
       break;
     }
     case 'done':
       title = 'You’re set';
-      body = <Done ready={selected.ready} />;
-      next = (
+      body = <Done ready={!needsDownload} />;
+      end = (
         <button type="button" className="btn btn-primary btn-lg" onClick={() => window.close()}>
           Done
         </button>
@@ -230,114 +177,101 @@ export function Welcome({ initial }: { initial: Settings }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-[720px] flex-col px-6 py-8 text-[14px] leading-[1.55]">
-      <header className="flex items-center gap-2.5">
-        <Logo size={28} />
-        <span className="text-[16px] font-semibold tracking-[-0.01em]">Murmur</span>
-        <ol className="ml-auto flex items-center gap-1.5" aria-label="Steps">
+    <div className="welcome">
+      <header className="welcome-head">
+        <Logo size={32} />
+        <span className="t-heading">Murmur</span>
+        <ol className="steps" aria-label="Steps">
           {STEPS.map((s, i) => (
             <li key={s.id} aria-current={s.id === step ? 'step' : undefined}>
               <span className="sr-only">
                 {s.label}
                 {i < index ? ' (done)' : ''}
               </span>
-              <span
-                aria-hidden="true"
-                className={`block h-1.5 rounded-full transition-all ${
-                  s.id === step
-                    ? 'w-6 bg-[var(--color-accent)]'
-                    : i < index
-                      ? 'w-1.5 bg-[var(--color-accent)]'
-                      : 'w-1.5 bg-[var(--color-line-strong)]'
-                }`}
-              />
+              <i aria-hidden="true" data-done={i < index} data-now={s.id === step} />
             </li>
           ))}
         </ol>
       </header>
 
-      <main className="mt-12 flex flex-1 flex-col" data-testid={`step-${step}`}>
-        <p className="text-[13px] font-medium text-[var(--color-muted)]">
-          Step {index + 1} of {STEPS.length}
-        </p>
-        <h1
-          ref={heading}
-          tabIndex={-1}
-          className="step-title mt-1 text-[28px] font-semibold tracking-[-0.02em]"
-        >
-          {title}
-        </h1>
-        <div className="mt-5">{body}</div>
+      <main className="card sheet" data-testid={`step-${step}`}>
+        <div className="sheet-body">
+          <div className="stack g1">
+            <p className="t-label muted">
+              Step {index + 1} of {STEPS.length}
+            </p>
+            <h1 ref={heading} tabIndex={-1} className="step-title t-display">
+              {title}
+            </h1>
+          </div>
+          {body}
+        </div>
+        <footer className="sheet-foot">
+          {index > 0 && step !== 'done' && (
+            <button
+              type="button"
+              className="btn btn-lg btn-quiet"
+              onClick={() => go(STEPS[index - 1]?.id ?? 'intro')}
+            >
+              <Icon name="back" /> Back
+            </button>
+          )}
+          <span className="end">{end}</span>
+        </footer>
       </main>
-
-      <footer className="mt-10 flex items-center gap-3 border-t border-[var(--color-line)] pt-5">
-        {index > 0 && step !== 'done' && (
-          <button
-            type="button"
-            className="btn btn-lg btn-quiet"
-            onClick={() => go(STEPS[index - 1]?.id ?? 'intro')}
-          >
-            <Icon name="back" /> Back
-          </button>
-        )}
-        <span className="ml-auto flex items-center gap-3">{next}</span>
-      </footer>
     </div>
   );
 }
 
 function Intro() {
-  const points: { icon: IconName; title: string; text: string }[] = [
+  const points: { icon: IconName; tone: Tone; title: string; text: string }[] = [
     {
-      icon: 'speech',
+      icon: 'wave',
+      tone: 'listening',
       title: 'Hears the tab',
       text: 'Works with any video player on any site, because it listens to the tab’s sound.',
     },
     {
       icon: 'globe',
+      tone: 'translating',
       title: 'Translates each line',
-      text: 'Shows each line in your language, even when the language changes part way.',
+      text: 'Shows each line in your language, even when the spoken language changes part way.',
     },
     {
       icon: 'lock',
+      tone: 'success',
       title: 'Stays on this computer',
       text: 'Speech recognition and translation run here. Nothing you watch is uploaded.',
     },
   ];
   return (
-    <div className="grid gap-6">
+    <>
       <SampleFrame />
-      <ul className="grid gap-4 sm:grid-cols-3">
+      <ul className="points">
         {points.map((p) => (
-          <li key={p.title}>
-            <span className="grid size-9 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-              <Icon name={p.icon} size={18} />
+          <li key={p.title} className="stack g3">
+            <span className="tile tile-lg" data-tone={p.tone}>
+              <Icon name={p.icon} size={20} />
             </span>
-            <p className="mt-2.5 font-semibold">{p.title}</p>
-            <p className="mt-0.5 text-[13px] text-[var(--color-muted)]">{p.text}</p>
+            <div className="stack g1">
+              <p className="t-heading">{p.title}</p>
+              <p className="t-small muted">{p.text}</p>
+            </div>
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }
 
-/** A still of a video with subtitles, drawn with plain elements. */
+/** A still of a video with a subtitle, drawn as the overlay draws one. */
 function SampleFrame() {
   return (
-    <div
-      className="relative aspect-[21/9] overflow-hidden rounded-[14px]"
-      style={{
-        background: 'radial-gradient(120% 90% at 75% 15%, #42557a 0%, #1c2438 50%, #0d1019 100%)',
-      }}
-      role="img"
-      aria-label="A video with a translated subtitle"
-    >
-      <div className="absolute inset-x-0 bottom-[9%] flex flex-col items-center gap-1.5 px-6 text-center">
-        <span className="rounded bg-black/70 px-2.5 py-0.5 text-[19px] font-medium text-white">
-          Shall we meet outside the station at eight?
-        </span>
-      </div>
+    <div className="frame sample" role="img" aria-label="A video with a translated subtitle">
+      <Scene kind="dark" />
+      <p className="sample-line">
+        <span>Shall we meet outside the station at eight?</span>
+      </p>
     </div>
   );
 }
@@ -353,61 +287,69 @@ function LanguageStep({
 }) {
   const languages = useMemo(languageOptions, []);
   return (
-    <div className="grid max-w-[560px] gap-3">
-      <label htmlFor="welcome-target" className="font-medium">
-        Translate into
-      </label>
-      <select
-        id="welcome-target"
-        className="input h-10 text-[15px]"
-        value={settings.targetLanguage}
-        onChange={(e) => update({ targetLanguage: e.target.value })}
-      >
-        {languages.map((l) => (
-          <option key={l.tag} value={l.tag}>
-            {l.name}
-          </option>
-        ))}
-      </select>
-      <p className="text-[13px] text-[var(--color-muted)]">
-        Lines already in this language are shown as they are.
-      </p>
-      <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
-    </div>
+    <>
+      <div className="stack g2">
+        <label htmlFor="welcome-target" className="t-label">
+          Translate into
+        </label>
+        <Select
+          id="welcome-target"
+          large
+          block
+          value={settings.targetLanguage}
+          onChange={(e) => update({ targetLanguage: e.target.value })}
+        >
+          {languages.map((l) => (
+            <option key={l.tag} value={l.tag}>
+              {l.name}
+            </option>
+          ))}
+        </Select>
+        <p className="t-small muted">Lines already in this language are shown as they are.</p>
+      </div>
+      <div className="card flat rows">
+        <SpokenLanguages settings={settings} update={update} chromeSpeech={chromeSpeech} />
+      </div>
+    </>
   );
 }
 
 function Done({ ready }: { ready: boolean }) {
+  const shortcut = useShortcut(COMMANDS.toggle);
   const steps: ReactNode[] = [
     <>
-      <strong>Pin Murmur</strong> so it’s one click away: click the puzzle piece in the toolbar,
-      then the pin next to Murmur.
+      <b className="t-label">Pin Murmur</b> so it’s one click away: click the puzzle piece in the
+      toolbar, then the pin next to Murmur.
     </>,
     <>
-      On a tab with a video, click Murmur and turn on <strong>Subtitles on this tab</strong>. Or
-      press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>S</kbd>.
+      On a tab with a video, click Murmur and turn on{' '}
+      <b className="t-label">Subtitles on this tab</b>.
+      {shortcut ? (
+        <>
+          {' '}
+          Or press <Keys shortcut={shortcut} />.
+        </>
+      ) : null}
     </>,
     <>Drag subtitles to move them. Double-click to put them back.</>,
   ];
   return (
-    <div className="grid gap-5">
+    <>
       {!ready && (
-        <p className="notice" data-tone="warn">
+        <Notice tone="behind" testId="done-not-ready">
           The models aren’t downloaded yet. You can download them any time from Settings.
-        </p>
+        </Notice>
       )}
-      <ol className="grid gap-3">
+      <ol className="stack g4">
         {steps.map((s, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed list.
-          <li key={i} className="flex gap-3">
-            <span className="grid size-6 flex-none place-items-center rounded-full bg-[var(--color-sunken)] text-[12px] font-semibold">
-              {i + 1}
-            </span>
+          <li key={i} className="row top g3">
+            <span className="numbered">{i + 1}</span>
             <span>{s}</span>
           </li>
         ))}
       </ol>
-      <p className="text-[13px] text-[var(--color-muted)]">
+      <p className="t-small muted">
         Settings has languages, model sizes and how subtitles look.{' '}
         <button
           type="button"
@@ -417,6 +359,6 @@ function Done({ ready }: { ready: boolean }) {
           Open Settings
         </button>
       </p>
-    </div>
+    </>
   );
 }
