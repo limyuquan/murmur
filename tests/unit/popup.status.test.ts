@@ -28,6 +28,7 @@ const activity = (patch: Partial<SessionActivity> = {}): SessionActivity => ({
   unsupported: [],
   delayMs: 2400,
   behind: false,
+  lateMs: null,
   rtf: null,
   backlogMs: 0,
   queue: 0,

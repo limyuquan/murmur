@@ -252,7 +252,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    it by id and lays it out (`src/overlay/linebreak.ts`, `captions.ts`): at most two segments,
    two rows per line, growing text filled so it never jumps, finished text balanced or paged and
    held for a reading time. The offscreen document also reports what the session is doing
-   (`SessionActivity`) to the popup and a short status to the overlay's chip.
+   (`SessionActivity`) to the popup and a short status to the overlay's chip, which says
+   subtitles are late only when the delay is clearly abnormal for a while (`LATE` in
+   `src/offscreen/activity.ts`).
 6. Stop closes the offscreen document; the overlay's port disconnects and it removes itself. A
    stop (or a start in another tab) cuts short a start under way, and status writes are checked
    against the session id, so a late report can't bring a stopped session back.

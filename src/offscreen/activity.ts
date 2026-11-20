@@ -22,6 +22,28 @@ export interface ActivityOptions {
 
 const RECENT = 10;
 const DELAYS = 3;
+/** Lines the session's typical delay is taken over, and the share of them at or under it. */
+const TYPICAL_DELAYS = 30;
+const TYPICAL_QUANTILE = 0.3;
+
+/**
+ * When the overlay's chip says subtitles are late: only when the delay is clearly abnormal, and
+ * for a while, so a slow line or two never flashes it. The popup shows the delay as it is.
+ */
+export const LATE = {
+  /** Late on any session: the delay above this for `absoluteForMs`. */
+  absoluteMs: 4000,
+  absoluteForMs: 3000,
+  /** Late for this session: above this many times its typical delay for `relativeForMs`… */
+  relativeFactor: 2,
+  relativeForMs: 5000,
+  /** …and above this at least (twice a short delay is still short). */
+  relativeMinMs: 2500,
+  /** Shown until the delay is back under `max(hideBelowMs, hideFactor × typical)` for `hideForMs`. */
+  hideBelowMs: 3000,
+  hideFactor: 1.5,
+  hideForMs: 2000,
+} as const;
 
 interface Seen {
   seq: number;
@@ -34,6 +56,11 @@ interface Seen {
 export class ActivityTracker {
   private readonly cues = new Map<string, Seen>();
   private readonly delays: number[] = [];
+  /** More delays, for what is typical in this session. */
+  private readonly typicalDelays: number[] = [];
+  /** Since when the delay has been abnormal (chip hidden) or back to normal (chip shown). */
+  private lateSince: number | null = null;
+  private late = false;
   private lastSound: number | null = null;
   private health: AsrHealth | null = null;
   /** Languages an engine said it can't handle at all (primary tags). */
@@ -81,8 +108,11 @@ export class ActivityTracker {
         (cue.untranslated === null && (cue.translation?.final ?? true)) ||
         !hasText);
     if (done && !prev?.done && hasText) {
-      this.delays.push(Math.max(0, now - cue.endEpochMs));
+      const delay = Math.max(0, now - cue.endEpochMs);
+      this.delays.push(delay);
       if (this.delays.length > DELAYS) this.delays.shift();
+      this.typicalDelays.push(delay);
+      if (this.typicalDelays.length > TYPICAL_DELAYS) this.typicalDelays.shift();
     }
     this.cues.delete(cue.id);
     this.cues.set(cue.id, {
@@ -129,12 +159,56 @@ export class ActivityTracker {
       unsupported,
       delayMs,
       behind,
+      lateMs: this.lateness(delayMs, now),
       rtf,
       backlogMs: this.health?.backlogMs ?? 0,
       queue: backlog,
       silentMs: Math.max(0, now - (this.lastSound ?? this.startedAt)),
       soundEver: this.lastSound !== null,
     };
+  }
+
+  /**
+   * How late subtitles are, for the chip, when clearly abnormal (`LATE`), else null. The delay is
+   * that of the last finished lines, or the speech still waiting for recognition when more (a
+   * stalled engine finishes no lines).
+   */
+  private lateness(delayMs: number | null, now: number): number | null {
+    const backlog = this.health?.backlogMs ?? 0;
+    const delay = delayMs === null ? (backlog > 0 ? backlog : null) : Math.max(delayMs, backlog);
+    if (delay === null) {
+      this.late = false;
+      this.lateSince = null;
+      return null;
+    }
+    // A low quantile: a late stretch doesn't make lateness look typical until it lasts.
+    const typical =
+      this.typicalDelays.length >= DELAYS ? quantile(this.typicalDelays, TYPICAL_QUANTILE) : null;
+    if (!this.late) {
+      const absolute = delay > LATE.absoluteMs;
+      const relative =
+        typical !== null && delay > LATE.relativeMinMs && delay > LATE.relativeFactor * typical;
+      if (!absolute && !relative) {
+        this.lateSince = null;
+        return null;
+      }
+      this.lateSince ??= now;
+      const forMs = absolute ? LATE.absoluteForMs : LATE.relativeForMs;
+      if (now - this.lateSince < forMs) return null;
+      this.late = true;
+      this.lateSince = null;
+      return delay;
+    }
+    const hideBelow = Math.max(LATE.hideBelowMs, LATE.hideFactor * (typical ?? 0));
+    if (delay >= hideBelow) {
+      this.lateSince = null;
+      return delay;
+    }
+    this.lateSince ??= now;
+    if (now - this.lateSince < LATE.hideForMs) return delay;
+    this.late = false;
+    this.lateSince = null;
+    return null;
   }
 }
 
@@ -145,12 +219,18 @@ export function activityChanged(a: SessionActivity | undefined, b: SessionActivi
     JSON.stringify({
       ...x,
       delayMs: x.delayMs === null ? null : Math.round(x.delayMs / 500),
+      lateMs: x.lateMs === null ? null : Math.round(x.lateMs / 1000),
       rtf: x.rtf === null ? null : Math.round(x.rtf * 10),
       backlogMs: Math.round(x.backlogMs / 1000),
       // Silence matters to the popup in steps: none, a few seconds, long.
       silentMs: x.silentMs < 3000 ? 0 : x.silentMs < 8000 ? 1 : 2,
     });
   return coarse(a) !== coarse(b);
+}
+
+function quantile(values: readonly number[], q: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] as number;
 }
 
 function median(values: readonly number[]): number {

@@ -41,6 +41,11 @@ export interface SessionActivity {
    * it is skipping work.
    */
   behind: boolean;
+  /**
+   * How late subtitles are when clearly more than usual for a while (offscreen/activity.ts
+   * `LATE`), ms, else null: the overlay's chip says so. Shown and hidden with hysteresis.
+   */
+  lateMs: number | null;
   /** The speech engine's real-time factor lately (seconds of work per second of speech). */
   rtf: number | null;
   /** Speech heard but not yet recognized, ms. */
@@ -326,7 +331,7 @@ export const OVERLAY_PORT = 'murmur-overlay';
 /** What the overlay says about the session on the picture (a small chip). */
 export type OverlayStatus =
   | { state: 'loading'; detail: string; progress: number | null }
-  /** `behindMs`: how late subtitles are when falling behind, else null. */
+  /** `behindMs`: how late subtitles are when clearly late for a while (`lateMs`), else null. */
   | { state: 'running'; behindMs: number | null }
   | { state: 'error'; message: string };
 
@@ -363,7 +368,7 @@ export function overlayStatus(status: ActiveSessionStatus): OverlayStatus {
       return { state: 'loading', detail: status.detail, progress: status.progress };
     case 'running': {
       const a = status.activity;
-      return { state: 'running', behindMs: a?.behind ? (a.delayMs ?? 0) : null };
+      return { state: 'running', behindMs: a?.lateMs ?? null };
     }
     case 'error':
       return { state: 'error', message: status.message };
