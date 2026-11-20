@@ -159,7 +159,8 @@ for (const player of PLAYERS) {
       const first = cue ? shown.find((s) => s.ids.includes(cue.id)) : undefined;
       // The page's frames once the video reached the cue: the overlay, which checks the video's
       // time every frame, draws it in the first, and under load may miss one.
-      const reached = at === null ? -1 : frames.findIndex(([t]) => t >= at - SLACK);
+      // (Reached: at or past it. A video that crawls can spend frames just short of it.)
+      const reached = at === null ? -1 : frames.findIndex(([t]) => t >= at);
       const due = reached >= 0 ? frames[reached + 2]?.[0] : undefined;
       // How long before the video reached it the session sent the cue, ms.
       const sent = log?.lookaheadCues.find((c) => c.cue.id === cue?.id)?.at;
