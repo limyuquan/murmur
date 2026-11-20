@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/shared/e2e', () => ({ IS_E2E: true }));
+
 import { EngineUnavailableError, isOutOfMemory } from '@/engines/errors';
 import {
   type GenerationRecord,

@@ -7,9 +7,11 @@
  * worker reads them from the model cache. A missing file fails the load.
  */
 // ONNX Runtime's WebAssembly build, emitted into the extension by Vite: never the CDN default.
+
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
 import { MODEL_CACHE, readBytes } from '@/models/hub';
+import { IS_E2E } from '@/shared/e2e';
 import { looksLikeDeviceLostOnly, looksLikeOutOfMemory } from '../errors';
 import { watchGpuDevices } from '../gpuwatch';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
@@ -91,7 +93,7 @@ async function stage<T>(
   } catch (err) {
     throw memoryFailure(err instanceof Error ? err.message : String(err)) ?? err;
   }
-  if (simulate === name) {
+  if (IS_E2E && simulate === name) {
     gpu.record(`The graphics card ran out of memory (simulated, at ${name}).`);
   }
   const failed = memoryFailure(null);
@@ -112,7 +114,8 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
   }
   const cache = await caches.open(MODEL_CACHE);
   const { source } = message.model;
-  const simulate = message.simulateOutOfMemory;
+  // e2e builds only: a simulated out-of-memory, for checks of the memory ladder.
+  const simulate = IS_E2E ? message.simulateOutOfMemory : undefined;
   model = await stage('load', simulate, () =>
     Qwen3Asr.load(
       message.model,

@@ -17,6 +17,7 @@
  */
 
 import { isComplete } from '@/models/hub';
+import { IS_E2E } from '@/shared/e2e';
 import { DecodeQueue } from '../decodequeue';
 import {
   EngineUnavailableError,
@@ -181,7 +182,7 @@ export class Qwen3AsrEngine implements AsrEngine {
         worker.postMessage({
           type: 'load',
           model: this.model,
-          ...(options.simulateOutOfMemory
+          ...(IS_E2E && options.simulateOutOfMemory
             ? { simulateOutOfMemory: options.simulateOutOfMemory }
             : {}),
         } satisfies ToWorker);

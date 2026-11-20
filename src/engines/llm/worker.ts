@@ -12,8 +12,10 @@
  * the model file was downloaded when the person asked (models/store.ts), and is read from the
  * model cache as a Blob, which stays on disk.
  */
+
 import { Backend, Engine, loadLiteRtLm, SamplerType } from '@litert-lm/core';
 import { MODEL_CACHE, readBlob } from '@/models/hub';
+import { IS_E2E } from '@/shared/e2e';
 import { looksLikeDeviceLostOnly, looksLikeOutOfMemory } from '../errors';
 import { watchGpuDevices } from '../gpuwatch';
 import type { FromWorker, GenerationStats, ToWorker } from './messages';
@@ -66,7 +68,7 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
    * for it at `stage`; else null.
    */
   const memoryFailure = (err: unknown, stage: string, simulate: string | undefined) => {
-    if (simulate === stage) {
+    if (IS_E2E && simulate === stage) {
       gpu.record(`The graphics card ran out of memory (simulated, at ${stage}).`);
     }
     const seen = gpu.failure();
@@ -106,7 +108,8 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
     const file = m.source.files.find((f) => f.path === m.file);
     const model = file && (await readBlob(cache, m.source, file));
     if (!model) throw new Error(`${m.file} isn’t downloaded.`);
-    const simulate = m.simulateOutOfMemory;
+    // e2e builds only: a simulated out-of-memory, for checks of the memory ladder.
+    const simulate = IS_E2E ? m.simulateOutOfMemory : undefined;
     try {
       engine = await Engine.create({
         model,

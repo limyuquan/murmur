@@ -11,6 +11,7 @@
  * loading or warming up (loading.ts `loadLadder`).
  */
 import { CHROME_TRANSLATOR_ID, CHROME_WEBSPEECH_ID } from './chrome/info';
+import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from './demo/ids';
 import {
   checkEngine,
   estimateGpuMemoryMB,
@@ -37,8 +38,7 @@ export interface ModelProfile {
   translation: readonly string[];
 }
 
-export const DEMO_ASR_ID = 'demo-echo';
-export const DEMO_TRANSLATION_ID = 'demo-passthrough';
+export { DEMO_ASR_ID, DEMO_TRANSLATION_ID };
 export const WHISPER_BASE_ID = 'whisper-base';
 export const WHISPER_TURBO_ID = 'whisper-large-v3-turbo';
 export { GEMMA_E2B_ID, GEMMA_E4B_ID, QWEN3_ASR_17B_ID, QWEN3_ASR_ID };

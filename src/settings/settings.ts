@@ -8,8 +8,11 @@
  * `mergeSettings`. Stored objects are merged over the defaults on read, so old data keeps working.
  */
 import { browser } from 'wxt/browser';
+// Not the ids from engines/profiles.ts: the overlay bundles settings, and shouldn't bundle the
+// engine catalog with them.
+import { DEMO_ASR_ID, DEMO_TRANSLATION_ID } from '@/engines/demo/ids';
 import type { GlossaryEntry } from '@/engines/glossary';
-import { DEMO_ASR_ID, DEMO_TRANSLATION_ID, type ProfileChoice } from '@/engines/profiles';
+import type { ProfileChoice } from '@/engines/profiles';
 import type { LanguageTag } from '@/engines/types';
 
 export const SETTINGS_KEY = 'settings';

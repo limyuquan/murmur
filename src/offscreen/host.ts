@@ -442,15 +442,15 @@ export class OffscreenHost {
       // The speech detector loads alongside the engines; it is small.
       if (chosen && wantsModelVad(chosen)) running.vad = this.loadVad();
       // Engines that can't run here at all hand over to their fallback (profiles.ts).
-      const simulate = IS_E2E ? (config.simulateOutOfMemory ?? {}) : {};
       const options = (info: { id: string; label: string }) => {
-        const failure = simulate[info.id];
+        // e2e builds only: engines to fail as if out of graphics memory.
+        const failure = IS_E2E ? config.simulateOutOfMemory?.[info.id] : undefined;
         return {
           hardware,
           session,
           signal,
           onProgress: (p: LoadProgress) => loading(info.label, p),
-          ...(failure ? { simulateOutOfMemory: failure } : {}),
+          ...(IS_E2E && failure ? { simulateOutOfMemory: failure } : {}),
         };
       };
       const onTranslatorFallback = (_id: string, err: Error) => {

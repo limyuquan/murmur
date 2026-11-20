@@ -24,6 +24,24 @@ const PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsqoaTZGI3zf4zzOZ1ytCFoz/SAMrg5MGU0ggmmzlOK/7WNhVDYhupz/n0l7oc3ytHfxEFxCzeN1ODRzTrWOSiD74/U4c6jJX/RQoj8IkgyaTgeuBY8Ode1VUWSH+jb/7Gjmk/jVGyJHwnZtVUNxvlgPjkmicJGwbDTgzL9ry0dgNKKcPS9wYMI7VQ/XPsQKDnOF3mAtJTv2UzCg7zUdEhkmLciQqoohi29V10hmbm/Ytw3cZJfuMxAifiUpwBnRfco6G0DGa8i4z/bB5i4ahSjaGPfqEeuNiao1Nb3Wd+9qI5uRrurvNmB6eX4lkw6FDITJyEU9e/sNWD+9M2M7mKQIDAQAB';
 
 /**
+ * Outside e2e builds, the demo and test engines' factories (src/engines/demo/factories.ts) are an
+ * empty map, so their code isn't bundled (a branch on the build mode alone still emits the
+ * chunks its dynamic imports name).
+ */
+function noDemoEngines(mode: string) {
+  return {
+    name: 'murmur:no-demo-engines',
+    enforce: 'pre' as const,
+    load(id: string) {
+      if (mode === 'e2e') return null;
+      return id.split('?')[0]?.endsWith('/src/engines/demo/factories.ts')
+        ? 'export const DEMO_FACTORIES = {};'
+        : null;
+    },
+  };
+}
+
+/**
  * Optional suffix for the output folder (e.g. `MURMUR_E2E_ID=a pnpm test:e2e` builds into
  * `.output/chrome-mv3-e2e-a`), so parallel runs don't overwrite each other's e2e build.
  * tests/e2e/fixtures.ts reads the same variable.
@@ -55,8 +73,8 @@ export default defineConfig({
       }
     },
   },
-  vite: () => ({
-    plugins: [tailwindcss()],
+  vite: (env) => ({
+    plugins: [tailwindcss(), noDemoEngines(env.mode)],
     // The speech model worker imports transformers.js, which is ESM with top-level await.
     worker: { format: 'es' },
   }),

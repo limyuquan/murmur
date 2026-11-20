@@ -19,7 +19,9 @@
  *   the new translation (`revises`) when it changes the line materially (output.ts). An answer that repeats an earlier line or runs away is rejected with `LlmOutputError`,
  *   so the session can have another translator do that line (translators.ts).
  */
+
 import { isComplete } from '@/models/hub';
+import { IS_E2E } from '@/shared/e2e';
 import {
   EngineUnavailableError,
   looksLikeDeviceLostOnly,
@@ -271,7 +273,7 @@ export class LlmTranslationEngine implements TranslationEngine {
           wasmBase: this.options.wasmBase ?? defaultWasmBase(),
           maxNumTokens: MAX_NUM_TOKENS,
           warmup,
-          ...(options.simulateOutOfMemory
+          ...(IS_E2E && options.simulateOutOfMemory
             ? { simulateOutOfMemory: options.simulateOutOfMemory }
             : {}),
         });
