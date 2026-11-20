@@ -21,14 +21,16 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   enough to read. Box, shadow or outline, in the size you like.
 - **Translation, original or both.** Subtitles show only the translation by default. Turn on
   "Show the original too" in the popup to add what was said, or choose Original in the options
-  to show only that. A line already in your language shows as said. Each line is translated on
+  to show only that. A line already in your language shows as said, and so does a line whose
+  translation failed, at full size. Each line is translated on
   its own, so a video that switches language mid-way is fine, and so is a line that switches
   inside it; a line in a different language from the rest gets a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Or ahead of time (beta).** On sites you choose, Murmur reads the audio the video player has
   already loaded and makes the subtitles before the speech plays, so each line appears right on
   time, and straight away when you seek back. Turn it on per site in the popup ("Show subtitles
-  ahead of time"); it needs the Balanced or Best model size. Where the player has nothing loaded
+  ahead of time") or add sites in Settings → Ahead of time; it needs the Balanced or Best model
+  size. Where the player has nothing loaded
   yet (an ad, a jump far ahead), subtitles come as they're heard.
 - **Pick a model size.** Light uses Chrome's built-in speech recognition and translation (Chrome
   downloads a small pack per language, after one click; where the browser has no on-device
@@ -210,7 +212,7 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
 | `src/messaging/` | Every message type between contexts (`protocol.ts`), who may send each (`senders.ts`), popup → SW client |
 | `src/settings/` | Settings type, defaults, validation, storage; dragged positions per site (`positions.ts`); which memory-ladder step worked per graphics card (`memoryfit.ts`) |
 | `src/models/` | Downloadable models: catalog per profile and device, download manager (runs in the SW), Cache API store (`store.ts`) and the reader model workers use (`hub.ts`) |
-| `src/entrypoints/popup/`, `options/`, `welcome/` | React + Tailwind extension pages (welcome opens on install) |
+| `src/entrypoints/popup/`, `options/`, `welcome/` | React extension pages (welcome opens on install), drawn from one set of design tokens (`src/styles/tokens.css`: colour, space, type, radius, motion, light and dark) and the components in `src/styles/app.css`, with Figtree bundled (`src/assets/fonts/`, OFL) |
 | `src/ui/` | Shared React components, hooks and copy for those pages; tokens in `src/styles/app.css` |
 | `tests/unit`, `tests/e2e` | Vitest (pure logic) and Playwright end-to-end |
 | `scripts/` | Fixture server, icon renderer (`pnpm icons`), release-zip check |
