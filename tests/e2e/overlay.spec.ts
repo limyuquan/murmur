@@ -22,10 +22,10 @@ test('subtitles attach over the video picture, follow it, and go away on stop', 
 
   const host = page.locator('murmur-overlay');
   await expect(host).toHaveCount(1);
-  // The echo engine's text, through the passthrough translator: original and translation lines.
+  // The echo engine's text, through the passthrough translator: the translation only (default).
   const main = host.locator('.line[data-role="main"]').first();
   await expect(main).toContainText(/\[en\] Sound \d/, { timeout: 15_000 });
-  await expect(host.locator('.line[data-role="original"]').first()).toContainText(/^Sound \d/);
+  await expect(host.locator('.line[data-role="original"]')).toHaveCount(0);
 
   // Over the picture, not the letterbox bars.
   const box = await host.boundingBox();

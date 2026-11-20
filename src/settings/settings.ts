@@ -6,6 +6,8 @@
  *
  * Adding a setting: add it to `Settings` and `DEFAULT_SETTINGS`, and validate it in
  * `mergeSettings`. Stored objects are merged over the defaults on read, so old data keeps working.
+ * Changing a default: every save stores the whole object, so a stored value equal to the old
+ * default may never have been chosen. Bump `SETTINGS_VERSION` and decide in `migrate`.
  */
 import { browser } from 'wxt/browser';
 // Not the ids from engines/profiles.ts: the overlay bundles settings, and shouldn't bundle the
@@ -17,6 +19,12 @@ import type { LanguageTag } from '@/engines/types';
 
 export const SETTINGS_KEY = 'settings';
 
+/**
+ * Version of the stored object (its `version` field; none before 2).
+ * 2: subtitles show the translation only by default, no longer the original too.
+ */
+export const SETTINGS_VERSION = 2;
+
 export type CaptionDisplay = 'both' | 'translation' | 'original';
 export type CaptionPosition = 'bottom' | 'top';
 /** Where the original goes relative to the translation in `both` mode. */
@@ -25,7 +33,10 @@ export type OriginalPlacement = 'above' | 'below';
 export type CaptionBackground = 'box' | 'shadow' | 'outline';
 
 export interface OverlaySettings {
-  /** Which lines to show. `both` adds the original, smaller, next to the translation. */
+  /**
+   * Which lines to show (`translation` by default). `both` adds the original, smaller, next to
+   * the translation. A line that needs no translation shows as said in every mode.
+   */
   display: CaptionDisplay;
   position: CaptionPosition;
   originalPlacement: OriginalPlacement;
@@ -98,7 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   translatePartials: false,
   glossary: [],
   overlay: {
-    display: 'both',
+    display: 'translation',
     position: 'bottom',
     originalPlacement: 'above',
     fontScale: 1,
@@ -224,14 +235,37 @@ export function applyPatch(current: Settings, patch: SettingsPatch): Settings {
   );
 }
 
+/**
+ * Settings from the object stored under `SETTINGS_KEY`, brought up to `SETTINGS_VERSION` first.
+ * Not for patches: a `Settings` object carries no version.
+ */
+export function readStoredSettings(stored: unknown): Settings {
+  return mergeSettings(migrate(stored));
+}
+
+/**
+ * Before version 2 every save wrote `display: 'both'`, the default then, whether or not the
+ * person chose it; such a value is taken as unset, so it becomes the new default. Any other
+ * display was a choice and stays.
+ */
+function migrate(stored: unknown): unknown {
+  if (!isObject(stored)) return stored;
+  const version = typeof stored.version === 'number' ? stored.version : 1;
+  if (version < 2 && isObject(stored.overlay) && stored.overlay.display === 'both') {
+    const { display: _old, ...overlay } = stored.overlay;
+    return { ...stored, overlay };
+  }
+  return stored;
+}
+
 export async function loadSettings(): Promise<Settings> {
   const stored = await browser.storage.local.get(SETTINGS_KEY);
-  return mergeSettings(stored[SETTINGS_KEY]);
+  return readStoredSettings(stored[SETTINGS_KEY]);
 }
 
 export async function saveSettings(patch: SettingsPatch): Promise<Settings> {
   const next = applyPatch(await loadSettings(), patch);
-  await browser.storage.local.set({ [SETTINGS_KEY]: next });
+  await browser.storage.local.set({ [SETTINGS_KEY]: { ...next, version: SETTINGS_VERSION } });
   return next;
 }
 
@@ -239,7 +273,7 @@ export async function saveSettings(patch: SettingsPatch): Promise<Settings> {
 export function watchSettings(listener: (settings: Settings) => void): () => void {
   const onChanged = (changes: Record<string, { newValue?: unknown }>, area: string): void => {
     const change = changes[SETTINGS_KEY];
-    if (area === 'local' && change) listener(mergeSettings(change.newValue));
+    if (area === 'local' && change) listener(readStoredSettings(change.newValue));
   };
   browser.storage.onChanged.addListener(onChanged);
   return () => browser.storage.onChanged.removeListener(onChanged);

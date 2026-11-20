@@ -19,10 +19,11 @@ text, translates it, and draws the subtitles on the video, all on your own machi
   shows its controls, and you can drag them anywhere; Murmur remembers the spot for each site.
 - **Laid out like TV subtitles.** Two lines at most, broken at natural points, each held long
   enough to read. Box, shadow or outline, in the size you like.
-- **Original and translation.** Show both lines, only the translation, or only what was said.
-  Each line is translated on its own, so a video that switches language mid-way is fine, and so
-  is a line that switches inside it; a line in a different language from the rest gets a small
-  tag (such as `DE`).
+- **Translation, original or both.** Subtitles show only the translation by default. Turn on
+  "Show the original too" in the popup to add what was said, or choose Original in the options
+  to show only that. A line already in your language shows as said. Each line is translated on
+  its own, so a video that switches language mid-way is fine, and so is a line that switches
+  inside it; a line in a different language from the rest gets a small tag (such as `DE`).
 - **Text appears as it's heard.** Words that may still change are shown dimmed until they settle.
 - **Or ahead of time (beta).** On sites you choose, Murmur reads the audio the video player has
   already loaded and makes the subtitles before the speech plays, so each line appears right on

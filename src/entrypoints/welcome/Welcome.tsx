@@ -296,7 +296,7 @@ function Intro() {
     {
       icon: 'globe',
       title: 'Translates each line',
-      text: 'Shows what was said and its translation, even when the language changes part way.',
+      text: 'Shows each line in your language, even when the language changes part way.',
     },
     {
       icon: 'lock',
@@ -331,12 +331,9 @@ function SampleFrame() {
         background: 'radial-gradient(120% 90% at 75% 15%, #42557a 0%, #1c2438 50%, #0d1019 100%)',
       }}
       role="img"
-      aria-label="A video with a subtitle in the original language above its translation"
+      aria-label="A video with a translated subtitle"
     >
       <div className="absolute inset-x-0 bottom-[9%] flex flex-col items-center gap-1.5 px-6 text-center">
-        <span className="rounded bg-black/70 px-2 py-0.5 text-[13px] text-[#dcdcdc]">
-          On se retrouve devant la gare à huit heures ?
-        </span>
         <span className="rounded bg-black/70 px-2.5 py-0.5 text-[19px] font-medium text-white">
           Shall we meet outside the station at eight?
         </span>

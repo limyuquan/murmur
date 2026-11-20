@@ -25,8 +25,15 @@ function lasting(id: string, seq: number): Cue {
   return cue(id, seq, { translation: { text: `Line ${id}`, language: 'en', final: false } });
 }
 
-/** Opens the player fixture with a running session whose cues the test controls. */
-async function player(murmur: import('./fixtures').MurmurHelpers): Promise<Page> {
+/**
+ * Opens the player fixture with a running session whose cues the test controls. `both` shows the
+ * original line too (the default is the translation only).
+ */
+async function player(
+  murmur: import('./fixtures').MurmurHelpers,
+  { both = false } = {},
+): Promise<Page> {
+  if (both) await murmur.display('both');
   const page = await murmur.open('player.html');
   await page.waitForFunction(() => {
     const v = document.querySelector('video');
@@ -46,7 +53,7 @@ const PARTIAL_WORDS =
 test('a growing line stays put, then settles; the translation keeps its place', async ({
   murmur,
 }) => {
-  const page = await player(murmur);
+  const page = await player(murmur, { both: true });
   const host = page.locator('murmur-overlay');
   const original = host.locator('.line[data-role="original"] .text');
 
@@ -116,8 +123,33 @@ test('lines keep to two rows; long text is paged', async ({ murmur }) => {
   expect(rows).toBeLessThanOrEqual(2);
 });
 
-test('only lines in a less common language are tagged', async ({ murmur }) => {
+test('the translation only by default; a line already in the target language shows as said', async ({
+  murmur,
+}) => {
   const page = await player(murmur);
+  const host = page.locator('murmur-overlay');
+  await send(page, { cue: lasting('a', 1) });
+  await send(page, {
+    cue: cue('b', 2, {
+      source: { text: 'See you tomorrow', language: 'en', final: true },
+      translation: null,
+      untranslated: 'same-language',
+    }),
+  });
+  // (Line a may carry an FR tag: half of what was heard is English now.)
+  await expect(host.locator('.line[data-role="main"] .text')).toHaveText([
+    /Line a$/,
+    'See you tomorrow',
+  ]);
+  await expect(host.locator('.line[data-role="main"]').last()).toHaveAttribute(
+    'data-final',
+    'true',
+  );
+  await expect(host.locator('.line[data-role="original"]')).toHaveCount(0);
+});
+
+test('only lines in a less common language are tagged', async ({ murmur }) => {
+  const page = await player(murmur, { both: true });
   const host = page.locator('murmur-overlay');
   await send(page, { cue: cue('a', 1) });
   await send(page, { cue: cue('b', 2) });
@@ -227,7 +259,7 @@ test('fullscreen: inside a fullscreen player, and above a fullscreen video', asy
 });
 
 test('small players show the translation only', async ({ murmur }) => {
-  const page = await player(murmur);
+  const page = await player(murmur, { both: true });
   const host = page.locator('murmur-overlay');
   await send(page, { cue: cue('a', 1) });
   await expect(host.locator('.line[data-role="original"]')).toHaveCount(1);

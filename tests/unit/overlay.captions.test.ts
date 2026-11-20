@@ -29,7 +29,12 @@ const partialSource = (text: string, language = 'fr'): Partial<Cue> => ({
   untranslated: 'pending',
 });
 
-const view = (patch: Partial<ViewOptions> = {}): ViewOptions => ({ ...DEFAULT_VIEW, ...patch });
+/** Most tests here are about the original line, so they draw both (not the default). */
+const view = (patch: Partial<ViewOptions> = {}): ViewOptions => ({
+  ...DEFAULT_VIEW,
+  display: 'both',
+  ...patch,
+});
 
 const texts = (store: CaptionStore, now: number, patch: Partial<ViewOptions> = {}) =>
   store
@@ -49,7 +54,16 @@ describe('isDone', () => {
 });
 
 describe('CaptionStore lines', () => {
-  it('shows the original above the translation by default, and below when asked', () => {
+  it('shows the translation only by default', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1), 0);
+    expect(DEFAULT_VIEW.display).toBe('translation');
+    expect(s.visible(0).map((b) => b.lines.map((l) => `${l.role}:${l.rows.join('|')}`))).toEqual([
+      ['main:meant a'],
+    ]);
+  });
+
+  it('shows the original above the translation in both mode, and below when asked', () => {
     const s = new CaptionStore();
     s.apply(cue('a', 1), 0);
     expect(texts(s, 0)).toEqual([['original:said a:true', 'main:meant a:true']]);
@@ -62,6 +76,19 @@ describe('CaptionStore lines', () => {
     const s = new CaptionStore();
     s.apply(cue('a', 1, { translation: null, untranslated: 'same-language' }), 0);
     expect(texts(s, 0)).toEqual([['main:said a:true']]);
+  });
+
+  it('translation mode still shows a line that needs no translation, as said', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1), 0);
+    s.apply(cue('b', 2, { translation: null, untranslated: 'same-language' }), 0);
+    const only = { display: 'translation' } as const;
+    expect(texts(s, 0, only)).toEqual([['main:meant a:true'], ['main:said b:true']]);
+    // Final, not a stand-in: it stays with partials hidden.
+    expect(texts(s, 0, { ...only, showPartials: false })).toEqual([
+      ['main:meant a:true'],
+      ['main:said b:true'],
+    ]);
   });
 
   it('stands the original in, dimmed, until the translation arrives (translation mode)', () => {

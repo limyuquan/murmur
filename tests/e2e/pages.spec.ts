@@ -25,10 +25,14 @@ test('popup quick settings change subtitles, from the keyboard too', async ({
   await popup.goto(url(`popup.html?tab=${tabId}`));
   await expect(popup.getByTestId('status')).toHaveText(/^Off/);
 
-  // Show the original: on by default; Space toggles it.
+  // Show the original: off by default (the translation only); Space toggles it.
   const dual = popup.getByTestId('dual');
-  await expect(dual).toHaveAttribute('aria-checked', 'true');
+  await expect(dual).toHaveAttribute('aria-checked', 'false');
+  await expect.poll(async () => (await overlaySettings(serviceWorker)).display).toBe('translation');
   await dual.focus();
+  await popup.keyboard.press('Space');
+  await expect(dual).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(async () => (await overlaySettings(serviceWorker)).display).toBe('both');
   await popup.keyboard.press('Space');
   await expect(dual).toHaveAttribute('aria-checked', 'false');
   await expect.poll(async () => (await overlaySettings(serviceWorker)).display).toBe('translation');
@@ -314,15 +318,21 @@ test('options: the preview follows the subtitle settings', async ({ context }) =
   const page = await context.newPage();
   await page.goto(url('options.html#subtitles'));
   const host = page.getByTestId('preview').locator('murmur-overlay');
-  await expect(host.locator('.line[data-role="main"]').last()).toHaveText(
+  await expect(host.locator('.line[data-role="main"]').last()).toContainText(
     'Yes, but I might be a little late.',
   );
-  await expect(host.locator('.tag')).toHaveText('DE');
+  // The translation only by default: the tag goes on it, no original line, nowhere to place one.
+  await expect(host.locator('.line[data-role="main"] .tag')).toHaveText('DE');
+  await expect(page.getByRole('radio', { name: 'Translation', exact: true })).toBeChecked();
+  await expect(host.locator('.line[data-role="original"]')).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'Below' })).toBeDisabled();
 
   // Segmented controls: native radios under their labels.
   const choose = (name: string) => page.locator('.segmented label', { hasText: name }).click();
   await choose('Outline');
   await expect(host).toHaveAttribute('data-bg', 'outline');
+  await choose('Original and translation');
+  await expect(host.locator('.line[data-role="original"]').last()).toBeVisible();
   await choose('Below');
   await expect(host.locator('.block').last().locator('.line').first()).toHaveAttribute(
     'data-role',

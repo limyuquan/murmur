@@ -70,7 +70,7 @@ export interface CaptionOptions {
 export const DEFAULT_CAPTION_OPTIONS: CaptionOptions = { maxCues: 2, maxMainRows: 3, maxRows: 4 };
 
 export const DEFAULT_VIEW: ViewOptions = {
-  display: 'both',
+  display: 'translation',
   showPartials: true,
   originalPlacement: 'above',
   languageTags: true,

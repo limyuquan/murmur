@@ -40,6 +40,8 @@ export interface MurmurHelpers {
   status(): Promise<SessionStatus>;
   /** Dragged subtitle positions, per site. */
   positions(): Promise<Record<string, { x: number; y: number }>>;
+  /** Which lines subtitles show (stored as if chosen in the options page). */
+  display(display: import('@/settings/settings').CaptionDisplay): Promise<void>;
 }
 
 interface Fixtures {
@@ -120,6 +122,21 @@ export const test = base.extend<Fixtures>({
           const s = await (globalThis as unknown as SwGlobal).chrome.storage.local.get('positions');
           return (s.positions ?? {}) as Record<string, { x: number; y: number }>;
         });
+      },
+      async display(display) {
+        await serviceWorker.evaluate(async (d) => {
+          const { storage } = (globalThis as unknown as SwGlobal).chrome;
+          // After the first-install defaults are in, or they would write over this.
+          let current: Record<string, unknown> | undefined;
+          for (let i = 0; i < 50 && !current; i++) {
+            current = (await storage.local.get('settings')).settings as typeof current;
+            if (!current) await new Promise((r) => setTimeout(r, 50));
+          }
+          const overlay = (current?.overlay ?? {}) as Record<string, unknown>;
+          await storage.local.set({
+            settings: { ...current, overlay: { ...overlay, display: d } },
+          });
+        }, display);
       },
     };
     await use(helpers);
