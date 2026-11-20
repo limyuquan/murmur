@@ -13,13 +13,13 @@ Models downloaded later, only when the person clicks Download, are listed in NOT
 
 2. Transformers.js (@huggingface/transformers 4.3.2), in the Whisper worker
    Licence: Apache-2.0
-   Copyright Hugging Face, Inc.
+   By Hugging Face (its licence file and sources carry no copyright line)
    https://github.com/huggingface/transformers.js
 
 3. @huggingface/tokenizers 0.2.0 (bundled inside Transformers.js)
    Licence: Apache-2.0
-   Copyright Hugging Face, Inc.
-   https://github.com/huggingface/tokenizers
+   By Hugging Face (its licence file and sources carry no copyright line)
+   https://github.com/huggingface/tokenizers.js
 
 4. @huggingface/jinja 0.5.13 (bundled inside Transformers.js)
    Licence: MIT
@@ -28,13 +28,14 @@ Models downloaded later, only when the person clicks Download, are listed in NOT
 
 5. LiteRT-LM.js (@litert-lm/core 0.19.0) and its WebAssembly runtime (litert/litertlm_wasm_internal.js, .wasm)
    Licence: Apache-2.0
-   Copyright 2026 Google LLC
+   Copyright 2025-2026 Google LLC
+   Copyright 2026 The ODML Authors
    https://github.com/google-ai-edge/LiteRT-LM
    See also NOTICE.
 
 6. @litertjs/wasm-utils 2.6.0 (bundled with LiteRT-LM.js)
    Licence: Apache-2.0
-   Copyright Google LLC
+   Copyright 2025 Google LLC
    https://github.com/google-ai-edge/LiteRT
 
 7. React and React DOM 19.3.1, scheduler 0.28.0
@@ -47,9 +48,9 @@ Models downloaded later, only when the person clicks Download, are listed in NOT
    Copyright (c) Tailwind Labs, Inc.
    https://github.com/tailwindlabs/tailwindcss
 
-9. WXT 0.21.4 and @wxt-dev/browser 0.3.7 (small runtime helpers)
+9. WXT 0.21.4 and @wxt-dev/browser 0.3.7 (small runtime helpers), by Aaron Klinker
    Licence: MIT
-   Copyright (c) 2023 Aaron Klinker
+   Copyright (c) 2023 Aaron
    https://github.com/wxt-dev/wxt
 
 10. Silero VAD model (assets/silero_vad-*.onnx)
@@ -161,7 +162,7 @@ SOFTWARE.
 
 MIT License
 
-Copyright (c) 2023 Aaron Klinker
+Copyright (c) 2023 Aaron
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -5,10 +5,13 @@ Murmur includes the third-party software listed in THIRD_PARTY_NOTICES.txt, with
 texts. Among them, under the Apache License, Version 2.0:
 
 LiteRT-LM.js (@litert-lm/core 0.19.0) and @litertjs/wasm-utils, bundled with their WebAssembly
-runtime. Copyright 2026 Google LLC. https://github.com/google-ai-edge/LiteRT-LM
+runtime. Copyright 2025-2026 Google LLC; Copyright 2026 The ODML Authors.
+https://github.com/google-ai-edge/LiteRT-LM (@litertjs/wasm-utils: Copyright 2025 Google LLC,
+https://github.com/google-ai-edge/LiteRT)
 
 Transformers.js (@huggingface/transformers 4.3.2), with @huggingface/tokenizers bundled in it.
-Copyright Hugging Face, Inc. https://github.com/huggingface/transformers.js
+By Hugging Face; their licence files and sources carry no copyright line.
+https://github.com/huggingface/transformers.js, https://github.com/huggingface/tokenizers.js
 
 Models Murmur downloads from Hugging Face, only when the person clicks Download. They are not
 part of the extension; each comes with the licence on its model card:
