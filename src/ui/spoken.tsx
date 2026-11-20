@@ -49,7 +49,7 @@ export function SpokenLanguages({
             </p>
             <p id={hintId} className="t-small muted">
               The languages in the videos you watch. Chrome’s speech recognition listens for these
-              (up to {MAX_SPOKEN_FOR_CHROME}). Whisper detects the language of each line.
+              (up&nbsp;to&nbsp;{MAX_SPOKEN_FOR_CHROME}). Whisper detects the language of each line.
             </p>
           </div>
           <div className="chips">

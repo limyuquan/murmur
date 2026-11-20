@@ -129,6 +129,13 @@ strong {
   max-width: var(--measure);
   text-wrap: pretty;
 }
+/* Running text never runs past the measure (DESIGN.md › Space, K8). */
+.hint,
+p.t-small,
+p.muted {
+  max-width: var(--measure);
+  text-wrap: pretty;
+}
 
 /* ---- Layout helpers: gaps only from the scale ---- */
 .stack {

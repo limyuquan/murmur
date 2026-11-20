@@ -896,7 +896,7 @@ function PrivacySection() {
               <span className="mark" data-tone="success">
                 <Icon name="check" />
               </span>
-              <span>{t}</span>
+              <span className="measure">{t}</span>
             </li>
           ))}
         </ul>

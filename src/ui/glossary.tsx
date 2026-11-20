@@ -402,7 +402,7 @@ export function GlossaryEditor({
         )}
         <p className="t-small muted foot-note">
           Files are JSON, or one entry per row: ways it’s said (| between them), how it’s written
-          and a note, separated by tabs or commas.
+          and a&nbsp;note, separated by tabs or commas.
         </p>
       </div>
     </div>
