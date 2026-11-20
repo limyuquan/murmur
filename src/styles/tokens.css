@@ -1,0 +1,210 @@
+/* Murmur design tokens: every colour, gap, type size, radius, shadow and duration the extension
+ * pages use. Nothing in the UI may use a value that is not a token from this file (1-px borders,
+ * 50% circles and sizes derived from tokens with calc() aside).
+ *
+ * One file, both themes: every colour is `light-dark(light, dark)`, so a page follows the system
+ * theme with `color-scheme: light dark` and a subtree can be forced with `color-scheme: dark`.
+ * Light is a cool, near-neutral grey ("Mist"); dark is deep aubergine. Pastel fills carry ink
+ * text, controls show state with an inked knob or mark on a pastel track, and colour outside the
+ * accent only ever says what the session is doing.
+ *
+ * Naming: for each status S there are five tokens.
+ *   --S        pastel fill (a badge or icon disc)       --on-S     text on that fill
+ *   --S-soft   tinted panel background                  --S-text   text on surface, bg or S-soft
+ *   --S-mark   dots, icons and progress fills (3:1 on surface)
+ *
+ * Figtree (OFL, src/assets/fonts/OFL.txt) covers Latin; other scripts fall through to the system's
+ * own faces. The overlay on videos has its own copy of the `--ov-*` values (src/overlay/styles.ts):
+ * its shadow root cannot see these.
+ */
+
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url("../assets/fonts/figtree-latin-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url("../assets/fonts/figtree-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* ---- Colour: neutrals (a little violet in every grey; no pure black, no pure grey) ---- */
+  --bg: light-dark(#f4f4f7, #1b1926); /* page canvas */
+  --surface: light-dark(#ffffff, #252233); /* cards, popup, inputs */
+  --sunken: light-dark(#eeeef3, #1f1d2c); /* wells: tracks, icon tiles, neutral panels */
+  --hover: light-dark(#e6e6ec, #2f2b40); /* hover fill */
+  --line: light-dark(#e3e3ea, #343047); /* hairlines, card borders */
+  --line-strong: light-dark(#cfcfd9, #45405c); /* secondary button borders */
+  --control-border: light-dark(#868696, #7f789c); /* inputs, checkboxes, radios: 3:1 on surface */
+  --ink: light-dark(#1f1f2b, #eceaf6); /* text */
+  --muted: light-dark(#585866, #b3aecb); /* secondary text, placeholders, icons at rest */
+
+  /* ---- Colour: accent (iris). The fill is pastel; its text is ink, never white. ---- */
+  --accent: light-dark(#ccc5f8, #b8b0f6); /* primary button, switch on, radio on */
+  --accent-hover: light-dark(#bdb4f5, #c8c1f9);
+  --on-accent: light-dark(#221c4e, #1d1848);
+  --accent-soft: light-dark(#efedfc, #2e2a4a); /* selected card, selected nav item */
+  --accent-text: light-dark(#453c8c, #bdb5f8); /* links, selected labels */
+  --accent-mark: light-dark(
+    #7a70d0,
+    #a79ef3
+  ); /* accent drawn on a surface: selected borders, meters, slider */
+  --knob-on: light-dark(
+    #262040,
+    #1d1848
+  ); /* drawn on the accent fill only: switch knob, radio dot, check mark */
+  --accent-edge: light-dark(
+    #7a70d0,
+    #1d1848
+  ); /* outline of a switch, radio or checkbox that is on */
+  --knob-off: light-dark(#7c7c8c, #8f88ad);
+  --focus: light-dark(#453c8c, #c8c1f9);
+
+  /* ---- The mark (assets/icon.svg): the same in both themes, as in the toolbar ---- */
+  --logo-tile: #cfc9fa;
+  --logo-glyph: #251f5c;
+  --logo-bar: #5145c2;
+
+  /* ---- Colour: status ---- */
+  /* Listening: on and calm. The accent's own hue. */
+  --listening: light-dark(#ccc5f8, #b8b0f6);
+  --on-listening: light-dark(#221c4e, #1d1848);
+  --listening-soft: light-dark(#efedfc, #2e2a4a);
+  --listening-text: light-dark(#453c8c, #bdb5f8);
+  --listening-mark: light-dark(#7a70d0, #a79ef3);
+  /* Translating: working (also starting, loading, transcribing, downloading). */
+  --translating: light-dark(#c3dff5, #a9d2f5);
+  --on-translating: light-dark(#0f3557, #0c2d4a);
+  --translating-soft: light-dark(#e6f2fb, #1f3247);
+  --translating-text: light-dark(#1c5d8f, #a9d2f5);
+  --translating-mark: light-dark(#3d8bc6, #8cc1ee);
+  /* Behind: needs attention, still working. */
+  --behind: light-dark(#f9d2ad, #f6c89c);
+  --on-behind: light-dark(#4f2a06, #45240a);
+  --behind-soft: light-dark(#fdeedd, #3d2e22);
+  --behind-text: light-dark(#8f4a0c, #f6c89c);
+  --behind-mark: light-dark(#c97a2b, #edb37c);
+  /* Error: stopped. */
+  --error: light-dark(#f8c4cc, #f5b5c0);
+  --on-error: light-dark(#5a0f1e, #4d0d1b);
+  --error-soft: light-dark(#fde8eb, #40252d);
+  --error-text: light-dark(#a8273d, #f5b5c0);
+  --error-mark: light-dark(#d9566c, #ee98a7);
+  /* Success: done, downloaded. */
+  --success: light-dark(#bde8d2, #a9e0c5);
+  --on-success: light-dark(#0e3d29, #0b3323);
+  --success-soft: light-dark(#e2f5eb, #1f3a30);
+  --success-text: light-dark(#1b6a48, #a9e0c5);
+  --success-mark: light-dark(#2f9b6c, #8ad3b0);
+
+  /* ---- Space: 4-px base. Every gap, padding and margin is one of these. ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --inset-hair: 2px; /* knob inside a track, segment inside a segmented control. Nothing else. */
+
+  /* ---- Type: one family, six sizes, three weights. Line heights sit on the 4-px grid. ---- */
+  --font-sans:
+    "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", "Yu Gothic UI",
+    "Noto Sans CJK JP", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "PingFang TC",
+    "Microsoft JhengHei", "Noto Sans CJK TC", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans CJK KR", "Noto Sans Thai", "Noto Sans Arabic", "Noto Sans Devanagari", sans-serif;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --type-display: 600 28px / 36px var(--font-sans); /* page title, welcome step title */
+  --type-title: 600 20px / 28px var(--font-sans); /* section title */
+  --type-heading: 600 16px / 24px var(--font-sans); /* card title, option label, popup main label */
+  --type-label: 500 14px / 20px var(--font-sans); /* row labels, buttons, values */
+  --type-body: 400 14px / 20px var(--font-sans); /* running text */
+  --type-small: 400 13px / 20px var(--font-sans); /* hints, secondary lines */
+  --type-caption: 500 12px / 16px var(--font-sans); /* badges, meta, table headers, kbd */
+  --tracking-display: -0.02em;
+  --tracking-title: -0.01em;
+  --measure: 64ch; /* longest line of running text */
+
+  /* ---- Shape ---- */
+  --radius-xs: 4px; /* checkbox, progress ends inside tiles */
+  --radius-sm: 8px; /* inputs, selects, kbd, icon tiles: things you type in or read */
+  --radius-md: 12px; /* panels inside a card: status panel, notice, option card */
+  --radius-lg: 16px; /* cards */
+  --radius-xl: 24px; /* the popup's status disc, welcome sheet, video frames */
+  --radius-pill: 999px; /* things you press: buttons, switches, segments, chips, badges */
+
+  /* ---- Sizes ---- */
+  --control-sm: 28px; /* a button inside a row or panel */
+  --control-md: 32px; /* default button, input, select, segmented control */
+  --control-lg: 40px; /* the one main action of a welcome step; large inputs */
+  --icon-sm: 16px; /* inline with text */
+  --icon-md: 20px; /* navigation, status disc */
+  --tile: 32px; /* icon tile in a list row */
+  --switch-w: 36px;
+  --switch-h: 20px;
+  --switch-lg-w: 44px;
+  --switch-lg-h: 24px;
+  --popup-width: 360px;
+  --page-width: 1040px; /* options: 200 nav + 40 gap + 800 content */
+  --nav-width: 200px;
+  --sheet-width: 720px; /* welcome */
+
+  /* ---- Lines, shadows, focus ---- */
+  --border: 1px solid var(--line);
+  --shadow-sm: 0 1px 2px light-dark(rgb(31 31 43 / 0.06), rgb(0 0 0 / 0.3));
+  --shadow-md: 0 8px 24px light-dark(rgb(31 31 43 / 0.1), rgb(0 0 0 / 0.4));
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus);
+
+  /* ---- Motion ---- */
+  --dur-fast: 120ms; /* hover, press */
+  --dur-base: 180ms; /* switch, selection, chip in */
+  --dur-slow: 240ms; /* progress, layout glide */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* ---- On-video overlay (inside the shadow root; the same in both themes) ---- */
+  --ov-font:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial,
+    "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans CJK SC", "Noto Sans CJK TC",
+    "Apple SD Gothic Neo", "Noto Sans CJK KR", "Microsoft YaHei", "Yu Gothic UI", sans-serif;
+  --ov-text: #ffffff; /* subtitle text: always white */
+  --ov-text-partial: rgb(255 255 255 / 0.66); /* words still being heard */
+  --ov-original: #e6e3f0; /* the original line, when shown */
+  --ov-original-partial: rgb(230 227 240 / 0.62);
+  --ov-box: 12 11 18; /* rgb channels of the subtitle box; alpha is the user's setting */
+  --ov-chrome-bg: rgb(27 25 38 / 0.84); /* status chip */
+  --ov-chrome-line: rgb(255 255 255 / 0.14);
+  --ov-chrome-text: #f3f1fa;
+  --ov-tag-bg: #ccc5f8; /* language tag: pastel fill, ink text */
+  --ov-tag-text: #221c4e;
+  --ov-busy: #a9d2f5;
+  --ov-warn: #f6c89c;
+  --ov-error: #f5b5c0;
+}
+
+/* Force a theme on a subtree. */
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}

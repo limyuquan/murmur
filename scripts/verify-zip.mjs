@@ -37,6 +37,7 @@ const REQUIRED = [
   ['ONNX Runtime’s WebAssembly', /^assets\/ort-wasm-simd-threaded\.asyncify-[\w-]+\.wasm$/],
   ['ONNX Runtime’s WebAssembly glue', /^assets\/ort-wasm-simd-threaded\.asyncify-[\w-]+\.mjs$/],
   ['the Silero VAD model', /^assets\/silero_vad-[\w-]+\.onnx$/],
+  ['the Figtree font', /^assets\/figtree-latin-wght-normal-[\w-]+\.woff2$/],
 ];
 
 /** What only e2e builds may contain (test hooks, test engines, simulated failures). */
@@ -57,6 +58,12 @@ if (!zip) {
   console.error('usage: node scripts/verify-zip.mjs <zip>');
   process.exit(2);
 }
+/** Notices the licence files must carry, for what the build bundles. */
+const NOTICES = [
+  ['THIRD_PARTY_NOTICES.txt', 'Figtree'],
+  ['THIRD_PARTY_NOTICES.txt', 'SIL OPEN FONT LICENSE Version 1.1'],
+];
+
 const fail = (message) => {
   console.error(`verify-zip: ${zip}: ${message}`);
   process.exit(1);
@@ -94,6 +101,10 @@ for (const path of paths.filter((p) => /\.(js|mjs|html|json|css)$/.test(p))) {
   const text = execFileSync('unzip', ['-p', zip, path], { encoding: 'utf8', maxBuffer: 1 << 28 });
   const found = FORBIDDEN.find((needle) => text.includes(needle));
   if (found) fail(`${path} contains "${found}": an e2e build?`);
+}
+for (const [file, needle] of NOTICES) {
+  const text = execFileSync('unzip', ['-p', zip, file], { encoding: 'utf8', maxBuffer: 1 << 24 });
+  if (!text.includes(needle)) fail(`${file} doesn’t mention ${needle}`);
 }
 const size = statSync(zip).size;
 if (size > MAX_ZIP_BYTES) {
