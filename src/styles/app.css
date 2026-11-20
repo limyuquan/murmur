@@ -888,7 +888,7 @@ input:focus-visible + .radio {
   gap: var(--space-2);
   margin-top: var(--space-1);
   padding-top: var(--space-2);
-  border-top: var(--border);
+  border-top: 1px solid color-mix(in srgb, var(--tone-mark) 28%, transparent);
 }
 .notice {
   display: flex;
@@ -1486,6 +1486,11 @@ body:has(> #root > .popup) {
   background: rgb(var(--ov-box) / 0.75);
   text-shadow: 0 0 0.12em rgb(0 0 0 / 0.35);
 }
+/* Marks inside a tinted panel take its tone: a neutral track would be a grey smudge on it. */
+.panel .progress {
+  background: color-mix(in srgb, var(--tone-mark) 24%, transparent);
+}
+
 /* Ahead of time: the add-a-site row lines up with the site rows above it. */
 .add-site {
   padding: var(--space-3) var(--space-5);
