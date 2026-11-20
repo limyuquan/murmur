@@ -19,6 +19,11 @@ export interface WatchedDevice {
 export interface GpuWatch {
   /** The first memory failure seen (a plain message), or null. */
   failure(): string | null;
+  /**
+   * Whether that failure was only a lost device (reason `unknown`), with no out-of-memory error
+   * before it: possibly not memory at all (`OutOfMemoryError.lostOnly`).
+   */
+  lostOnly(): boolean;
   /** Calls `listener` on the first memory failure (at once if there was one). */
   onFailure(listener: (message: string) => void): void;
   /** Records a failure as a device would (e2e checks: a simulated out-of-memory). */
@@ -29,19 +34,22 @@ export interface GpuWatch {
 
 export function createGpuWatch(): GpuWatch {
   let first: string | null = null;
+  let lostOnly = false;
   const listeners: ((message: string) => void)[] = [];
-  const record = (message: string) => {
+  const record = (message: string, lost = false) => {
     if (first !== null) return;
     first = message;
+    lostOnly = lost;
     for (const l of listeners.splice(0)) l(message);
   };
   return {
     failure: () => first,
+    lostOnly: () => lostOnly,
     onFailure(listener) {
       if (first !== null) listener(first);
       else listeners.push(listener);
     },
-    record,
+    record: (message) => record(message),
     watch(device) {
       device.addEventListener('uncapturederror', (event) => {
         const message = gpuErrorMessage(event.error);
@@ -51,7 +59,7 @@ export function createGpuWatch(): GpuWatch {
         (info) => {
           // `destroyed`: the runtime let go of it (a worker ending, a session released).
           if (info?.reason === 'destroyed') return;
-          record(`The graphics device was lost${info?.message ? `: ${info.message}` : '.'}`);
+          record(`The graphics device was lost${info?.message ? `: ${info.message}` : '.'}`, true);
         },
         () => {},
       );

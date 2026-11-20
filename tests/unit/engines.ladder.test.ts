@@ -332,12 +332,21 @@ class FakeEngine {
   }
 }
 
-function ladderRig(behaviours: Record<string, Behaviour>, steps: readonly LadderStep[]) {
+/** What each engine does when loaded; a list: one per engine made, the last one repeating. */
+function ladderRig(
+  behaviours: Record<string, Behaviour | Behaviour[]>,
+  steps: readonly LadderStep[],
+) {
   const log: string[] = [];
   const downs: [number | null, string][] = [];
   const engines: FakeEngine[] = [];
+  const made = new Map<string, number>();
   const make = async (id: string) => {
-    const e = new FakeEngine({ id, label: id }, behaviours[id] ?? 'ok', log);
+    const n = made.get(id) ?? 0;
+    made.set(id, n + 1);
+    const b = behaviours[id] ?? 'ok';
+    const behaviour = Array.isArray(b) ? (b[n] ?? (b.at(-1) as Behaviour)) : b;
+    const e = new FakeEngine({ id, label: id }, behaviour, log);
     engines.push(e);
     return e;
   };
@@ -461,6 +470,87 @@ describe('loadLadder', () => {
       `load ${QWEN3_ASR_ID}`,
       `load ${GEMMA_E2B_ID}`,
     ]);
+  });
+
+  /** The first speech engine made with `id` lost its device (only that one). */
+  const firstLost =
+    (rig: { engines: FakeEngine[] }, id: string, lostOnly = false) =>
+    (e: FakeEngine) =>
+      e === rig.engines.find((x) => x.info.id === id)
+        ? new OutOfMemoryError('The graphics device was lost.', lostOnly)
+        : null;
+
+  it('Best: the 1.7B lost while E4B loaded goes to 1.7B + E2B, not the 0.6B', async () => {
+    // A 6 GB card guessed for an unnamed one: E4B overfills it and every device goes.
+    const rig = ladderRig({}, BEST);
+    const out = await rig.run({ asrLost: firstLost(rig, QWEN3_ASR_17B_ID) });
+    expect(out.step?.index).toBe(1);
+    expect([out.asr.info.id, out.translator.info.id]).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(rig.log).toEqual([
+      `load ${QWEN3_ASR_17B_ID}`,
+      `load ${GEMMA_E4B_ID}`,
+      `unload ${GEMMA_E4B_ID}`,
+      `unload ${QWEN3_ASR_17B_ID}`,
+      `load ${QWEN3_ASR_17B_ID}`,
+      `load ${GEMMA_E2B_ID}`,
+    ]);
+    expect(rig.downs).toEqual([[1, GEMMA_E4B_ID]]);
+  });
+
+  it('Best: E4B out of memory taking the 1.7B’s device with it reloads the 1.7B at the next step', async () => {
+    const rig = ladderRig({ [GEMMA_E4B_ID]: 'oom' }, BEST);
+    const out = await rig.run({ asrLost: firstLost(rig, QWEN3_ASR_17B_ID) });
+    expect(out.step?.index).toBe(1);
+    expect([out.asr.info.id, out.translator.info.id]).toEqual([QWEN3_ASR_17B_ID, GEMMA_E2B_ID]);
+    expect(rig.log).toEqual([
+      `load ${QWEN3_ASR_17B_ID}`,
+      `load ${GEMMA_E4B_ID}`,
+      `unload ${GEMMA_E4B_ID}`,
+      `unload ${QWEN3_ASR_17B_ID}`,
+      `load ${QWEN3_ASR_17B_ID}`,
+      `load ${GEMMA_E2B_ID}`,
+    ]);
+    expect(rig.downs).toEqual([[1, GEMMA_E4B_ID]]);
+  });
+
+  it('a device lost without running out of memory is tried once more first', async () => {
+    const lost = new OutOfMemoryError('Gemma 4 E4B: The graphics device was lost.', true);
+    // Lost once (a driver reset): the same step loads.
+    const once = ladderRig({ [GEMMA_E4B_ID]: [lost, 'ok'] }, BEST);
+    const out = await once.run();
+    expect(out.step?.index).toBe(0);
+    expect(once.downs).toEqual([]);
+    expect(out.failures).toEqual([]);
+    // Lost twice: it doesn't fit, after all.
+    const twice = ladderRig({ [GEMMA_E4B_ID]: lost }, BEST);
+    expect((await twice.run()).step?.index).toBe(1);
+    expect(twice.downs).toEqual([[1, GEMMA_E4B_ID]]);
+    // Out of memory proper: no second try.
+    const oom = ladderRig({ [GEMMA_E4B_ID]: ['oom', 'ok'] }, BEST);
+    expect((await oom.run()).step?.index).toBe(1);
+    // The speech engine's device lost (only) while the translator loaded: once more too.
+    const asr = ladderRig({}, BEST);
+    const again = await asr.run({ asrLost: firstLost(asr, QWEN3_ASR_17B_ID, true) });
+    expect(again.step?.index).toBe(0);
+    expect(asr.downs).toEqual([]);
+  });
+
+  it('a stand-in translator that runs out is recorded as itself, and not tried again', async () => {
+    // E4B not downloaded: E2B stands in at the first step, and doesn't fit next to the 1.7B.
+    const rig = ladderRig(
+      {
+        [GEMMA_E4B_ID]: new ModelError('Gemma 4 E4B isn’t downloaded yet.', ['e4b'], true),
+        [GEMMA_E2B_ID]: 'oom',
+      },
+      BEST,
+    );
+    const out = await rig.run();
+    // Not E2B next to the 1.7B again (step 1): the 0.6B with Chrome's translator below that,
+    // as E2B fails with the 0.6B too in this rig.
+    expect(rig.downs[0]).toEqual([2, GEMMA_E2B_ID]);
+    expect(out.failures[0]?.engine).toBe(GEMMA_E2B_ID);
+    expect(rig.log.filter((l) => l === `load ${GEMMA_E2B_ID}`)).toHaveLength(2);
+    expect(out.step?.index).toBe(3);
   });
 
   it('other failures fall back as before, or stop the session with the speech model freed', async () => {

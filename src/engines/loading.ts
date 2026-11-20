@@ -48,6 +48,8 @@ export async function loadWithFallback<E extends AsrEngine | TranslationEngine>(
       if (signal?.aborted) throw err;
       let next: string | undefined;
       if (isOutOfMemory(err)) {
+        // Which engine ran out, when it stood in for the one asked for.
+        if (current !== id) err.engine ??= current;
         if (!options.onOutOfMemory) throw err;
         next = MEMORY_FALLBACKS[current];
         if (!next) throw err;
@@ -79,9 +81,9 @@ export interface LadderDeps<A extends AsrEngine, T extends TranslationEngine> {
   onTranslatorFallback?(id: string, error: Error): void;
   /**
    * Told on each step down, before the next step loads: the step it goes to (null: below the last
-   * one), the engine that ran out of memory, and the error.
+   * one), the engine that ran out of memory, the error, and the step it leaves.
    */
-  onStepDown?(next: LadderStep | null, failed: string, error: Error): void;
+  onStepDown?(next: LadderStep | null, failed: string, error: Error, from: LadderStep): void;
   /**
    * Graphics memory the speech engine lost while the translator loaded (its device was lost),
    * if any: the pair doesn't fit after all. Absent: not checked.
@@ -102,9 +104,15 @@ export interface LadderResult<A, T> {
  * Loads a memory ladder's engines (profiles.ts `LADDERS`), speech recognition first: `steps`
  * runs from where the session starts. An engine that runs out of memory while loading or warming
  * up (`OutOfMemoryError`) is unloaded (its worker ends, freeing its memory) and the session steps
- * down: past every step with that speech engine when it was the speech engine (it doesn't fit
- * alone), else to the next step. Below the last step, `MEMORY_FALLBACKS` (Chrome's own engines).
- * Other failures fall back as they do without a ladder (`loadWithFallback`).
+ * down:
+ * - the speech engine alone: past every step with that speech engine (it doesn't fit alone);
+ * - the translator, or the speech engine's device lost while the translator loaded (the pair
+ *   doesn't fit): to the next step whose translator hasn't already failed next to that speech
+ *   engine, loading the speech engine again if it went too.
+ * A device lost without running out of memory first (`lostOnly`: a driver reset, the GPU process
+ * restarting) is tried once more at the same step before stepping down. Below the last step,
+ * `MEMORY_FALLBACKS` (Chrome's own engines). Other failures fall back as they do without a ladder
+ * (`loadWithFallback`).
  */
 export async function loadLadder<A extends AsrEngine, T extends TranslationEngine>(
   steps: readonly LadderStep[],
@@ -153,6 +161,27 @@ export async function loadLadder<A extends AsrEngine, T extends TranslationEngin
     }
     return -1;
   };
+  /** Translators that ran out of memory next to a speech engine (`asr|translator`, as asked). */
+  const failedPairs = new Set<string>();
+  /** The step after `i` whose pair hasn't already failed. */
+  const pastPair = (i: number) => {
+    for (let j = i + 1; j < steps.length; j++) {
+      const step = steps[j] as LadderStep;
+      if (!failedPairs.has(`${step.asr}|${step.translation}`)) return j;
+    }
+    return -1;
+  };
+  /** Lost devices already tried again, by step and engine. */
+  const retried = new Set<string>();
+  /** Whether to try step `i` once more after `engine` lost its device (and only that). */
+  const retry = (i: number, engine: string, err: Error) => {
+    if (!isOutOfMemory(err) || !err.lostOnly) return false;
+    const key = `${i}:${engine}`;
+    if (retried.has(key)) return false;
+    retried.add(key);
+    console.warn('[murmur]', `${engine} lost its graphics device; trying once more`, err.message);
+    return true;
+  };
   try {
     for (;;) {
       signal?.throwIfAborted();
@@ -164,40 +193,56 @@ export async function loadLadder<A extends AsrEngine, T extends TranslationEngin
           asrAsked = step.asr;
         } catch (err) {
           if (!isOutOfMemory(err)) throw err;
-          memoryFailed(step.asr, err);
+          if (retry(i, step.asr, err)) continue;
+          memoryFailed(err.engine ?? step.asr, err);
           const j = pastAsr(i, [step.asr]);
           const next = j >= 0 ? (steps[j] as LadderStep) : null;
-          deps.onStepDown?.(next, step.asr, err);
+          deps.onStepDown?.(next, step.asr, err, step);
           if (!next) return await below(null, step);
           i = j;
           continue;
         }
       }
       const loaded = asr as A;
+      /** The pair at step `i` doesn't fit: on to the next one that may. */
+      const pairFailed = async (failed: string, err: Error) => {
+        memoryFailed(failed, err);
+        failedPairs.add(`${step.asr}|${step.translation}`);
+        // The translator that ran out may be a fallback for the one asked for (not downloaded).
+        failedPairs.add(`${step.asr}|${failed}`);
+        const j = pastPair(i);
+        const next = j >= 0 ? (steps[j] as LadderStep) : null;
+        deps.onStepDown?.(next, failed, err, step);
+        return { j, next };
+      };
       let translator: T;
       try {
         translator = await loadTranslator(step.translation, false);
       } catch (err) {
         if (!isOutOfMemory(err)) throw err;
-        memoryFailed(step.translation, err);
-        const next = (steps[i + 1] as LadderStep | undefined) ?? null;
-        deps.onStepDown?.(next, step.translation, err);
+        const failed = err.engine ?? step.translation;
+        // The speech engine's device may have gone with it (the GPU process can drop every
+        // device): load it again rather than run a dead one.
+        if (deps.asrMemoryFailure?.(loaded)) await dropAsr();
+        if (retry(i, failed, err)) continue;
+        const { j, next } = await pairFailed(failed, err);
         if (!next) {
+          const kept = asr as A | null;
           asr = null;
-          return await below(loaded, step);
+          asrAsked = null;
+          return await below(kept, step);
         }
-        i++;
+        i = j;
         continue;
       }
       // The speech engine's graphics device may have gone while the translator loaded.
       const lost = deps.asrMemoryFailure?.(loaded) ?? null;
       if (lost) {
         await translator.unload().catch(() => {});
-        memoryFailed(loaded.info.id, lost);
-        const j = pastAsr(i, [step.asr, loaded.info.id]);
-        const next = j >= 0 ? (steps[j] as LadderStep) : null;
-        deps.onStepDown?.(next, loaded.info.id, lost);
         await dropAsr();
+        if (retry(i, loaded.info.id, lost)) continue;
+        // The pair doesn't fit after all: a smaller translator, with the speech engine again.
+        const { j, next } = await pairFailed(translator.info.id, lost);
         if (!next) return await below(null, step);
         i = j;
         continue;

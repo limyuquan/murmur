@@ -20,6 +20,7 @@ import { isComplete } from '@/models/hub';
 import { DecodeQueue } from '../decodequeue';
 import {
   EngineUnavailableError,
+  looksLikeDeviceLostOnly,
   looksLikeOutOfMemory,
   ModelError,
   OutOfMemoryError,
@@ -138,7 +139,10 @@ export class Qwen3AsrEngine implements AsrEngine {
           // A worker that dies allocating (WebAssembly memory) ran out of memory too.
           reject(
             looksLikeOutOfMemory(message)
-              ? new OutOfMemoryError(`${this.info.label}: ${message}`)
+              ? new OutOfMemoryError(
+                  `${this.info.label}: ${message}`,
+                  looksLikeDeviceLostOnly(message),
+                )
               : new ModelError(message),
           );
         };
@@ -156,7 +160,7 @@ export class Qwen3AsrEngine implements AsrEngine {
           } else if (m.type === 'error' && m.id === null) {
             reject(
               m.memory
-                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`)
+                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`, m.lost === true)
                 : m.unavailable
                   ? new EngineUnavailableError(m.message)
                   : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [
@@ -310,7 +314,7 @@ export class Qwen3AsrEngine implements AsrEngine {
       this.pending.get(m.id)?.reject(new Error(m.message));
       this.pending.delete(m.id);
     } else if (m.type === 'error' && m.memory) {
-      this.lostMemory ??= new OutOfMemoryError(`${this.info.label}: ${m.message}`);
+      this.lostMemory ??= new OutOfMemoryError(`${this.info.label}: ${m.message}`, m.lost === true);
       console.warn('[murmur]', this.info.id, 'graphics memory failure after loading', m.message);
     }
   }

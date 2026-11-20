@@ -22,6 +22,7 @@
 import { isComplete } from '@/models/hub';
 import {
   EngineUnavailableError,
+  looksLikeDeviceLostOnly,
   looksLikeOutOfMemory,
   ModelError,
   OutOfMemoryError,
@@ -232,7 +233,10 @@ export class LlmTranslationEngine implements TranslationEngine {
           const message = e.message || `${this.info.label} stopped while loading.`;
           reject(
             looksLikeOutOfMemory(message)
-              ? new OutOfMemoryError(`${this.info.label}: ${message}`)
+              ? new OutOfMemoryError(
+                  `${this.info.label}: ${message}`,
+                  looksLikeDeviceLostOnly(message),
+                )
               : new EngineUnavailableError(message),
           );
         };
@@ -251,7 +255,7 @@ export class LlmTranslationEngine implements TranslationEngine {
           } else if (m.type === 'error' && m.id === null) {
             reject(
               m.memory
-                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`)
+                ? new OutOfMemoryError(`${this.info.label}: ${m.message}`, m.lost === true)
                 : m.unavailable
                   ? new EngineUnavailableError(m.message)
                   : new ModelError(`Couldn't load ${this.info.label}: ${m.message}`, [

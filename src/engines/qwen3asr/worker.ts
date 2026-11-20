@@ -10,7 +10,7 @@
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url';
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
 import { MODEL_CACHE, readBytes } from '@/models/hub';
-import { looksLikeOutOfMemory } from '../errors';
+import { looksLikeDeviceLostOnly, looksLikeOutOfMemory } from '../errors';
 import { watchGpuDevices } from '../gpuwatch';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
 import { ort, Qwen3Asr } from './model';
@@ -51,11 +51,30 @@ function fail(id: number | null) {
       message: err instanceof Error ? err.message : String(err),
       ...(err instanceof Unavailable ? { unavailable: true } : {}),
       ...(err instanceof MemoryFailure ? { memory: true } : {}),
+      ...(err instanceof MemoryFailure && err.lostOnly ? { lost: true } : {}),
     });
 }
 
 class Unavailable extends Error {}
-class MemoryFailure extends Error {}
+class MemoryFailure extends Error {
+  constructor(
+    message: string,
+    /** Only a lost device (errors.ts `OutOfMemoryError.lostOnly`). */
+    readonly lostOnly: boolean,
+  ) {
+    super(message);
+  }
+}
+
+/** The memory failure the device watch saw, or one `message` says, else null. */
+function memoryFailure(message: string | null): MemoryFailure | null {
+  const seen = gpu.failure();
+  if (seen) return new MemoryFailure(seen, gpu.lostOnly());
+  if (message !== null && looksLikeOutOfMemory(message)) {
+    return new MemoryFailure(message, looksLikeDeviceLostOnly(message));
+  }
+  return null;
+}
 
 /**
  * Runs a stage of the load, failing it as out of memory when a device reported running out
@@ -70,16 +89,13 @@ async function stage<T>(
   try {
     out = await work();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const seen = gpu.failure();
-    if (seen || looksLikeOutOfMemory(message)) throw new MemoryFailure(seen ?? message);
-    throw err;
+    throw memoryFailure(err instanceof Error ? err.message : String(err)) ?? err;
   }
   if (simulate === name) {
     gpu.record(`The graphics card ran out of memory (simulated, at ${name}).`);
   }
-  const seen = gpu.failure();
-  if (seen) throw new MemoryFailure(seen);
+  const failed = memoryFailure(null);
+  if (failed) throw failed;
   return out;
 }
 
@@ -122,7 +138,15 @@ async function load(message: Extract<ToWorker, { type: 'load' }>): Promise<void>
   );
   post({ type: 'ready', loadMs, warmupMs: Math.round(performance.now() - warm) });
   // Later: the session hears of it (another model loading may take the memory this one needs).
-  gpu.onFailure((m) => post({ type: 'error', id: null, message: m, memory: true }));
+  gpu.onFailure((m) =>
+    post({
+      type: 'error',
+      id: null,
+      message: m,
+      memory: true,
+      ...(gpu.lostOnly() ? { lost: true } : {}),
+    }),
+  );
 }
 
 interface GpuAdapterLike {

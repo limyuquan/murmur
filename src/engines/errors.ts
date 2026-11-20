@@ -81,6 +81,22 @@ export function isUnsupportedLanguage(err: unknown): err is UnsupportedLanguageE
 
 export class OutOfMemoryError extends Error {
   override readonly name = 'OutOfMemoryError';
+  /**
+   * The engine that ran out, when it isn't the one asked for (a fallback loaded in its place);
+   * set by loading.ts.
+   */
+  engine?: string;
+  constructor(
+    message: string,
+    /**
+     * Only a graphics device was lost, with no out-of-memory error before it: a driver reset or
+     * the browser's GPU process restarting (after a crash elsewhere, a driver update, sleep) does
+     * that too, so loading tries once more before stepping down.
+     */
+    readonly lostOnly = false,
+  ) {
+    super(message);
+  }
 }
 
 export function isOutOfMemory(err: unknown): err is OutOfMemoryError {
@@ -92,8 +108,14 @@ export function isOutOfMemory(err: unknown): err is OutOfMemoryError {
  * browser) says memory ran out or the graphics device was lost.
  */
 export function looksLikeOutOfMemory(message: string): boolean {
-  return OUT_OF_MEMORY.test(message);
+  return OUT_OF_MEMORY.test(message) || DEVICE_LOST.test(message);
+}
+
+/** Whether such a message says only that the graphics device was lost, not that memory ran out. */
+export function looksLikeDeviceLostOnly(message: string): boolean {
+  return DEVICE_LOST.test(message) && !OUT_OF_MEMORY.test(message);
 }
 
 const OUT_OF_MEMORY =
-  /out[ -]?of[ -]?memory|\boom\b|allocation failed|(failed to|could not|cannot) allocate|bad_alloc|cannot enlarge memory|device (was |is |has been )?lost|devicelost|not enough memory|insufficient memory/i;
+  /out[ -]?of[ -]?memory|\boom\b|allocation failed|(failed to|could not|cannot) allocate|bad_alloc|cannot enlarge memory|not enough memory|insufficient memory/i;
+const DEVICE_LOST = /device (was |is |has been )?lost|devicelost/i;

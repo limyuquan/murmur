@@ -14,7 +14,7 @@
  */
 import { Backend, Engine, loadLiteRtLm, SamplerType } from '@litert-lm/core';
 import { MODEL_CACHE, readBlob } from '@/models/hub';
-import { looksLikeOutOfMemory } from '../errors';
+import { looksLikeDeviceLostOnly, looksLikeOutOfMemory } from '../errors';
 import { watchGpuDevices } from '../gpuwatch';
 import type { FromWorker, GenerationStats, ToWorker } from './messages';
 
@@ -24,7 +24,15 @@ export const LITERT_WASM_JS = 'litertlm_wasm_internal.js';
 type Conversation = Awaited<ReturnType<Engine['createConversation']>>;
 
 class Unavailable extends Error {}
-class MemoryFailure extends Error {}
+class MemoryFailure extends Error {
+  constructor(
+    message: string,
+    /** Only a lost device (errors.ts `OutOfMemoryError.lostOnly`). */
+    readonly lostOnly: boolean,
+  ) {
+    super(message);
+  }
+}
 
 /** The part of a worker's global scope the worker uses. */
 interface WorkerScope {
@@ -50,6 +58,7 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
       message: err instanceof Error ? err.message : String(err),
       ...(err instanceof Unavailable ? { unavailable: true } : {}),
       ...(err instanceof MemoryFailure ? { memory: true } : {}),
+      ...(err instanceof MemoryFailure && err.lostOnly ? { lost: true } : {}),
     });
 
   /**
@@ -61,8 +70,10 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
       gpu.record(`The graphics card ran out of memory (simulated, at ${stage}).`);
     }
     const seen = gpu.failure();
-    if (seen) return new MemoryFailure(seen);
-    if (err !== null && looksLikeOutOfMemory(message(err))) return new MemoryFailure(message(err));
+    if (seen) return new MemoryFailure(seen, gpu.lostOnly());
+    if (err !== null && looksLikeOutOfMemory(message(err))) {
+      return new MemoryFailure(message(err), looksLikeDeviceLostOnly(message(err)));
+    }
     return null;
   };
 
@@ -129,7 +140,15 @@ export function startLlmWorker(scope: WorkerScope = self as unknown as WorkerSco
     if (warmed) throw warmed;
     post({ type: 'ready', loadMs, warmupMs: Math.round(performance.now() - warm) });
     // Later: the engine gives its lines to Chrome's translator.
-    gpu.onFailure((text) => post({ type: 'error', id: null, message: text, memory: true }));
+    gpu.onFailure((text) =>
+      post({
+        type: 'error',
+        id: null,
+        message: text,
+        memory: true,
+        ...(gpu.lostOnly() ? { lost: true } : {}),
+      }),
+    );
   }
 
   async function run(m: Extract<ToWorker, { type: 'generate' }>): Promise<void> {

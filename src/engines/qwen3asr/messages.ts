@@ -58,4 +58,6 @@ export type FromWorker =
        * (`id` null after `ready`) later.
        */
       memory?: boolean;
+      /** With `memory`: only the device was lost (errors.ts `OutOfMemoryError.lostOnly`). */
+      lost?: boolean;
     };

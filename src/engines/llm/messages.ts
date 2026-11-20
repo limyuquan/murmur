@@ -48,4 +48,6 @@ export type FromWorker =
       unavailable?: boolean;
       /** Graphics (or WebAssembly) memory ran out, or the device was lost. */
       memory?: boolean;
+      /** With `memory`: only the device was lost (errors.ts `OutOfMemoryError.lostOnly`). */
+      lost?: boolean;
     };
