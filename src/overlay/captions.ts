@@ -88,6 +88,8 @@ interface Track {
   /** Last text shown as final, to notice revisions. */
   lastFinal: string | null;
   revision: number;
+  /** Some earlier version was still changing (it was seen growing, if partials show). */
+  grew: boolean;
 }
 
 interface Entry {
@@ -98,8 +100,11 @@ interface Entry {
   doneAt: number | null;
   /** Pages of the main line for the last fit, with the reading time of each. */
   pages: { key: string; pages: string[][]; times: number[] } | null;
-  /** Rows of the finished original line for the last fit (laying it out is costly). */
-  original: { key: string; rows: string[] } | null;
+  /**
+   * Pages of the finished original line for the last fit (laying it out is costly), and when
+   * each after the first turns (ms; empty: shown as one page).
+   */
+  original: { key: string; pages: string[][]; turns: number[] } | null;
   /** When the cue last changed. */
   updatedAt: number;
   /** Stays at least until then (a cue timed on the video: to the end of its speech). */
@@ -227,6 +232,7 @@ export class CaptionStore {
           consider(t);
         }
       }
+      for (const t of e.original?.turns ?? []) consider(t);
     }
     return next;
   }
@@ -311,19 +317,48 @@ export class CaptionStore {
     } else if (role === 'main') {
       rows = this.pageAt(e, t, now);
     } else {
-      rows = this.originalRows(e, t, fit);
+      rows = this.originalRows(e, t, fit, now, view);
     }
     return { role, rows, lang: t.lang, final: t.final, tag, revision: t.revision };
   }
 
-  /** The finished original line's rows: laid out once per text and fit, then reused. */
-  private originalRows(e: Entry, t: Track, fit: FitOptions): string[] {
-    const key = this.fitCacheKey(t, fit);
+  /**
+   * The finished original line's rows: balanced into two rows when it fits. A longer one that was
+   * seen growing keeps its last page (what was just read as it grew); one that arrived finished
+   * (a lookahead line, or partials hidden) pages from its first, in step with the translation:
+   * its pages share the translation's paging time by length (their own reading time without
+   * one). Laid out once per text and fit, then reused.
+   */
+  private originalRows(
+    e: Entry,
+    t: Track,
+    fit: FitOptions,
+    now: number,
+    view: ViewOptions,
+  ): string[] {
+    const fromStart = !(t.grew && view.showPartials);
+    const key = `${this.fitCacheKey(t, fit)}\u0000${fromStart}`;
     if (e.original?.key !== key) {
-      const rows = balancedLines(t.text, fit) ?? paginate(t.text, fit).at(-1) ?? [];
-      e.original = { key, rows };
+      const balanced = balancedLines(t.text, fit);
+      const pages = balanced ? [balanced] : paginate(t.text, fit);
+      e.original = { key, pages: fromStart ? pages : pages.slice(-1), turns: [] };
     }
-    return e.original.rows;
+    const { pages } = e.original;
+    if (pages.length <= 1) return pages[0] ?? [];
+    const own = pages.map((p) => readingMs(p.join(' ')));
+    const main = this.mainTrack(e, view);
+    const shared = main && main !== t && main.final && e.pages ? sum(e.pages.times) : null;
+    const total = shared ?? sum(own);
+    const scale = total / Math.max(1, sum(own));
+    let at = (shared !== null ? main?.finalAt : null) ?? t.finalAt ?? now;
+    const turns: number[] = [];
+    for (const ms of own.slice(0, -1)) {
+      at += ms * scale;
+      turns.push(at);
+    }
+    e.original.turns = turns;
+    const index = turns.findIndex((turn) => now < turn);
+    return pages[index < 0 ? pages.length - 1 : index] ?? [];
   }
 
   private fitCacheKey(t: Track, fit: FitOptions): string {
@@ -362,6 +397,7 @@ function track(prev: Track | null, t: CueText | null, now: number): Track | null
     finalAt: t.final ? (sameFinal ? (prev?.finalAt ?? now) : now) : null,
     lastFinal: t.final ? text : (prev?.lastFinal ?? null),
     revision: (prev?.revision ?? 0) + (revised ? 1 : 0),
+    grew: (prev?.grew ?? false) || !t.final,
   };
 }
 

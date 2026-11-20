@@ -4,6 +4,7 @@
  * finished subtitles, and the clock that places live cues.
  */
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_VIEW } from '@/overlay/captions';
 import { MAX_MEDIA_CUES, MediaClock, MediaCues, share } from '@/overlay/mediacues';
 import type { Cue } from '@/pipeline/types';
 
@@ -184,5 +185,74 @@ describe('MediaClock', () => {
   it('measures overlap as a share of the first span', () => {
     expect(share({ start: 0, end: 2 }, { start: 1, end: 5 })).toBe(0.5);
     expect(share({ start: 0, end: 2 }, { start: 3, end: 5 })).toBe(0);
+  });
+});
+
+describe('MediaCues: a long line made ahead of time', () => {
+  const said =
+    '오늘은 여러분과 함께 정말 특별한 시간을 보내게 되어서 너무 기쁘고요, 앞으로도 계속 열심히 ' +
+    '하는 모습 보여드릴 테니까 많이 응원해 주세요 감사합니다';
+  const meant =
+    'I am so happy to spend such a special time with all of you today, and we will keep showing ' +
+    'you how hard we work, so please keep cheering for us, thank you so much everyone';
+  const long = (start: number, end: number): Cue => ({
+    ...cue('long', start, end),
+    source: { text: said, language: 'ko', final: true },
+    translation: { text: meant, language: 'en', final: true },
+  });
+  const view = { ...DEFAULT_VIEW, display: 'both' as const };
+  /** Rows of each line at media time `t`, by role. */
+  const rows = (m: MediaCues, t: number) => {
+    m.advance('v', t);
+    const lines = m.visible(t, view)[0]?.lines ?? [];
+    const of = (role: string) =>
+      lines
+        .find((l) => l.role === role)
+        ?.rows.join(' ')
+        .replace(/\s+/g, ' ');
+    return { original: of('original'), main: of('main') };
+  };
+  /** What each line showed, page by page, playing from `from` to `to` in 50 ms steps. */
+  const play = (m: MediaCues, from: number, to: number) => {
+    const pages = { original: [] as string[], main: [] as string[] };
+    for (let t = from; t <= to; t += 0.05) {
+      const r = rows(m, t);
+      for (const role of ['original', 'main'] as const) {
+        const text = r[role];
+        if (text && pages[role].at(-1) !== text) pages[role].push(text);
+      }
+    }
+    return pages;
+  };
+
+  it('shows every page of both lines, from the first, though the cue came long before', () => {
+    const m = new MediaCues();
+    m.advance('v', 0);
+    // Made 30 s ahead of its speech, as lookahead does.
+    m.add(long(30, 40));
+    expect(rows(m, 29.9)).toEqual({ original: undefined, main: undefined });
+    const pages = play(m, 29.9, 45);
+    expect(pages.original.length).toBeGreaterThan(1);
+    expect(pages.main.length).toBeGreaterThan(1);
+    expect(pages.original[0]).toMatch(/^오늘은/);
+    expect(pages.main[0]).toMatch(/^I am so happy/);
+    expect(pages.original.join(' ')).toBe(said);
+    expect(pages.main.join(' ')).toBe(meant);
+  });
+
+  it('pages from when the cue showed, after a seek into it or when it arrives late', () => {
+    const seek = new MediaCues();
+    seek.add(long(30, 40));
+    // A seek to just after its start: its first page, as at its start.
+    expect(rows(seek, 30.5).original).toMatch(/^오늘은/);
+    expect(rows(seek, 30.5).main).toMatch(/^I am so happy/);
+
+    const late = new MediaCues();
+    late.advance('v', 33);
+    late.add(long(30, 40));
+    // Arrived 3 s into its speech: shown at once, from its first page.
+    expect(rows(late, 33).original).toMatch(/^오늘은/);
+    expect(rows(late, 33).main).toMatch(/^I am so happy/);
+    expect(play(late, 33, 48).original.join(' ')).toBe(said);
   });
 });

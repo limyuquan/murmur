@@ -171,6 +171,53 @@ describe('CaptionStore rows', () => {
   });
 });
 
+describe('CaptionStore: a long original line', () => {
+  const said =
+    'Nous devrions partir maintenant. Le dernier train part à minuit et je ne veux vraiment pas le ' +
+    'rater encore une fois, parce que le bus de nuit met presque deux heures et s’arrête partout.';
+  const meant =
+    'We should go now. The last train leaves at midnight and I really do not want to miss it again, ' +
+    'because the night bus takes almost two hours and stops everywhere.';
+  const original = (s: CaptionStore, now: number, patch: Partial<ViewOptions> = {}) =>
+    s
+      .visible(now, view(patch))[0]
+      ?.lines.find((l) => l.role === 'original')
+      ?.rows.join(' ');
+
+  it('pages from its first page when it arrived finished, in step with the translation', () => {
+    const s = new CaptionStore();
+    s.apply(
+      cue('a', 1, {
+        source: { text: said, language: 'fr', final: true },
+        translation: { text: meant, language: 'en', final: true },
+      }),
+      1000,
+    );
+    const seen: string[] = [];
+    let now = 1000;
+    for (let i = 0; i < 20; i++) {
+      const rows = original(s, now);
+      if (rows && rows !== seen.at(-1)) seen.push(rows);
+      const next = s.nextChange(now);
+      if (next === null) break;
+      now = next;
+    }
+    // Every word of the original was on screen, from the first.
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen[0]).toMatch(/^Nous devrions partir/);
+    expect(seen.join(' ').replace(/\s+/g, ' ')).toBe(said);
+  });
+
+  it('keeps its last page when it was seen growing (the start was read as it grew)', () => {
+    const s = new CaptionStore();
+    s.apply(cue('a', 1, partialSource(said.slice(0, 60))), 0);
+    s.apply(cue('a', 1, { source: { text: said, language: 'fr', final: true } }), 500);
+    expect(original(s, 500)).toMatch(/partout\.$/);
+    // Partials hidden: it was never seen growing, so it pages from the start.
+    expect(original(s, 500, { showPartials: false })).toMatch(/^Nous devrions partir/);
+  });
+});
+
 describe('CaptionStore timing', () => {
   it('holds a finished cue for its reading time and a linger, then drops it', () => {
     const s = new CaptionStore();

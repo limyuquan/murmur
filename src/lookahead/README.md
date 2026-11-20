@@ -107,7 +107,9 @@ tee.ts ──MessagePort──▶ relay.ts ──▶ overlay ──runtime port�
   in media seconds) and no epoch times.
 - `src/overlay/mediacues.ts` keeps cues by media time and shows them with the same layout rules
   as live lines (`CaptionStore`, run on media milliseconds): from the cue's start, held at least
-  to the end of its speech. The controller redraws on every animation frame while playing (only
+  to the end of its speech. A long line pages from its first page at its start (or from when it
+  shows, arriving late or after a seek into it); the original pages in step with the
+  translation, since a lookahead line arrives finished and was never seen growing. The controller redraws on every animation frame while playing (only
   when something is due) and on seek, pause, rate change and `timeupdate`, at
   `t = currentTime − lag`. The session plays captured tab audio back late (60–130 ms measured,
   codec-dependent; the test tone has no lag): `calibrate.ts` starts at 0.12 s and measures it per
