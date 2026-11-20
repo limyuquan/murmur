@@ -247,7 +247,9 @@ pnpm test:e2e       # e2e build + Playwright with bundled Chromium
    before when the new line ends a sentence that line left open and its translation is still on
    screen (once per line); it translates that line again with the new one after it, and the
    overlay fades in the new translation if it changed materially. The next line never waits
-   for a revision: it goes first and stops it.
+   for a revision: it goes first and stops it. A word or two heard as a language expected
+   nowhere (not spoken, not the target, not on a line shown earlier in the session) is noise,
+   unless the engine is sure of the language, and isn't shown (`src/pipeline/stray.ts`).
 5. Each change to a segment is sent as a whole `Cue` over the overlay's port. The overlay replaces
    it by id and lays it out (`src/overlay/linebreak.ts`, `captions.ts`): at most two segments,
    two rows per line, growing text filled so it never jumps, finished text balanced or paged and

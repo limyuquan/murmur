@@ -683,3 +683,102 @@ function recordingTranslator(requests: TranslationRequest[]): TranslationEngine 
     },
   };
 }
+
+describe('Pipeline: stray lines (a word or two of noise in a language nobody speaks here)', () => {
+  /** Like `handAsr`, with the language's confidence and the speech's length given per line. */
+  function strayAsr() {
+    const { asr } = handAsr();
+    const sessions: AsrSessionOptions[] = [];
+    const create = asr.createSession.bind(asr);
+    asr.createSession = (options) => {
+      sessions.push(options);
+      return create(options);
+    };
+    let n = 0;
+    let at = 0;
+    const say = (text: string, tag: string, seconds: number, confidence = 0.6, final = true) => {
+      const id = `s${++n}`;
+      sessions[0]?.onResult({
+        segmentId: id,
+        final,
+        text,
+        language: { tag, confidence },
+        startSample: at,
+        endSample: at + Math.round(seconds * RATE),
+      });
+      at += Math.round((seconds + 1) * RATE);
+      return id;
+    };
+    return { asr, say };
+  }
+  const shown = (cues: Cue[]) =>
+    latest(cues)
+      .filter((c) => c.source.text !== '')
+      .map((c) => `${c.source.language}:${c.source.text}`);
+
+  it('drops one-word lines in a language not spoken or heard, unless the engine is sure', async () => {
+    const { asr, say } = strayAsr();
+    const { pipeline, cues } = setup({ asr, spokenLanguages: ['ko'] });
+    say('오늘 진짜 재밌었어요 여러분', 'ko', 2.4);
+    say('想。', 'zh', 0.5);
+    say('Terusikalah.', 'ms', 0.9);
+    say('ครับ', 'th', 1.5);
+    say('Bonjour.', 'fr', 0.6, 0.97);
+    await pipeline.close();
+    expect(shown(cues)).toEqual(['ko:오늘 진짜 재밌었어요 여러분', 'fr:Bonjour.']);
+    // Never translated, and a stray's partial doesn't stay up either.
+    const stray = latest(cues).find((c) => c.source.language === 'zh');
+    expect(stray?.source).toEqual({ text: '', language: 'zh', final: true });
+    expect(stray?.translation).toBeNull();
+  });
+
+  it('keeps short lines in a spoken language, the target, or one already heard', async () => {
+    const { asr, say } = strayAsr();
+    const { pipeline, cues } = setup({ asr, spokenLanguages: ['ko', 'ja'] });
+    say('네.', 'ko', 0.4);
+    say('はい。', 'ja', 0.4);
+    say('Yes.', 'en', 0.4);
+    // Not spoken, but a long line first: heard now, so its short lines show too.
+    say('Ahora vamos a cantar la siguiente canción juntos', 'es', 3);
+    say('¡Vamos!', 'es', 0.5);
+    await pipeline.close();
+    expect(shown(cues)).toEqual([
+      'ko:네.',
+      'ja:はい。',
+      'en:Yes.',
+      'es:Ahora vamos a cantar la siguiente canción juntos',
+      'es:¡Vamos!',
+    ]);
+  });
+
+  it('keeps a switch from Korean to Japanese and back, short lines included', async () => {
+    const { asr, say } = strayAsr();
+    // Only Korean chosen: Japanese is unexpected until it has been heard on a full line.
+    const { pipeline, cues } = setup({ asr, spokenLanguages: ['ko'] });
+    say('이번에는 일본 팬분들께 인사드릴게요', 'ko', 2.5);
+    say('皆さん、今日は来てくれて本当にありがとうございます', 'ja', 3);
+    say('はい。', 'ja', 0.4);
+    say('네.', 'ko', 0.4);
+    say('ありがとう。', 'ja', 0.6);
+    await pipeline.close();
+    expect(shown(cues)).toEqual([
+      'ko:이번에는 일본 팬분들께 인사드릴게요',
+      'ja:皆さん、今日は来てくれて本当にありがとうございます',
+      'ja:はい。',
+      'ko:네.',
+      'ja:ありがとう。',
+    ]);
+  });
+
+  it('shares the languages heard between a session’s pipelines (live and lookahead)', async () => {
+    const heardLanguages = new Set<string>();
+    const live = strayAsr();
+    const ahead = strayAsr();
+    const a = setup({ asr: live.asr, spokenLanguages: ['ko'], heardLanguages });
+    const b = setup({ asr: ahead.asr, spokenLanguages: ['ko'], heardLanguages });
+    live.say('皆さん、今日は来てくれて本当にありがとうございます', 'ja', 3);
+    ahead.say('はい。', 'ja', 0.4);
+    await Promise.all([a.pipeline.close(), b.pipeline.close()]);
+    expect(shown(b.cues)).toEqual(['ja:はい。']);
+  });
+});

@@ -41,10 +41,11 @@ import type {
 import { UNKNOWN_LANGUAGE } from '@/engines/types';
 import { LINGER_MS } from '@/overlay/captions';
 import { readingMs } from '@/overlay/linebreak';
-import { sameLanguage } from './language';
+import { primaryLanguage, sameLanguage } from './language';
 import { type DetectLanguages, detectForeign, foreignPart } from './mixed';
 import { type SegmentEvent, Segmenter, type SegmenterOptions } from './segmenter';
 import { isSentenceEnd } from './sentence';
+import { isStray } from './stray';
 import type { Cue } from './types';
 import { type AsyncVoiceActivityDetector, EnergyVad } from './vad';
 import { VadStage } from './vadstage';
@@ -106,6 +107,12 @@ export interface PipelineOptions {
    * (`lookaheadBudgetMs`) instead of a live line's budget.
    */
   untilShownMs?(start: number): number;
+  /**
+   * Primary tags of languages on lines shown so far in the session, shared by its pipelines (live
+   * and lookahead); filled in as lines are shown. A short line in a language expected nowhere is
+   * a stray (stray.ts) and isn't shown. Default: this pipeline's own.
+   */
+  heardLanguages?: Set<string>;
 }
 
 export const TRANSLATION_TIMEOUT_MS = 10_000;
@@ -168,9 +175,11 @@ export class Pipeline {
   private seq = 0;
   /** End of the audio the segmenter has seen (after the speech detector, if any). */
   private scanned = 0;
+  private readonly heard: Set<string>;
 
   constructor(private readonly options: PipelineOptions) {
     this.now = options.now ?? Date.now;
+    this.heard = options.heardLanguages ?? new Set();
     this.ownSegments = options.asr.info.audioInput === 'track';
     const model = this.ownSegments ? null : (options.vad ?? null);
     if (model) {
@@ -371,8 +380,21 @@ export class Pipeline {
     const { cue } = state;
     const language = result.language?.tag ?? this.options.sourceLanguage ?? UNKNOWN_LANGUAGE;
     this.place(cue, result.startSample, result.endSample);
-    cue.source = { text: result.text, language, final: result.final };
     const target = this.options.targetLanguage;
+    if (this.isStray(result)) {
+      // Noise heard as a language nobody speaks here: not shown (an empty line clears what a
+      // partial put up), not translated, not context for later lines.
+      state.preview?.abort();
+      cue.source = { text: '', language, final: result.final };
+      cue.translation = null;
+      cue.untranslated = 'pending';
+      this.emit(cue);
+      return;
+    }
+    cue.source = { text: result.text, language, final: result.final };
+    if (result.final && result.text.trim() !== '' && language !== UNKNOWN_LANGUAGE) {
+      this.heard.add(primaryLanguage(language));
+    }
 
     // Heard as the target language: translated only when part of it is in another one.
     let from = language;
@@ -411,6 +433,23 @@ export class Pipeline {
       state.preview = new AbortController();
       void this.translate(state, result.text, from, false, state.preview.signal);
     }
+  }
+
+  /** A short line in a language expected nowhere in this session (stray.ts). */
+  private isStray(result: AsrResult): boolean {
+    if (result.text.trim() === '') return false;
+    return isStray({
+      text: result.text,
+      language: result.language,
+      speechS: Math.max(0, result.endSample - result.startSample) / PIPELINE_SAMPLE_RATE,
+      // The language asked for, too (an engine that only echoes a hint "hears" it).
+      expected: [
+        ...(this.options.spokenLanguages ?? []),
+        this.options.targetLanguage,
+        ...(this.options.sourceLanguage ? [this.options.sourceLanguage] : []),
+      ],
+      heard: this.heard,
+    });
   }
 
   /**

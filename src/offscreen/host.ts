@@ -573,6 +573,8 @@ export class OffscreenHost {
         detectLanguages,
         translatePartials: config.translatePartials,
         track: running.capture?.track ?? null,
+        // The session's languages: a language heard live counts for lookahead too, and back.
+        heardLanguages: new Set<string>(),
       };
       running.pipelineOptions = shared;
       const pipeline = new Pipeline({
