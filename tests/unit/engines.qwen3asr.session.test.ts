@@ -111,4 +111,21 @@ describe('Qwen3-ASR session: a final heard as the target language', () => {
     expect(t.calls.filter((c) => c !== null)).toEqual([languageIds('ko')]);
     expect(t.finals().at(-1)?.text).toBe('깨끗한 브라이트 퓨처, but.');
   });
+
+  it('in a video plainly in the target language, decodes only every fifth line again', async () => {
+    // Spoken languages named, but the video is in the target: every line heard as it, surely.
+    const t = setup(() => ({ ...answer('A plain line.', 'en', -0.2), languageProb: 0.99 }), {
+      ko: answer('어', 'ko', -0.9),
+    });
+    for (let i = 0; i < 26; i++) t.line();
+    await t.session.close();
+    // Each line decoded (n), and again (A): the first 6 to tell, then one line in 5.
+    const pattern = t.calls.map((c) => (c ? 'A' : 'n')).join('');
+    const lines = pattern.replaceAll('A', '').length;
+    expect(lines).toBeGreaterThan(11);
+    const expected = Array.from({ length: lines }, (_, i) =>
+      i < 6 || (i - 5) % 5 === 0 ? 'nA' : 'n',
+    ).join('');
+    expect(pattern).toBe(expected);
+  });
 });

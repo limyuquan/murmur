@@ -211,13 +211,41 @@ export function endsInLoop(ids: readonly number[], from = 0): boolean {
 // ("Get a bright future"), and such a line is shown untranslated. Decoded again in the speaker's
 // own language, it often keeps both parts ("깨끗한 브라이트 퓨처", "근데 you're supposed to"): the
 // second answer is kept when the model is surer of it and it says about as much (a decode in the
-// other language sometimes leaves out the target-language part). Measured on real K-pop audio
-// with Korean mixed with English: murmur-notes bench/results/summary_mixed_lines.md.
+// other language sometimes leaves out the target-language part). Measured on real recordings of
+// speakers mixing two languages.
+//
+// A video plainly in the target language gains nothing from it and would pay for every line
+// twice: once most recent finals were plainly the target (`decodeAgain`), only every
+// `SPOT_CHECK_EVERY`th such line is decoded again, so a change of speaker is still noticed.
 
 /** The second answer must cover at least this share of the first one's spoken length. */
 export const SECOND_MIN_LENGTH = 0.8;
 /** Finals heard before the most heard language counts as the session's own. */
 export const MAIN_MIN_FINALS = 4;
+/** Recent finals that say whether the session is plainly in the target language. */
+export const RECENT_FINALS = 10;
+/** Of those, how many must have been heard before they say anything. */
+export const RECENT_MIN_FINALS = 6;
+/** The share of them plainly in the target that makes it the session's language. */
+export const TARGET_SHARE = 0.8;
+/** The model's language probability above which a line was plainly in its language. */
+export const PLAIN_PROB = 0.9;
+/** In a session plainly in the target, one line in this many heard as the target is decoded again. */
+export const SPOT_CHECK_EVERY = 5;
+
+/**
+ * Whether to decode a line heard as the target language again, in the other language: `recent`
+ * says, for the session's last finals (oldest first), whether each was plainly the target
+ * (heard as it, with at least `PLAIN_PROB`, and no second answer kept); `skipped`: such lines not
+ * decoded again since the last one that was.
+ */
+export function decodeAgain(recent: readonly boolean[], skipped: number): boolean {
+  const last = recent.slice(-RECENT_FINALS);
+  if (last.length < RECENT_MIN_FINALS) return true;
+  const plain = last.filter(Boolean).length;
+  if (plain < TARGET_SHARE * last.length) return true;
+  return skipped + 1 >= SPOT_CHECK_EVERY;
+}
 
 /** Kana, Han and Hangul syllables. */
 const WIDE_CHAR = /[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]/gu;

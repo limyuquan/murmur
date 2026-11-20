@@ -37,7 +37,16 @@ import type {
 import type { DecodeJob, SchedulerOptions } from '../whisper/scheduler';
 import type { Qwen3Model } from './info';
 import type { DecodeOutput, FromWorker, ToWorker } from './messages';
-import { keepSecond, languageIds, modelLanguages, otherLanguage, rollbackPrefix } from './prompt';
+import {
+  decodeAgain,
+  keepSecond,
+  languageIds,
+  modelLanguages,
+  otherLanguage,
+  PLAIN_PROB,
+  RECENT_FINALS,
+  rollbackPrefix,
+} from './prompt';
 
 export interface Qwen3Options {
   scheduler?: SchedulerOptions;
@@ -209,6 +218,10 @@ export class Qwen3AsrEngine implements AsrEngine {
     const target = options.targetLanguage ? modelLanguages([options.targetLanguage])[0] : undefined;
     const named = modelLanguages(options.spokenLanguages ?? []);
     const heard = new Map<string, number>();
+    /** Recent finals: whether each was plainly the target language (`decodeAgain`). */
+    const recent: boolean[] = [];
+    /** Lines heard as the target not decoded again since the last that was. */
+    let skipped = 0;
     /** Each open segment's last partial answer, and its language probability. */
     const partials = new Map<string, { ids: number[]; languageProb: number }>();
     const rollback = this.options.rollback;
@@ -231,19 +244,32 @@ export class Qwen3AsrEngine implements AsrEngine {
           // A language forced by the prefix keeps the probability it was chosen with.
           let languageProb = prefix && last ? last.languageProb : out.languageProb;
           this.record(job, audioMs, prefix, out);
+          /** Decoding time, both decodes when there were two (the real-time factor counts both). */
+          let ms = out.ms;
+          const first = out;
+          let kept = false;
           if (other && again && out.language === target && out.text) {
-            const second = await this.queue.run(lane, () =>
-              this.decode(again, null, languageIds(other)),
-            );
-            this.record(job, audioMs, null, second);
-            if (keepSecond(out, second)) {
-              // The first decode's no-speech chance: the forced one never weighs it.
-              out = { ...second, noSpeechProb: out.noSpeechProb, ms: out.ms + second.ms };
-              languageProb = second.languageProb;
+            if (decodeAgain(recent, skipped)) {
+              skipped = 0;
+              const second = await this.queue.run(lane, () =>
+                this.decode(again, null, languageIds(other)),
+              );
+              this.record(job, audioMs, null, second);
+              ms += second.ms;
+              if (keepSecond(out, second)) {
+                // The first decode's no-speech chance: the forced one never weighs it.
+                out = { ...second, noSpeechProb: out.noSpeechProb };
+                languageProb = second.languageProb;
+                kept = true;
+              }
+            } else {
+              skipped++;
             }
           }
           if (job.kind === 'final' && out.text) {
             heard.set(out.language, (heard.get(out.language) ?? 0) + 1);
+            recent.push(first.language === target && first.languageProb >= PLAIN_PROB && !kept);
+            if (recent.length > RECENT_FINALS) recent.shift();
           }
           // A probe (decoded in full) is as good a base for the next partial.
           if (job.kind !== 'final' && out.text) {
@@ -255,7 +281,7 @@ export class Qwen3AsrEngine implements AsrEngine {
             languageProb,
             noSpeechProb: out.noSpeechProb,
             avgLogprob: out.avgLogprob,
-            ms: out.ms,
+            ms,
           };
         },
         forget: (segmentId) => partials.delete(segmentId),
