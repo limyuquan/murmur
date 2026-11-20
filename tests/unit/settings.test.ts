@@ -4,6 +4,7 @@ import {
   applyPatch,
   DEFAULT_SETTINGS,
   loadSettings,
+  MAX_DISMISSED,
   MAX_SPOKEN_FOR_CHROME,
   mergeSettings,
   readStoredSettings,
@@ -11,6 +12,7 @@ import {
   SETTINGS_LOCK,
   SETTINGS_VERSION,
   saveSettings,
+  siteFromInput,
   spokenLanguages,
   watchSettings,
 } from '@/settings/settings';
@@ -48,6 +50,46 @@ describe('mergeSettings', () => {
     const s = applyPatch(DEFAULT_SETTINGS, { overlay: { position: 'top' }, custom: { asr: 'x' } });
     expect(s.overlay).toEqual({ ...DEFAULT_SETTINGS.overlay, position: 'top' });
     expect(s.custom).toEqual({ ...DEFAULT_SETTINGS.custom, asr: 'x' });
+  });
+});
+
+describe('dismissed offers', () => {
+  it('are none by default, and older settings without them read as none', () => {
+    expect(DEFAULT_SETTINGS.dismissed).toEqual([]);
+    expect(readStoredSettings({ version: SETTINGS_VERSION, profile: 'best' }).dismissed).toEqual(
+      [],
+    );
+  });
+
+  it('keep strings only, each once, the newest when there are too many', () => {
+    const s = mergeSettings({ dismissed: ['better:a', 3, 'better:a', null, 'better:b'] });
+    expect(s.dismissed).toEqual(['better:a', 'better:b']);
+    const many = Array.from({ length: MAX_DISMISSED + 5 }, (_, i) => `k${i}`);
+    expect(mergeSettings({ dismissed: many }).dismissed).toEqual(many.slice(5));
+  });
+
+  it('are kept when stored', async () => {
+    await saveSettings((s) => ({ dismissed: [...s.dismissed, 'better:gemma'] }));
+    expect((await loadSettings()).dismissed).toEqual(['better:gemma']);
+  });
+});
+
+describe('siteFromInput', () => {
+  it('takes an address or a host name, without www.', () => {
+    expect(siteFromInput('https://www.video.example/watch?v=1')).toBe('video.example');
+    expect(siteFromInput('  Lectures.Example.org ')).toBe('lectures.example.org');
+    expect(siteFromInput('video.example/path')).toBe('video.example');
+    expect(siteFromInput('http://192.168.1.20:8080/')).toBe('192.168.1.20');
+    expect(siteFromInput('localhost')).toBe('localhost');
+  });
+
+  it('refuses what is not a web site', () => {
+    expect(siteFromInput('')).toBeNull();
+    expect(siteFromInput('video')).toBeNull();
+    expect(siteFromInput('two words.com')).toBeNull();
+    expect(siteFromInput('ftp://files.example.com')).toBeNull();
+    expect(siteFromInput('chrome://extensions')).toBeNull();
+    expect(siteFromInput('file:///home/x.mp4')).toBeNull();
   });
 });
 

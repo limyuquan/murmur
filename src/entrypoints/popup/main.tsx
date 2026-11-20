@@ -27,6 +27,6 @@ const param = new URLSearchParams(location.search).get('tab');
       ),
     (err: Error) => {
       root.textContent = err.message;
-      root.className = 'p-4 w-[340px] text-sm';
+      root.className = 'popup-error';
     },
   );

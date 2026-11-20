@@ -7,17 +7,20 @@ import { LOOKAHEAD_PENDING_KEY, type SessionStatus, type TabView } from '@/messa
 import { DOWNLOADS_KEY, type DownloadProgress } from '@/models/types';
 import { loadPosition, savePosition, watchPositions } from '@/settings/positions';
 import { lookaheadOn, type Settings, SIZE_PRESETS } from '@/settings/settings';
-import { Dot, Icon, Logo, ProgressBar, Segmented, Switch } from '@/ui/components';
-import { useSettings } from '@/ui/hooks';
+import { COMMANDS } from '@/shared/commands';
+import { Icon, Keys, Logo, ProgressBar, Segmented, State, Switch } from '@/ui/components';
+import { openShortcutSettings, useSettings, useShortcut } from '@/ui/hooks';
 import { listNames } from '@/ui/languages';
 import { SetupButtons } from '@/ui/setup';
 import {
   type BetterState,
+  betterKey,
   betterState,
   describeBetter,
   describeStatus,
   type FixAction,
   isOn,
+  type StatusLine,
 } from './status';
 
 function openOptions(section?: string): void {
@@ -95,7 +98,7 @@ function AheadRow({ view, settings }: { view: TabView; settings: Settings }) {
   const shown = pending?.on ?? on;
   return (
     <div data-testid="ahead">
-      <div className="flex h-9 items-center justify-between gap-3">
+      <div className="popup-row">
         <span id="ahead-label">Show subtitles ahead of time (beta)</span>
         <Switch
           checked={shown}
@@ -106,24 +109,23 @@ function AheadRow({ view, settings }: { view: TabView; settings: Settings }) {
         />
       </div>
       {pending?.asking && (
-        <p className="text-[12px] text-[var(--color-muted)]" data-testid="ahead-note">
-          Waiting for access to {site}…
+        <p className="popup-sub" data-testid="ahead-note">
+          <span>Waiting for access to {site}…</span>
         </p>
       )}
       {!pending && on && !view.lookahead.supported && (
-        <p className="text-[12px] text-[var(--color-muted)]">
-          Needs the Balanced or Best model size. Until then, subtitles come as they’re heard.
+        <p className="popup-sub">
+          <span>
+            Needs the Balanced or Best model size. Until then, subtitles come as they’re heard.
+          </span>
         </p>
       )}
       {!pending && changed && (
-        <p
-          className="flex items-center justify-between gap-3 text-[12px] text-[var(--color-muted)]"
-          data-testid="ahead-note"
-        >
+        <p className="popup-sub" data-testid="ahead-note">
           <span>{on ? 'Starts when the page reloads.' : 'Stops when the page reloads.'}</span>
           <button
             type="button"
-            className="link flex-none"
+            className="link"
             onClick={() => {
               void browser.tabs.reload(view.tabId);
               window.close();
@@ -134,8 +136,8 @@ function AheadRow({ view, settings }: { view: TabView; settings: Settings }) {
         </p>
       )}
       {problem && (
-        <p className="text-[12px] text-[var(--color-danger)]" data-testid="ahead-problem">
-          {problem}
+        <p className="popup-sub" data-tone="error" data-testid="ahead-problem">
+          <span className="tone-text">{problem}</span>
         </p>
       )}
     </div>
@@ -144,9 +146,19 @@ function AheadRow({ view, settings }: { view: TabView; settings: Settings }) {
 
 /**
  * A translation model the profile would use but runs without (Chrome's translator stands in):
- * a plain offer to download it, followed here while the popup is open.
+ * a plain offer to download it, followed here while the popup is open. "Not now" puts it away
+ * for good (`Settings.dismissed`); Settings still lists the model.
  */
-function BetterTranslations({ better }: { better: NonNullable<TabView['models']['better']> }) {
+function BetterTranslations({
+  better,
+  dismissed,
+  onDismiss,
+}: {
+  better: NonNullable<TabView['models']['better']>;
+  /** The person said "Not now" to this offer: it isn't made again. */
+  dismissed: boolean;
+  onDismiss(): void;
+}) {
   const [state, setState] = useState<BetterState>({ state: 'offer' });
   useEffect(() => {
     const apply = (progress: DownloadProgress) =>
@@ -168,19 +180,39 @@ function BetterTranslations({ better }: { better: NonNullable<TabView['models'][
       setState({ state: 'error', message: err instanceof Error ? err.message : String(err) }),
     );
   };
+  if (state.state === 'offer' && dismissed) return null;
   const line = describeBetter(better, state);
   return (
-    <div className="mt-3 ml-[18px]" data-testid="better">
-      <p className="text-[12px] text-[var(--color-muted)]">{line.text}</p>
-      {line.progress !== undefined && (
-        <div className="mt-1.5">
-          <ProgressBar value={line.progress} label={line.text} />
-        </div>
+    <div className="panel-extra" data-testid="better">
+      {state.state === 'done' ? (
+        <State tone="success" icon="check">
+          {line.text}
+        </State>
+      ) : (
+        <p
+          className={state.state === 'error' ? 't-small tone-text' : 't-small'}
+          data-tone={state.state === 'error' ? 'error' : undefined}
+        >
+          {line.text}
+        </p>
       )}
+      {line.progress !== undefined && <ProgressBar value={line.progress} label={line.text} />}
       {line.button && (
-        <button type="button" className="btn btn-sm mt-2" onClick={download}>
-          {line.button}
-        </button>
+        <div className="row g2">
+          <button type="button" className="btn btn-sm" onClick={download}>
+            <Icon name={state.state === 'error' ? 'reload' : 'download'} /> {line.button}
+          </button>
+          {state.state === 'offer' && (
+            <button
+              type="button"
+              className="btn btn-sm btn-quiet"
+              onClick={onDismiss}
+              data-testid="better-dismiss"
+            >
+              Not now
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -281,8 +313,8 @@ export function Popup({
     }
   };
 
-  const status = failure
-    ? { tone: 'error' as const, title: 'Something went wrong', detail: failure }
+  const status: StatusLine = failure
+    ? { tone: 'error', icon: 'alert', title: 'Something went wrong', detail: failure }
     : describeStatus(view);
   const activity =
     view.status.state === 'running' && view.thisTab ? view.status.activity : undefined;
@@ -299,24 +331,24 @@ export function Popup({
   const profileLabel = view.profile === 'custom' ? 'Custom' : PROFILES[view.profile].label;
 
   return (
-    <main className="flex w-[340px] flex-col text-[13px]">
-      <header className="flex items-center gap-2 px-4 pt-3 pb-2">
-        <Logo size={20} />
-        <h1 className="text-[14px] font-semibold tracking-[-0.01em]">Murmur</h1>
+    <main className="popup">
+      <header className="popup-head">
+        <Logo size={24} />
+        <h1 className="t-heading grow">Murmur</h1>
         <button
           type="button"
-          className="icon-btn ml-auto"
+          className="icon-btn"
           aria-label="Settings"
           title="Settings"
           onClick={() => openOptions()}
         >
-          <Icon name="gear" size={17} />
+          <Icon name="gear" size={20} />
         </button>
       </header>
 
-      <section className="card mx-3 p-3.5" aria-labelledby="toggle-label">
-        <div className="flex items-center justify-between gap-3">
-          <span id="toggle-label" className="text-[14px] font-semibold">
+      <section className="popup-main" aria-labelledby="toggle-label">
+        <div className="row between g3">
+          <span id="toggle-label" className="t-heading">
             Subtitles on this tab
           </span>
           <Switch
@@ -330,57 +362,63 @@ export function Popup({
           />
         </div>
 
-        <div className="mt-2.5 flex items-start gap-2.5" data-testid="status" aria-live="polite">
-          <span className="mt-[5px]">
-            <Dot tone={status.tone} />
+        <div className="panel" data-tone={status.tone} data-testid="status" aria-live="polite">
+          <span className="disc">
+            <Icon name={status.icon} size={20} />
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">{status.title}</p>
-            {status.detail && <p className="mt-0.5 text-[var(--color-muted)]">{status.detail}</p>}
+          <div className="panel-body">
+            <p className="t-label">{status.title}</p>
+            {status.detail && <p className="t-small">{status.detail}</p>}
+            {status.progress !== undefined && (
+              <ProgressBar value={status.progress} label={status.title} />
+            )}
+            {languages.length > 0 && (
+              <p className="t-small" data-testid="languages">
+                Heard: {listNames(languages)}
+              </p>
+            )}
+            {setup.length > 0 && (
+              <SetupButtons
+                key={setup.map((a) => a.id).join('|')}
+                actions={setup}
+                primaryFirst={!status.action}
+                // The session stopped for these: start it again once they're in.
+                onAllDone={failedForSetup ? () => void start() : undefined}
+              />
+            )}
+            {view.models.better && view.models.ready && !failedForSetup && (
+              <BetterTranslations
+                better={view.models.better}
+                dismissed={settings.dismissed.includes(betterKey(view.models.better))}
+                onDismiss={() => {
+                  const key = betterKey(
+                    view.models.better as NonNullable<TabView['models']['better']>,
+                  );
+                  update((current) => ({ dismissed: [...current.dismissed, key] }));
+                }}
+              />
+            )}
+            {status.action && (
+              <div className="panel-actions">
+                <button
+                  type="button"
+                  className={
+                    status.action.primary === false ? 'btn btn-sm' : 'btn btn-sm btn-primary'
+                  }
+                  onClick={() => fix(status.action as FixAction)}
+                  disabled={busy}
+                >
+                  {status.action.icon && <Icon name={status.action.icon} />}
+                  {status.action.label}
+                </button>
+              </div>
+            )}
           </div>
         </div>
-        {'progress' in status && status.progress !== undefined && (
-          <div className="mt-2.5 ml-[18px]">
-            <ProgressBar value={status.progress} label={status.title} />
-          </div>
-        )}
-        {languages.length > 0 && (
-          <p
-            className="mt-2 ml-[18px] text-[12px] text-[var(--color-muted)]"
-            data-testid="languages"
-          >
-            Heard: {listNames(languages)}
-          </p>
-        )}
-        {setup.length > 0 && (
-          <div className="mt-3 ml-[18px]">
-            <SetupButtons
-              key={setup.map((a) => a.id).join('|')}
-              actions={setup}
-              // The session stopped for these: start it again once they're in.
-              onAllDone={failedForSetup ? () => void start() : undefined}
-            />
-          </div>
-        )}
-        {view.models.better && view.models.ready && !failedForSetup && (
-          <BetterTranslations better={view.models.better} />
-        )}
-        {'action' in status && status.action && (
-          <div className="mt-3 ml-[18px]">
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => fix(status.action as FixAction)}
-              disabled={busy}
-            >
-              {status.action.label}
-            </button>
-          </div>
-        )}
       </section>
 
-      <section className="grid gap-1 px-4 py-3" aria-label="Quick settings">
-        <div className="flex h-9 items-center justify-between gap-3">
+      <section className="popup-rows" aria-label="Quick settings">
+        <div className="popup-row">
           <span id="original-label">Show the original too</span>
           <Switch
             checked={settings.overlay.display === 'both'}
@@ -389,7 +427,7 @@ export function Popup({
             testId="dual"
           />
         </div>
-        <div className="flex h-9 items-center justify-between gap-3">
+        <div className="popup-row">
           <span>Text size</span>
           <Segmented
             label="Text size"
@@ -406,27 +444,53 @@ export function Popup({
           <AheadRow view={view} settings={settings} />
         )}
         {moved && view.site && (
-          <div className="flex h-9 items-center justify-between gap-3">
-            <span className="text-[var(--color-muted)]">Moved on {view.site}</span>
+          <div className="popup-row">
+            <span className="muted">Moved on {view.site}</span>
             <button
               type="button"
-              className="link text-[12px]"
+              className="link"
               onClick={() => void savePosition(view.site as string, null)}
             >
               Reset position
             </button>
           </div>
         )}
+        <ShortcutRow />
       </section>
 
-      <footer className="divider flex items-center justify-between gap-3 px-4 py-2.5 text-[12px] text-[var(--color-muted)]">
-        <span className="truncate" title={`${view.engines.asr} · ${view.engines.translation}`}>
+      <footer className="popup-foot">
+        <span title={`${view.engines.asr} · ${view.engines.translation}`}>
           Models: {profileLabel}
         </span>
-        <button type="button" className="link flex-none" onClick={() => openOptions()}>
+        <button type="button" className="link" onClick={() => openOptions()}>
           All settings
         </button>
       </footer>
     </main>
+  );
+}
+
+/** The key that turns subtitles on or off here, as Chrome has it, and where to change it. */
+function ShortcutRow() {
+  const shortcut = useShortcut(COMMANDS.toggle);
+  if (shortcut === null) return null;
+  return (
+    <div className="popup-row" data-testid="shortcut">
+      <span id="shortcut-label">Keyboard shortcut</span>
+      <span className="row g3">
+        {shortcut ? <Keys shortcut={shortcut} /> : <span className="t-small muted">Not set</span>}
+        <button
+          type="button"
+          className="link t-small"
+          aria-label={shortcut ? 'Change the keyboard shortcut' : 'Set a keyboard shortcut'}
+          onClick={() => {
+            openShortcutSettings();
+            window.close();
+          }}
+        >
+          {shortcut ? 'Change' : 'Set'}
+        </button>
+      </span>
+    </div>
   );
 }

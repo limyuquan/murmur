@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  betterKey,
   betterState,
   describeBetter,
   describeStatus,
@@ -49,7 +50,11 @@ const running = (a?: SessionActivity, heard = true): SessionStatus => ({
 
 describe('describeStatus', () => {
   it('is off, and offers the download when models are missing', () => {
-    expect(describeStatus(view({ state: 'idle' }))).toEqual({ tone: 'off', title: 'Off' });
+    expect(describeStatus(view({ state: 'idle' }))).toEqual({
+      tone: 'off',
+      icon: 'off',
+      title: 'Off',
+    });
     const missing = describeStatus(
       view({ state: 'idle' }, { models: { ready: false, missingMB: 2400 } }),
     );
@@ -63,7 +68,10 @@ describe('describeStatus', () => {
     const ok = describeStatus(
       view({ ...running(activity()), translationNote: note } as SessionStatus),
     );
-    expect(ok).toMatchObject({ tone: 'ok', detail: `About 2.4 s behind the speech. ${note}` });
+    expect(ok).toMatchObject({
+      tone: 'listening',
+      detail: `About 2.4 s behind the speech. ${note}`,
+    });
     // A warning says its own thing.
     const behind = describeStatus(
       view({ ...running(activity({ behind: true })), translationNote: note } as SessionStatus),
@@ -90,7 +98,12 @@ describe('describeStatus', () => {
     const s = describeStatus(
       view({ state: 'loading', tabId: 1, sessionId: 's', progress: 0.5, detail: 'Loading model' }),
     );
-    expect(s).toMatchObject({ tone: 'busy', title: 'Loading model… 50%', progress: 0.5 });
+    expect(s).toMatchObject({
+      tone: 'translating',
+      icon: 'download',
+      title: 'Loading model… 50%',
+      progress: 0.5,
+    });
     const unknown = describeStatus(
       view({ state: 'loading', tabId: 1, sessionId: 's', progress: null, detail: 'Warming up' }),
     );
@@ -99,24 +112,34 @@ describe('describeStatus', () => {
 
   it('names the stage and the delay while running', () => {
     expect(describeStatus(view(running(activity({ stage: 'translating' }))))).toMatchObject({
-      tone: 'ok',
+      tone: 'translating',
+      icon: 'swap',
       title: 'Translating',
       detail: 'About 2.4 s behind the speech.',
     });
-    expect(describeStatus(view(running(undefined, false))).title).toBe('Listening');
+    expect(describeStatus(view(running(activity({ stage: 'transcribing' }))))).toMatchObject({
+      tone: 'translating',
+      icon: 'lines',
+      title: 'Transcribing',
+    });
+    expect(describeStatus(view(running(undefined, false)))).toMatchObject({
+      tone: 'listening',
+      icon: 'wave',
+      title: 'Listening',
+    });
   });
 
   it('explains silence that may be protected video', () => {
     const s = describeStatus(
       view(running(activity({ soundEver: false, silentMs: NO_SOUND_MS }), false)),
     );
-    expect(s).toMatchObject({ tone: 'warn', title: 'No sound from this tab' });
+    expect(s).toMatchObject({ tone: 'behind', icon: 'info', title: 'No sound from this tab' });
     expect(s.detail).toContain('DRM');
   });
 
   it('offers lighter models when falling behind', () => {
     const s = describeStatus(view(running(activity({ behind: true, delayMs: 7800 }))));
-    expect(s).toMatchObject({ tone: 'warn', title: 'Falling behind' });
+    expect(s).toMatchObject({ tone: 'behind', icon: 'clock', title: 'Falling behind' });
     expect(s.action).toEqual({ kind: 'profile', label: 'Use Light models', profile: 'light' });
     const light = describeStatus(view(running(activity({ behind: true })), { profile: 'light' }));
     expect(light.action).toBeUndefined();
@@ -142,7 +165,7 @@ describe('describeStatus', () => {
       ],
     } as SessionStatus;
     expect(describeStatus(view(withSetup))).toMatchObject({
-      tone: 'warn',
+      tone: 'behind',
       title: 'Some lines need a download',
     });
   });
@@ -150,7 +173,7 @@ describe('describeStatus', () => {
   it('says when speech recognition stopped working', () => {
     const status = { ...running(activity()), problems: ['Speech recognition (fr-FR) stopped.'] };
     expect(describeStatus(view(status as SessionStatus))).toMatchObject({
-      tone: 'warn',
+      tone: 'behind',
       title: 'Speech recognition stopped working',
       detail: expect.stringContaining('(fr-FR) stopped.'),
     });
@@ -187,9 +210,9 @@ describe('describeStatus', () => {
     expect(err('busy').action).toMatchObject({ kind: 'retry' });
     expect(err('model')).toMatchObject({
       title: 'A model didn’t load',
-      action: { kind: 'settings', label: 'Models' },
+      action: { kind: 'settings', label: 'Models', primary: false },
     });
-    expect(err('setup')).toMatchObject({ tone: 'warn' });
+    expect(err('setup')).toMatchObject({ tone: 'behind' });
     expect(err('setup').action).toBeUndefined();
     const missing = describeStatus(
       view({
@@ -203,9 +226,24 @@ describe('describeStatus', () => {
     );
     expect(missing).toMatchObject({
       title: 'The model isn’t downloaded',
-      action: { kind: 'settings', label: 'Download', section: 'models' },
+      action: { kind: 'settings', label: 'Download', section: 'models', icon: 'download' },
     });
-    expect(err('anything')).toMatchObject({ tone: 'error', detail: 'm' });
+    expect(err('anything')).toMatchObject({
+      tone: 'error',
+      icon: 'alert',
+      detail: 'm',
+      action: { kind: 'retry', icon: 'reload' },
+    });
+  });
+});
+
+describe('betterKey', () => {
+  it('names the offer by its models, in any order', () => {
+    const a = { ids: ['b', 'a'], label: 'x', sizeMB: 1 };
+    const b = { ids: ['a', 'b'], label: 'y', sizeMB: 2 };
+    expect(betterKey(a)).toBe('better:a+b');
+    expect(betterKey(b)).toBe(betterKey(a));
+    expect(betterKey({ ids: ['c'], label: 'z', sizeMB: 1 })).not.toBe(betterKey(a));
   });
 });
 

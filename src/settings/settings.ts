@@ -90,6 +90,11 @@ export interface Settings {
   overlay: OverlaySettings;
   /** Subtitles ahead of time (beta): see src/lookahead/README.md. */
   lookahead: LookaheadSettings;
+  /**
+   * Offers the person answered "Not now" to, by key (`better:<model ids>` for the popup's offer of
+   * a better translation model), so they aren't made again.
+   */
+  dismissed: string[];
 }
 
 export interface LookaheadSettings {
@@ -124,7 +129,11 @@ export const DEFAULT_SETTINGS: Settings = {
     avoidControls: true,
   },
   lookahead: { sites: [], off: false },
+  dismissed: [],
 };
+
+/** Most dismissed offers kept. */
+export const MAX_DISMISSED = 20;
 
 /** Most sites with lookahead on. */
 export const MAX_LOOKAHEAD_SITES = 100;
@@ -217,7 +226,33 @@ export function mergeSettings(stored: unknown, base: Settings = DEFAULT_SETTINGS
         : d.lookahead.sites,
       off: bool(l.off, d.lookahead.off),
     },
+    dismissed: Array.isArray(s.dismissed)
+      ? [
+          ...new Set(
+            s.dismissed.filter((x): x is string => typeof x === 'string' && x.length <= 200),
+          ),
+        ].slice(-MAX_DISMISSED)
+      : d.dismissed,
   };
+}
+
+/**
+ * The site key (host name, `www.` dropped) for what the person typed: an address or a host name.
+ * Null when it isn't one (only http and https sites; a single-label name only for `localhost`).
+ */
+export function siteFromInput(text: string): string | null {
+  const t = text.trim().toLowerCase();
+  if (!t || /\s/.test(t)) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(t) ? t : `https://${t}`);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(url.protocol)) return null;
+  const host = url.hostname.replace(/^www\./, '');
+  if (!SITE.test(host) || host.startsWith('.') || host.endsWith('.')) return null;
+  return host.includes('.') || host === 'localhost' ? host : null;
 }
 
 /** Whether lookahead is on for `site`. */

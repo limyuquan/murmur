@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Availability } from '@/engines/chrome/api';
 import { runSetupAction, setupState } from '@/engines/chrome/setup';
 import type { SetupAction } from '@/engines/types';
-import { Icon, ProgressBar } from './components';
+import { Icon, ProgressBar, State } from './components';
 
 export type PackState =
   | { state: Availability }
@@ -88,7 +88,7 @@ export function usePacks(
   return [states, run];
 }
 
-/** One row per pack: what it is, its state, and Download when it needs one. */
+/** One row per pack, in the model list's columns: what it is, its state, Download if needed. */
 export function PackRow({
   action,
   state,
@@ -105,17 +105,17 @@ export function PackRow({
   let button: React.ReactNode = null;
   switch (state?.state) {
     case undefined:
-      status = <span className="text-[var(--color-muted)]">Checking…</span>;
+      status = <span className="t-small muted">Checking…</span>;
       break;
     case 'available':
       status = (
-        <span className="inline-flex items-center gap-1 text-[var(--color-accent)]">
-          <Icon name="check" size={14} /> Downloaded
-        </span>
+        <State tone="success" icon="check">
+          Downloaded
+        </State>
       );
       break;
     case 'downloadable':
-      status = <span className="text-[var(--color-muted)]">Not downloaded</span>;
+      status = <span className="t-small muted">Not downloaded</span>;
       button = (
         <button
           type="button"
@@ -123,7 +123,7 @@ export function PackRow({
           onClick={() => run(action)}
           aria-label={action.label}
         >
-          <Icon name="download" size={14} /> Download
+          <Icon name="download" /> Download
         </button>
       );
       break;
@@ -131,45 +131,44 @@ export function PackRow({
     case 'running': {
       const fraction = state.state === 'running' ? state.fraction : null;
       status = (
-        <span className="flex min-w-[140px] flex-col gap-1">
-          <span className="text-[var(--color-muted)]">
+        <div>
+          <span className="t-small muted num">
             {fraction === null
               ? 'Chrome is downloading it…'
               : `Downloading… ${Math.round(fraction * 100)}%`}
           </span>
           <ProgressBar value={fraction} label={`Downloading ${name}`} />
-        </span>
+        </div>
       );
       break;
     }
     case 'unavailable':
-      status = <span className="text-[var(--color-muted)]">Not offered by this browser</span>;
+      status = <span className="t-small muted">Not offered by this browser</span>;
       break;
     case 'failed':
-      status = <span className="text-[var(--color-danger)]">{state.message}</span>;
+      status = (
+        <span className="state top" data-tone="error">
+          {state.message}
+        </span>
+      );
       button = (
         <button type="button" className="btn btn-sm" onClick={() => run(action)}>
-          Try again
+          <Icon name="reload" /> Try again
         </button>
       );
       break;
   }
   return (
-    <li
-      className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${compact ? 'py-2' : 'py-3'}`}
-      data-testid={`pack-${action.id}`}
-    >
-      {!compact && (
-        <span className="grid size-8 flex-none place-items-center rounded-lg bg-[var(--color-sunken)] text-[var(--color-muted)]">
-          <Icon name={action.kind === 'speech-pack' ? 'speech' : 'globe'} />
-        </span>
-      )}
-      <span className="min-w-[160px] flex-1">
-        <span className="block font-medium first-letter:uppercase">{name}</span>
-        {!compact && <span className="block text-[12px] text-[var(--color-muted)]">By Chrome</span>}
+    <li className={compact ? 'model-row compact' : 'model-row'} data-testid={`pack-${action.id}`}>
+      <span className="tile">
+        <Icon name={action.kind === 'speech-pack' ? 'wave' : 'globe'} />
       </span>
-      <span className="text-[13px]">{status}</span>
-      {button && <span className="ml-auto">{button}</span>}
+      <div>
+        <p className="t-label first-up">{name}</p>
+        <p className="t-caption muted">By Chrome</p>
+      </div>
+      <div>{status}</div>
+      <div className="actions">{button}</div>
     </li>
   );
 }
@@ -177,13 +176,16 @@ export function PackRow({
 /**
  * Buttons for the downloads a session asked for (popup): one per action, each showing its
  * progress once clicked. `onAllDone` runs when every listed pack is on disk after a click here.
+ * `primaryFirst`: the first pack still to download is the view's primary action.
  */
 export function SetupButtons({
   actions,
   onAllDone,
+  primaryFirst,
 }: {
   actions: readonly SetupAction[];
   onAllDone?: (() => void) | undefined;
+  primaryFirst?: boolean;
 }) {
   const [states, run] = usePacks(actions);
   const started = useRef(false);
@@ -200,25 +202,34 @@ export function SetupButtons({
     started.current = true;
     run(action);
   };
+  const todo = (s: PackState | undefined) =>
+    s?.state !== 'available' &&
+    s?.state !== 'running' &&
+    s?.state !== 'downloading' &&
+    s?.state !== 'unavailable';
+  const primaryId = primaryFirst ? actions.find((a) => todo(states[a.id]))?.id : undefined;
+  const plain = (label: string) => {
+    const name = label.replace(/^Download /, '');
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
   return (
-    <ul className="grid gap-2" data-testid="setup-actions">
+    <ul className="panel-actions stretch" data-testid="setup-actions">
       {actions.map((a) => {
         const s = states[a.id];
         if (s?.state === 'available') {
           return (
-            <li
-              key={a.id}
-              className="flex items-center gap-1.5 text-[12px] text-[var(--color-accent)]"
-            >
-              <Icon name="check" size={13} /> {a.label.replace(/^Download /, '')}: downloaded
+            <li key={a.id}>
+              <State tone="success" icon="check">
+                {plain(a.label)}: downloaded
+              </State>
             </li>
           );
         }
         if (s?.state === 'running' || s?.state === 'downloading') {
           const fraction = s.state === 'running' ? s.fraction : null;
           return (
-            <li key={a.id} className="grid gap-1">
-              <span className="text-[12px] text-[var(--color-muted)]">
+            <li key={a.id} className="stretch-item">
+              <span className="t-small muted num">
                 {a.label.replace(/^Download/, 'Downloading')}
                 {fraction !== null && ` · ${Math.round(fraction * 100)}%`}
               </span>
@@ -228,22 +239,26 @@ export function SetupButtons({
         }
         if (s?.state === 'unavailable') {
           return (
-            <li key={a.id} className="text-[12px] text-[var(--color-muted)]">
-              {a.label.replace(/^Download /, '')}: Chrome doesn’t offer this on this device.
+            <li key={a.id} className="t-small muted">
+              {plain(a.label)}: Chrome doesn’t offer this on this device.
             </li>
           );
         }
         return (
-          <li key={a.id} className="grid gap-1">
+          <li key={a.id}>
             <button
               type="button"
-              className="btn btn-sm btn-wrap justify-self-start"
+              className={
+                a.id === primaryId ? 'btn btn-sm btn-wrap btn-primary' : 'btn btn-sm btn-wrap'
+              }
               onClick={() => click(a)}
             >
-              <Icon name="download" size={14} /> <span>{a.label}</span>
+              <Icon name="download" /> <span>{a.label}</span>
             </button>
             {s?.state === 'failed' && (
-              <span className="text-[12px] text-[var(--color-danger)]">{s.message}</span>
+              <p className="t-small tone-text" data-tone="error">
+                {s.message}
+              </p>
             )}
           </li>
         );
