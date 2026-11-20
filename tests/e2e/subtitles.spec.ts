@@ -123,6 +123,42 @@ test('lines keep to two rows; long text is paged', async ({ murmur }) => {
   expect(rows).toBeLessThanOrEqual(2);
 });
 
+test('a line on two rows sits in one box, finished or still growing', async ({ murmur }) => {
+  const page = await player(murmur);
+  const text = page.locator('murmur-overlay .line[data-role="main"] .text');
+  // One rounded box per line: a box per row would overlap the next row and paint it twice.
+  const boxes = () =>
+    text.evaluate((el) => {
+      const rects = [...el.getClientRects()];
+      const lh = Number.parseFloat(getComputedStyle(el).lineHeight);
+      return { boxes: rects.length, rows: Math.floor((rects[0]?.height ?? 0) / lh) };
+    });
+  await send(page, {
+    cue: cue('a', 1, {
+      translation: {
+        text: 'Shall we meet outside the station at eight o’clock, or somewhere closer to home?',
+        language: 'en',
+        final: true,
+      },
+    }),
+  });
+  await expect.poll(boxes).toEqual({ boxes: 1, rows: 2 });
+  await send(page, {
+    cue: cue('a', 1, {
+      translation: {
+        text: 'Yes, but I might be a little late because the train from the airport is often',
+        language: 'en',
+        final: false,
+      },
+    }),
+  });
+  await expect(page.locator('murmur-overlay .line[data-role="main"]')).toHaveAttribute(
+    'data-final',
+    'false',
+  );
+  await expect.poll(boxes).toEqual({ boxes: 1, rows: 2 });
+});
+
 test('the translation only by default; a line already in the target language shows as said', async ({
   murmur,
 }) => {

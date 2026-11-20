@@ -32,8 +32,8 @@ export function fitFor(
 ): { main: RoleFit; original: RoleFit } {
   const originalPx = Math.max(ORIGINAL_MIN_PX, mainPx * ORIGINAL_SCALE);
   const role = (px: number, weight: number): RoleFit => {
-    // Room for the box padding on each side.
-    const fit: RoleFit = { maxUnits: MAX_LINE_UNITS, maxWidth: widthPx - px * 0.7 };
+    // Room for the box padding on each side (0.4 em, styles.ts), and a little to spare.
+    const fit: RoleFit = { maxUnits: MAX_LINE_UNITS, maxWidth: widthPx - px * 0.9 };
     const measure = createMeasurer(doc, px, weight);
     if (measure) fit.measure = measure;
     return fit;

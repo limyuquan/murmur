@@ -95,7 +95,7 @@ export const OVERLAY_CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.06em;
+  gap: 0.1em;
   max-width: 100%;
   animation: es-in 140ms var(--es-ease);
 }
@@ -136,12 +136,13 @@ export const OVERLAY_CSS = `
 .line.revised .text { animation: es-revise 320ms ease-out; }
 
 /* Backgrounds */
+/* One box per line, as wide as its longest row: an inline box per row would overlap the next
+   (the font's content height is more than the line height) and paint the overlap twice. */
 :host([data-bg="box"]) .text {
+  display: inline-block;
   background: rgb(var(--ov-box) / var(--es-bg, 0.75));
   padding: 0.06em 0.4em 0.08em;
   border-radius: 0.24em;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
   text-shadow: 0 0 0.12em rgb(0 0 0 / 0.35);
 }
 :host([data-bg="shadow"]) .text {
