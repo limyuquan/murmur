@@ -4,16 +4,8 @@
  * outside the fullscreen element, and children of an iframe or a shadow host aren't drawn).
  */
 import type { Frame, Page } from '@playwright/test';
-import type { E2eCommand } from '@/overlay';
 import type { Cue } from '@/pipeline/types';
-import { expect, test } from './fixtures';
-
-async function send(target: Page | Frame, command: E2eCommand): Promise<void> {
-  await target.evaluate(
-    (detail) => document.dispatchEvent(new CustomEvent('murmur-e2e', { detail })),
-    JSON.stringify(command),
-  );
-}
+import { expect, hold, send, test } from './fixtures';
 
 /** A cue whose translation is still changing: it stays as long as a test needs. */
 function lasting(id: string): Cue {
@@ -51,7 +43,7 @@ test('a player in a frame from another site: subtitles once, over it, in fullscr
   await expect(inFrame).toHaveCount(1);
   await expect(onTop).toHaveCount(1);
   for (const target of [page, frame]) {
-    await send(target, { hold: true });
+    await hold(target);
     await send(target, { cue: lasting('a') });
   }
   // The frame's overlay shows them over its player; the top frame's stays out of the way.
@@ -82,7 +74,7 @@ test('a fullscreen frame with no player of ours: subtitles above it in the top l
   await murmur.start(page);
   const onTop = page.locator('murmur-overlay');
   await expect(onTop).toHaveCount(1);
-  await send(page, { hold: true });
+  await hold(page);
   await send(page, { cue: lasting('a') });
   // No video anywhere: the bottom of the window.
   await expect(onTop.locator('.line[data-role="main"]')).toBeVisible();
@@ -110,7 +102,7 @@ test('a web-component player: over its video, and above it in fullscreen', async
   await murmur.start(page);
   const host = page.locator('murmur-overlay');
   await expect(host).toHaveCount(1);
-  await send(page, { hold: true });
+  await hold(page);
   await send(page, { cue: lasting('a') });
   await expect(host.locator('.line[data-role="main"]')).toBeVisible();
 
@@ -143,7 +135,7 @@ test('a player that appears later inside a web component is found', async ({ mur
   await murmur.start(page);
   const host = page.locator('murmur-overlay');
   await expect(host).toHaveCount(1);
-  await send(page, { hold: true });
+  await hold(page);
   await send(page, { cue: lasting('a') });
   // Over the player (960×540 at 24,24) once it appears, not the bottom of the window.
   await expect

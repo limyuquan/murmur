@@ -4,16 +4,8 @@
  * dragging, moving clear of the controls, fullscreen and small players.
  */
 import type { Page } from '@playwright/test';
-import type { E2eCommand } from '@/overlay';
 import type { Cue } from '@/pipeline/types';
-import { expect, test } from './fixtures';
-
-async function send(page: Page, command: E2eCommand): Promise<void> {
-  await page.evaluate(
-    (detail) => document.dispatchEvent(new CustomEvent('murmur-e2e', { detail })),
-    JSON.stringify(command),
-  );
-}
+import { expect, hold, send, test } from './fixtures';
 
 function cue(id: string, seq: number, patch: Partial<Cue> = {}): Cue {
   return {
@@ -42,7 +34,7 @@ async function player(murmur: import('./fixtures').MurmurHelpers): Promise<Page>
   });
   await murmur.start(page);
   await expect(page.locator('murmur-overlay')).toHaveCount(1);
-  await send(page, { hold: true });
+  await hold(page);
   return page;
 }
 
@@ -172,7 +164,7 @@ test('subtitles can be dragged, and stay there on this site', async ({ murmur })
   await murmur.stop();
   await expect(host).toHaveCount(0);
   await murmur.start(page);
-  await send(page, { hold: true });
+  await hold(page);
   await send(page, { cue: lasting('b', 2) });
   await expect.poll(async () => (await text.boundingBox())?.y ?? 0).toBeLessThan(before.y - 100);
 

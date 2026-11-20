@@ -11,11 +11,13 @@ import {
   type BrowserContext,
   test as base,
   chromium,
+  type Frame,
   type Page,
   type Worker,
 } from '@playwright/test';
 import type { Browser } from 'wxt/browser';
 import type { SessionStatus } from '@/messaging/protocol';
+import type { E2eCommand } from '@/overlay';
 import { EXTENSION_ID } from '@/shared/ids';
 import { FIXTURE_ORIGIN } from '../../playwright.config';
 
@@ -125,3 +127,21 @@ export const test = base.extend<Fixtures>({
 });
 
 export const expect = test.expect;
+
+/** Feeds the overlay in `target` directly (the e2e build's page event). */
+export async function send(target: Page | Frame, command: E2eCommand): Promise<void> {
+  await target.evaluate(
+    (detail) => document.dispatchEvent(new CustomEvent('murmur-e2e', { detail })),
+    JSON.stringify(command),
+  );
+}
+
+/**
+ * Makes the overlay in `target` ignore the session's cues, so the test controls every line, and
+ * waits for a clear stage: a test-tone line that came before the hold fades out for a moment
+ * (still in the DOM, matching the test's locators) before it goes.
+ */
+export async function hold(target: Page | Frame): Promise<void> {
+  await send(target, { hold: true });
+  await expect(target.locator('murmur-overlay .block')).toHaveCount(0);
+}
