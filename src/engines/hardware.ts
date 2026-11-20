@@ -278,7 +278,7 @@ export function checkRequirements(
     reasons.push('Needs a GPU with 16-bit float shaders.');
   }
   if (gpuOnly && req.minGpuBufferMB && hw.webgpu.maxBufferMB < req.minGpuBufferMB) {
-    reasons.push(`Needs a GPU buffer of ${req.minGpuBufferMB} MB.`);
+    reasons.push(`Needs a GPU buffer of ${req.minGpuBufferMB}\u00a0MB.`);
   }
   if (memory && gpuOnly && req.minGpuMemoryMB && estimateGpuMemoryMB(hw) < req.minGpuMemoryMB) {
     reasons.push(
@@ -292,7 +292,7 @@ export function checkRequirements(
     hw.deviceMemoryGB !== null &&
     hw.deviceMemoryGB < req.minDeviceMemoryGB
   ) {
-    reasons.push(`Needs ${req.minDeviceMemoryGB} GB of memory.`);
+    reasons.push(`Needs ${req.minDeviceMemoryGB}\u00a0GB of memory.`);
   }
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
 }
@@ -308,7 +308,7 @@ export function checkEngine(
 }
 
 export function formatGB(mb: number): string {
-  return `${(mb / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+  return `${(mb / 1024).toFixed(1).replace(/\.0$/, '')}\u00a0GB`;
 }
 
 function backendName(b: ComputeBackend): string {

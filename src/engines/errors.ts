@@ -61,7 +61,7 @@ export class UnsupportedLanguageError extends Error {
   override readonly name = 'UnsupportedLanguageError';
   constructor(
     readonly language: string,
-    message = `Can't handle ${language}.`,
+    message = `Can’t handle ${language}.`,
   ) {
     super(message);
   }

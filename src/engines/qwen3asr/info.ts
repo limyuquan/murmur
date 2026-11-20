@@ -178,7 +178,7 @@ export const QWEN3_ASR_INFO: AsrEngineInfo = {
   id: QWEN3_ASR_ID,
   label: 'Qwen3-ASR 0.6B',
   description:
-    'Accurate speech recognition on the graphics card that follows language switches. 1.1 GB download.',
+    'Accurate speech recognition on the graphics card that follows language switches. 1.1\u00a0GB download.',
   requirements: {
     backends: ['webgpu'],
     shaderF16: true,
@@ -204,7 +204,7 @@ export const QWEN3_ASR_17B_INFO: AsrEngineInfo = {
   id: QWEN3_ASR_17B_ID,
   label: 'Qwen3-ASR 1.7B',
   description:
-    'The most accurate speech recognition on the graphics card, and it follows language switches. Needs about 3 GB of graphics memory. 2.3 GB download.',
+    'The most accurate speech recognition on the graphics card, and it follows language switches. Needs about 3\u00a0GB of graphics memory. 2.3\u00a0GB download.',
   requirements: {
     backends: ['webgpu'],
     shaderF16: true,

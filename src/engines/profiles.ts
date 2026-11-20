@@ -411,7 +411,7 @@ function pick(
       const engine = info(id);
       const check = engine ? checkEngine(engine, hardware, { memory }) : null;
       note = !engine
-        ? `${id} isn't available in this build.`
+        ? `${id} isn’t available in this build.`
         : check && !check.ok
           ? `${engine.label}: ${check.reasons.join(' ')}`
           : null;

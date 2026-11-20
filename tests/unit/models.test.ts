@@ -104,13 +104,13 @@ describe('catalog', () => {
     const sized = (choice: 'balanced' | 'best', hw: HardwareInfo) =>
       modelsFor(choice, custom, published, hw).map((m) => [m.id, formatSize(m.sizeMB)]);
     expect(sized('best', NVIDIA)).toEqual([
-      ['qwen3-asr-1.7b-webgpu', '2.3 GB'],
-      ['gemma4-e4b-webgpu', '3.0 GB'],
+      ['qwen3-asr-1.7b-webgpu', '2.3\u00a0GB'],
+      ['gemma4-e4b-webgpu', '3.0\u00a0GB'],
     ]);
     // Balanced: the 1.7B too where memory allows (2.3 + 2.0 GB), else, or by choice, the 0.6B.
     expect(sized('balanced', NVIDIA)).toEqual([
-      ['qwen3-asr-1.7b-webgpu', '2.3 GB'],
-      ['gemma4-e2b-webgpu', '2.0 GB'],
+      ['qwen3-asr-1.7b-webgpu', '2.3\u00a0GB'],
+      ['gemma4-e2b-webgpu', '2.0\u00a0GB'],
     ]);
     expect(
       modelsFor('balanced', custom, published, NVIDIA, { smallerSpeech: true }).map((m) => m.id),
@@ -121,8 +121,8 @@ describe('catalog', () => {
     ).toEqual(['qwen3-asr-0.6b-webgpu', 'gemma4-e2b-webgpu']);
     const apple = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'apple' } };
     expect(sized('best', apple)).toEqual([
-      ['qwen3-asr-0.6b-webgpu', '1.1 GB'],
-      ['gemma4-e2b-webgpu', '2.0 GB'],
+      ['qwen3-asr-0.6b-webgpu', '1.1\u00a0GB'],
+      ['gemma4-e2b-webgpu', '2.0\u00a0GB'],
     ]);
     expect(knownModels(published).map((m) => m.id)).toContain('qwen3-asr-1.7b-webgpu');
   });
@@ -146,7 +146,13 @@ describe('catalog', () => {
       }
     }
     const sizes = knownModels(registry).map((m) => formatSize(m.sizeMB));
-    expect(sizes).toEqual(['209 MB', '80 MB', '1.6 GB', '2.0 GB', '3.0 GB']);
+    expect(sizes).toEqual([
+      '209\u00a0MB',
+      '80\u00a0MB',
+      '1.6\u00a0GB',
+      '2.0\u00a0GB',
+      '3.0\u00a0GB',
+    ]);
     expect(totalMB(knownModels(registry))).toBeGreaterThan(1800);
   });
 });
@@ -478,12 +484,14 @@ describe('disk space', () => {
     expect(spaceForModelsMB(9300)).toBe(4300);
     expect(spaceForModelsMB(3000)).toBe(0);
     expect(spaceForModelsMB(null)).toBeNull();
-    expect(freeSpaceText(9300)).toBe('about 4.3 GB of disk space for more models');
+    expect(freeSpaceText(9300)).toBe('about 4.3\u00a0GB of disk space for more models');
     expect(freeSpaceText(null)).toBeNull();
     expect(diskSpaceMessage(2969, 7000)).toBe(
-      'Not enough disk space: need 8.0 GB (3.0 GB for the model, 5.0 GB kept free for the system), 7.0 GB free. Free up space on this disk or remove models you don’t use, then download again.',
+      'Not enough disk space: need 8.0\u00a0GB (3.0\u00a0GB for the model, 5.0\u00a0GB kept free for the system), 7.0\u00a0GB free. Free up space on this disk or remove models you don’t use, then download again.',
     );
-    expect(diskSpaceMessage(2969, null)).toMatch(/^Not enough disk space: need 8\.0 GB .*\. Free/);
+    expect(diskSpaceMessage(2969, null)).toMatch(
+      /^Not enough disk space: need 8\.0\u00a0GB .*\. Free/,
+    );
   });
 
   it('refuses a download that would leave less than the reserve, before fetching anything', async () => {
@@ -493,7 +501,9 @@ describe('disk space', () => {
     const st = onDisk(caches, { mb: DISK_RESERVE_MB }, s);
     const err = await st.download(A, () => {}, new AbortController().signal).catch((e) => e);
     expect(err).toBeInstanceOf(DiskSpaceError);
-    expect(err.message).toMatch(/^Not enough disk space: need 5\.0 GB .*, 5\.0 GB free\./);
+    expect(err.message).toMatch(
+      /^Not enough disk space: need 5\.0\u00a0GB .*, 5\.0\u00a0GB free\./,
+    );
     expect(s.requests).toEqual([]);
     // With room, it downloads; once downloaded, nothing more is needed, whatever is free.
     const free = { mb: DISK_RESERVE_MB + 1 };
@@ -551,7 +561,7 @@ describe('disk space', () => {
     });
     const err = await filling.download(A, () => {}, new AbortController().signal).catch((e) => e);
     expect(err).toBeInstanceOf(DiskSpaceError);
-    expect(err.message).toContain('4.8 GB free');
+    expect(err.message).toContain('4.8\u00a0GB free');
     // What was written of the failed part is gone; the whole parts stay for a resume.
     const keys = [...caches.cache.entries.keys()];
     expect(keys.some((k) => k.endsWith('&pending'))).toBe(false);
@@ -567,7 +577,7 @@ describe('disk space', () => {
       .download(A, () => {}, new AbortController().signal)
       .catch((e) => e);
     expect(full).toBeInstanceOf(DiskSpaceError);
-    expect(full.message).toContain('50 GB free');
+    expect(full.message).toContain('50\u00a0GB free');
   });
 });
 

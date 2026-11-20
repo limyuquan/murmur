@@ -334,7 +334,7 @@ describe('Qwen3-ASR 1.7B', () => {
         source: model.source,
       },
     ]);
-    expect(QWEN3_ASR_17B_INFO.description).toContain('2.3 GB download');
+    expect(QWEN3_ASR_17B_INFO.description).toContain('2.3\u00a0GB download');
     expect(QWEN3_ASR_INFO.models?.[0]?.sizeMB).toBe(1055);
   });
 
@@ -354,7 +354,7 @@ describe('Qwen3-ASR 1.7B', () => {
     const intel = { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, vendor: 'intel' } };
     expect(checkEngine(info, intel)).toEqual({
       ok: false,
-      reasons: ['Needs about 3 GB of graphics memory, more than this device seems to have.'],
+      reasons: ['Needs about 3\u00a0GB of graphics memory, more than this device seems to have.'],
     });
     expect(
       checkEngine(info, { ...NVIDIA, webgpu: { ...NVIDIA.webgpu, shaderF16: false } }).ok,

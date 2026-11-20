@@ -513,7 +513,7 @@ async function sendToOffscreen(
 function startError(err: unknown): SessionFailure & { code: SessionErrorCode } {
   const message = err instanceof Error ? err.message : String(err);
   if (/Cannot access|cannot be scripted|chrome:\/\/|Missing host permission/i.test(message)) {
-    return { message: "Murmur can't run on this page.", code: 'page' };
+    return { message: 'Murmur can’t run on this page.', code: 'page' };
   }
   if (/activeTab|has not been invoked|Extension has not been invoked/i.test(message)) {
     return { message: 'Click the Murmur button on this tab first.', code: 'access' };

@@ -50,7 +50,7 @@ export const PROFILE_COPY: Record<ProfileId, ProfileCopy> = {
       'A large one-time download. Where graphics memory is short, smaller models run instead.',
   },
   best: {
-    suits: 'Graphics cards with their own memory, 6 GB or more.',
+    suits: 'Graphics cards with their own memory, 6\u00a0GB or more.',
     accuracy: { level: 3, text: 'Best' },
     runsOn: 'on the graphics card',
     tradeoff:

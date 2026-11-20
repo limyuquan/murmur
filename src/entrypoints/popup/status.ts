@@ -27,6 +27,12 @@ export function isOn(view: TabView): boolean {
   return view.thisTab && view.status.state !== 'error' && view.status.state !== 'idle';
 }
 
+/** ` 42%` after a line with a progress bar, or nothing while the bar has no value. */
+function percent(fraction: number | null | undefined): string {
+  if (typeof fraction !== 'number' || !Number.isFinite(fraction)) return '';
+  return ` ${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+}
+
 export function describeStatus(view: TabView): StatusLine {
   const s = view.status;
   if (s.state === 'idle') {
@@ -34,7 +40,7 @@ export function describeStatus(view: TabView): StatusLine {
       return {
         tone: 'off',
         title: 'Off',
-        detail: `The models for this setting aren't downloaded yet (${formatSize(view.models.missingMB)}).`,
+        detail: `The models for this setting aren’t downloaded yet (${formatSize(view.models.missingMB)}).`,
         action: { kind: 'settings', label: 'Download', section: 'models' },
       };
     }
@@ -51,7 +57,7 @@ export function describeStatus(view: TabView): StatusLine {
     case 'starting':
       return { tone: 'busy', title: 'Starting…', progress: null };
     case 'loading':
-      return { tone: 'busy', title: `${s.detail}…`, progress: s.progress };
+      return { tone: 'busy', title: `${s.detail}…${percent(s.progress)}`, progress: s.progress };
     case 'error':
       return describeError(s.code, s.message, (s.missingModels ?? []).length > 0);
     case 'running':
@@ -102,7 +108,7 @@ function describeRunning(
           ? `${a.queue} lines are waiting for their translation.`
           : a.backlogMs >= 4000
             ? `${Math.round(a.backlogMs / 1000)} s of speech is waiting for speech recognition.`
-            : "This device can't keep up with the current models.";
+            : 'This device can’t keep up with the current models.';
     return {
       tone: 'warn',
       title: 'Falling behind',
@@ -122,7 +128,7 @@ function describeRunning(
   if (a && a.unsupported.length > 0) {
     return {
       tone: 'warn',
-      title: `Can't translate ${listNames(a.unsupported)}`,
+      title: `Can’t translate ${listNames(a.unsupported)}`,
       detail: 'The current models don’t cover it. Other lines are still translated.',
       action: { kind: 'settings', label: 'Models', section: 'models' },
     };
@@ -154,7 +160,7 @@ function describeError(
     case 'page':
       return {
         tone: 'error',
-        title: "Can't run on this page",
+        title: 'Can’t run on this page',
         detail:
           'Browser pages and the Chrome Web Store can’t be captured. Try a page with a video.',
       };
@@ -231,7 +237,10 @@ export function describeBetter(
         button: 'Download',
       };
     case 'downloading':
-      return { text: `Downloading ${better.label}…`, progress: state.fraction };
+      return {
+        text: `Downloading ${better.label}…${percent(state.fraction)}`,
+        progress: state.fraction,
+      };
     case 'done':
       return { text: `${better.label} is downloaded. It translates from the next start.` };
     case 'error':

@@ -70,7 +70,7 @@ export const GEMMA_E2B_INFO: TranslationEngineInfo = {
   id: GEMMA_E2B_ID,
   label: 'Gemma 4 E2B',
   description:
-    'A language model that translates each line with the lines before it, and keeps names from your glossary. 2.0 GB download.',
+    'A language model that translates each line with the lines before it, and keeps names from your glossary. 2.0\u00a0GB download.',
   requirements: {
     backends: ['webgpu'],
     minDeviceMemoryGB: 8,
@@ -94,7 +94,7 @@ export const GEMMA_E4B_INFO: TranslationEngineInfo = {
   id: GEMMA_E4B_ID,
   label: 'Gemma 4 E4B',
   description:
-    'A larger language model: somewhat better translations, slower, and it needs about 3 GB of graphics memory. 3.0 GB download.',
+    'A larger language model: somewhat better translations, slower, and it needs about 3\u00a0GB of graphics memory. 3.0\u00a0GB download.',
   requirements: {
     backends: ['webgpu'],
     minDeviceMemoryGB: 8,

@@ -89,7 +89,7 @@ export class WhisperAsrEngine implements AsrEngine {
           } else if (m.type === 'error' && m.id === null) {
             reject(
               new ModelError(
-                `Couldn't load ${this.info.label}: ${m.message}`,
+                `Couldn’t load ${this.info.label}: ${m.message}`,
                 devices.map((d) => `${this.model.id}-${d.device}`),
               ),
             );

@@ -52,7 +52,7 @@ test('popup: a model that isn’t downloaded stops the start, with the fix', asy
   const popup = await page.context().newPage();
   await popup.goto(url(`popup.html?tab=${tabId}`));
   // Balanced, without WebGPU here: Whisper base, built for the processor.
-  await expect(popup.getByTestId('status')).toContainText(/downloaded yet \(80 MB\)/);
+  await expect(popup.getByTestId('status')).toContainText(/downloaded yet \(80\u00a0MB\)/);
   await popup.getByTestId('toggle').click();
   await expect(popup.getByTestId('status')).toContainText('The model isn’t downloaded');
   await expect(popup.getByTestId('status')).toContainText('Whisper base, for the processor');
@@ -166,9 +166,9 @@ test('options: download a model, stop and resume it, delete it', async ({ contex
   await expect(selected).toContainText(/Downloading Balanced models/);
   const row = page.getByTestId('model-whisper-base-wasm');
   // Stop once the first weights file is in (whole parts are kept).
-  await expect(row).toContainText(/[3-7]\d MB of 80 MB/, { timeout: 10_000 });
+  await expect(row).toContainText(/[3-7]\d\u00a0MB of 80\u00a0MB/, { timeout: 10_000 });
   await row.getByRole('button', { name: /Cancel/ }).click();
-  await expect(row).toContainText(/Stopped at \d+ MB of 80 MB/);
+  await expect(row).toContainText(/Stopped at \d+\u00a0MB of 80\u00a0MB/);
   await row.getByRole('button', { name: /Resume/ }).click();
   await expect(selected).toContainText('Balanced models are downloaded (80 MB)', {
     timeout: 20_000,

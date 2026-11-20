@@ -31,8 +31,8 @@ function published(): EngineRegistry {
 describe('model size copy', () => {
   it('offers the smaller speech model with both sizes, where the larger one runs', () => {
     expect(smallerSpeechCopy(published())).toEqual({
-      label: 'Use the smaller speech model (1.1 GB)',
-      hint: 'Qwen3-ASR 0.6B instead of Qwen3-ASR 1.7B (2.3 GB): a smaller download, a few more mistakes.',
+      label: 'Use the smaller speech model (1.1\u00a0GB)',
+      hint: 'Qwen3-ASR 0.6B instead of Qwen3-ASR 1.7B (2.3\u00a0GB): a smaller download, a few more mistakes.',
     });
     // Not where the files aren't published (the choice would change nothing).
     expect(smallerSpeechCopy(createBuiltinRegistry())).toBeNull();
@@ -76,10 +76,10 @@ describe('model size copy', () => {
 
   it('shows the computer’s memory as reported', () => {
     expect(memoryText(null)).toBe('Unknown');
-    expect(memoryText(4)).toBe('About 4 GB');
+    expect(memoryText(4)).toBe('About 4\u00a0GB');
     // An older Chrome stopped at 8.
-    expect(memoryText(8)).toBe('8 GB or more');
-    expect(memoryText(16)).toBe('About 16 GB');
+    expect(memoryText(8)).toBe('8\u00a0GB or more');
+    expect(memoryText(16)).toBe('About 16\u00a0GB');
   });
 
   it('warns honestly about Best on graphics that share memory', () => {
@@ -104,8 +104,8 @@ describe('model size copy', () => {
     const model = (role: 'speech' | 'translation', sizeMB: number) =>
       ({ id: role, label: role, role, sizeMB, runtime: 'browser', source: {} }) as never;
     expect(downloadText([model('speech', 1611), model('translation', 2008)])).toBe(
-      '3.6 GB: speech recognition 1.6 GB, translation 2.0 GB',
+      '3.6\u00a0GB: speech recognition 1.6\u00a0GB, translation 2.0\u00a0GB',
     );
-    expect(downloadText([model('speech', 80)])).toBe('80 MB');
+    expect(downloadText([model('speech', 80)])).toBe('80\u00a0MB');
   });
 });

@@ -144,7 +144,7 @@ describe('checkRequirements', () => {
     });
     expect(checkRequirements({ backends: ['wasm'], minDeviceMemoryGB: 16 }, GPU)).toEqual({
       ok: false,
-      reasons: ['Needs 16 GB of memory.'],
+      reasons: ['Needs 16\u00a0GB of memory.'],
     });
   });
 
@@ -224,7 +224,7 @@ describe('profiles', () => {
     const apple = { ...GPU, webgpu: { ...GPU.webgpu, vendor: 'apple' } };
     expect(best(apple)).toMatchObject({ asr: QWEN3_ASR_ID, translation: GEMMA_E2B_ID });
     expect(best(apple).notes).toEqual([
-      'Smaller models, to fit this device’s graphics memory (about 4 GB, a guess: browsers don’t report it).',
+      'Smaller models, to fit this device’s graphics memory (about 4\u00a0GB, a guess: browsers don’t report it).',
     ]);
     // A card whose memory isn't known (AMD): the 0.6B.
     expect(best({ ...GPU, webgpu: { ...GPU.webgpu, vendor: 'amd' } }).asr).toBe(QWEN3_ASR_ID);
@@ -278,7 +278,7 @@ describe('profiles', () => {
       notes: ['GPU model: Needs WebGPU.'],
     });
     expect(resolveEngines('custom', { ...custom, asr: 'gone' }, r, GPU).notes).toEqual([
-      "gone isn't available in this build.",
+      'gone isn’t available in this build.',
     ]);
   });
 

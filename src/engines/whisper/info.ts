@@ -239,7 +239,7 @@ export const WHISPER_TURBO_INFO: AsrEngineInfo = {
   ...COMMON,
   id: 'whisper-large-v3-turbo',
   label: 'Whisper large v3 turbo',
-  description: 'Accurate speech recognition on the graphics card. 1.6 GB download.',
+  description: 'Accurate speech recognition on the graphics card. 1.6\u00a0GB download.',
   requirements: {
     backends: ['webgpu'],
     shaderF16: true,

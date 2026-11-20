@@ -78,5 +78,5 @@ export function memoryFitCopy(
  */
 export function memoryText(deviceMemoryGB: number | null): string {
   if (deviceMemoryGB === null) return 'Unknown';
-  return deviceMemoryGB === 8 ? '8 GB or more' : `About ${deviceMemoryGB} GB`;
+  return deviceMemoryGB === 8 ? '8\u00a0GB or more' : `About ${deviceMemoryGB}\u00a0GB`;
 }

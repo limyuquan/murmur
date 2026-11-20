@@ -52,7 +52,8 @@ describe('describeStatus', () => {
     const missing = describeStatus(
       view({ state: 'idle' }, { models: { ready: false, missingMB: 2400 } }),
     );
-    expect(missing.detail).toContain('2.4 GB');
+    // Curly apostrophe like the rest of the copy; the size never wraps between number and unit.
+    expect(missing.detail).toBe('The models for this setting aren’t downloaded yet (2.4\u00a0GB).');
     expect(missing.action).toMatchObject({ kind: 'settings', section: 'models' });
   });
 
@@ -88,7 +89,11 @@ describe('describeStatus', () => {
     const s = describeStatus(
       view({ state: 'loading', tabId: 1, sessionId: 's', progress: 0.5, detail: 'Loading model' }),
     );
-    expect(s).toMatchObject({ tone: 'busy', title: 'Loading model…', progress: 0.5 });
+    expect(s).toMatchObject({ tone: 'busy', title: 'Loading model… 50%', progress: 0.5 });
+    const unknown = describeStatus(
+      view({ state: 'loading', tabId: 1, sessionId: 's', progress: null, detail: 'Warming up' }),
+    );
+    expect(unknown).toMatchObject({ title: 'Warming up…', progress: null });
   });
 
   it('names the stage and the delay while running', () => {
@@ -167,7 +172,7 @@ describe('describeStatus', () => {
 
   it('names languages the models lack', () => {
     const s = describeStatus(view(running(activity({ unsupported: ['de'] }))));
-    expect(s.title).toMatch(/^Can't translate /);
+    expect(s.title).toMatch(/^Can’t translate /);
   });
 
   it('turns error codes into a fix', () => {
@@ -208,13 +213,17 @@ describe('describeBetter', () => {
 
   it('offers the download plainly, then follows it', () => {
     expect(describeBetter(better, { state: 'offer' })).toEqual({
-      text: 'Better translations: download Gemma 4 E2B (2.0 GB)',
+      text: 'Better translations: download Gemma 4 E2B (2.0\u00a0GB)',
       button: 'Download',
     });
     expect(describeBetter(better, { state: 'downloading', fraction: 0.5 })).toEqual({
-      text: 'Downloading Gemma 4 E2B…',
+      text: 'Downloading Gemma 4 E2B… 50%',
       progress: 0.5,
     });
+    // No percentage while the bar has no value yet.
+    expect(describeBetter(better, { state: 'downloading', fraction: null }).text).toBe(
+      'Downloading Gemma 4 E2B…',
+    );
     expect(describeBetter(better, { state: 'done' }).button).toBeUndefined();
     expect(describeBetter(better, { state: 'error', message: 'No space.' })).toEqual({
       text: 'Gemma 4 E2B didn’t download: No space.',

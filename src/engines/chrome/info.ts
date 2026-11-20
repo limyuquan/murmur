@@ -12,7 +12,7 @@ export const CHROME_WEBSPEECH_INFO: AsrEngineInfo = {
   id: CHROME_WEBSPEECH_ID,
   label: 'Chrome speech recognition (on this device)',
   description:
-    "Chrome's own on-device speech recognition. Nothing to download from Murmur; Chrome fetches a pack per language.",
+    'Chrome’s own on-device speech recognition. Nothing to download from Murmur; Chrome fetches a pack per language.',
   runtime: 'chrome',
   // Runs in Chrome's speech service, not on Murmur's GPU or CPU budget.
   requirements: { backends: ['none'] },
@@ -100,7 +100,7 @@ export const CHROME_TRANSLATOR_INFO: TranslationEngineInfo = {
   id: CHROME_TRANSLATOR_ID,
   label: 'Chrome translation (on this device)',
   description:
-    "Chrome's built-in translator. Fast; Chrome fetches a small pack per language pair. Plain, literal translations.",
+    'Chrome’s built-in translator. Fast; Chrome fetches a small pack per language pair. Plain, literal translations.',
   runtime: 'chrome',
   requirements: { backends: ['none'] },
   inputs: ['text'],

@@ -171,7 +171,7 @@ export class ChromeTranslatorEngine implements TranslationEngine {
     if (state === 'unavailable') {
       throw new UnsupportedLanguageError(
         sourceLanguage,
-        `Chrome can't translate ${sourceLanguage} to ${targetLanguage}.`,
+        `Chrome can’t translate ${sourceLanguage} to ${targetLanguage}.`,
       );
     }
     return api.create({ sourceLanguage, targetLanguage });

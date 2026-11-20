@@ -141,9 +141,9 @@ export interface ModelStore {
 
 /** Plain size: "850 MB", "2.4 GB". */
 export function formatSize(mb: number): string {
-  if (mb < 1000) return `${Math.round(mb)} MB`;
+  if (mb < 1000) return `${Math.round(mb)}\u00a0MB`;
   const gb = mb / 1000;
-  return `${gb < 10 ? gb.toFixed(1) : Math.round(gb)} GB`;
+  return `${gb < 10 ? gb.toFixed(1) : Math.round(gb)}\u00a0GB`;
 }
 
 export const MB = 1e6;

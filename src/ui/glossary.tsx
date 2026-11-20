@@ -104,7 +104,7 @@ export function GlossaryEditor({
     if (!file) return;
     if (file.size > MAX_GLOSSARY_FILE_BYTES) {
       setMessage(
-        `${file.name} is too large for a glossary (over ${MAX_GLOSSARY_FILE_BYTES / 1_000_000} MB). Choose a JSON, TSV or CSV glossary file.`,
+        `${file.name} is too large for a glossary (over ${MAX_GLOSSARY_FILE_BYTES / 1_000_000}\u00a0MB). Choose a JSON, TSV or CSV glossary file.`,
       );
       return;
     }
