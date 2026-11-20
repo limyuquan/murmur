@@ -182,8 +182,10 @@ export function buildPrompt(input: PromptInput): Prompt {
   const context = input.context
     .map((c) => `[${known(c.language) ? c.language : '?'}] ${c.source} => ${c.translation}`)
     .join('\n');
+  // Settings keep glossary text on one line; this keeps any other caller's on one too.
+  const flat = (t: string) => t.replace(/[\p{Cc}\u2028\u2029]+/gu, ' ');
   const glossary = (input.glossary ?? [])
-    .map((g) => `${g.source} = ${g.target}${g.note ? ` (${g.note})` : ''}`)
+    .map((g) => flat(`${g.source} = ${g.target}${g.note ? ` (${g.note})` : ''}`))
     .join('; ');
   const vars: Vars = {
     text: input.text,

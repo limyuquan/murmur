@@ -12,6 +12,11 @@ import { cleanGlossary, MAX_GLOSSARY, MAX_GLOSSARY_ALIASES } from './settings';
 
 export type GlossaryFormat = 'json' | 'tsv';
 
+/** Largest glossary file read, bytes: a full glossary as JSON is about 150 kB. */
+export const MAX_GLOSSARY_FILE_BYTES = 1_000_000;
+/** Rows (or JSON entries) read from a file at most; the rest are left out. */
+export const MAX_GLOSSARY_ROWS = MAX_GLOSSARY * 2;
+
 /** The `format` field of an exported JSON glossary. */
 export const GLOSSARY_FILE_FORMAT = 'murmur-glossary';
 
@@ -21,8 +26,14 @@ export interface ParsedGlossary {
   skipped: { line: number; reason: string }[];
 }
 
-/** Reads a glossary file. Never throws: what can't be read is in `skipped`. */
+/**
+ * Reads a glossary file. Never throws: what can't be read is in `skipped`. Text longer than
+ * `MAX_GLOSSARY_FILE_BYTES` isn't read at all, and rows past `MAX_GLOSSARY_ROWS` are left out.
+ */
 export function parseGlossaryFile(text: string): ParsedGlossary {
+  if (text.length > MAX_GLOSSARY_FILE_BYTES) {
+    return { entries: [], skipped: [{ line: 0, reason: 'the file is too large' }] };
+  }
   const body = text.replace(/^﻿/, '');
   const trimmed = body.trim();
   if (!trimmed) return { entries: [], skipped: [] };
@@ -126,7 +137,10 @@ function parseJson(text: string): ParsedGlossary {
   if (!list) return { entries: [], skipped: [{ line: 0, reason: 'no list of entries' }] };
   const entries: GlossaryEntry[] = [];
   const skipped: ParsedGlossary['skipped'] = [];
-  list.forEach((item, i) => {
+  if (list.length > MAX_GLOSSARY_ROWS) {
+    skipped.push({ line: MAX_GLOSSARY_ROWS + 1, reason: 'too many entries, the rest left out' });
+  }
+  list.slice(0, MAX_GLOSSARY_ROWS).forEach((item, i) => {
     if (!isObject(item)) {
       skipped.push({ line: i + 1, reason: 'not an entry' });
       return;
@@ -150,8 +164,13 @@ function parseTable(text: string): ParsedGlossary {
   const entries: GlossaryEntry[] = [];
   const skipped: ParsedGlossary['skipped'] = [];
   let first = true;
+  let rows = 0;
   for (const { line, fields } of readRows(text, delimiter)) {
-    const cells = fields.map((f) => f.trim());
+    if (++rows > MAX_GLOSSARY_ROWS) {
+      skipped.push({ line, reason: 'too many rows, the rest left out' });
+      break;
+    }
+    const cells = fields.map((f) => unguard(f.trim()));
     if (cells.every((c) => !c) || (cells[0] ?? '').startsWith('#')) continue;
     if (first) {
       first = false;
@@ -252,9 +271,21 @@ function* readRows(text: string, delimiter: string): Generator<{ line: number; f
   }
 }
 
+/**
+ * A table cell. One a spreadsheet would read as a formula (starting `=`, `+`, `-` or `@`) gets a
+ * leading `'`, which spreadsheets show as text and import takes off again (`unguard`).
+ */
 function tsvField(value: string): string {
   const flat = value.replace(/[\t\r\n]+/g, ' ');
-  return flat.startsWith('"') ? `"${flat.replace(/"/g, '""')}"` : flat;
+  const safe = FORMULA_START.test(flat) ? `'${flat}` : flat;
+  return safe.startsWith('"') ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+const FORMULA_START = /^[=+\-@]/;
+
+/** A cell without the `'` an export put before what looks like a formula. */
+function unguard(cell: string): string {
+  return cell.startsWith("'") && FORMULA_START.test(cell.slice(1)) ? cell.slice(1) : cell;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

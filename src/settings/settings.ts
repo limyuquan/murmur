@@ -243,7 +243,20 @@ export function watchSettings(listener: (settings: Settings) => void): () => voi
 }
 
 /**
- * Valid entries of a stored glossary: target and every alias text, trimmed and not empty, at
+ * `text` on one line: control characters and line breaks become spaces, runs of white space one.
+ * Glossary text goes into the translation model's prompt, where a line break could start a line
+ * of its own.
+ */
+export function oneLine(text: string): string {
+  return text
+    .replace(/[\p{Cc}\u2028\u2029]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Valid entries of a stored glossary: target and every alias text on one line (`oneLine`), not
+ * empty, at
  * most `MAX_GLOSSARY_TEXT` characters (a longer alias is left out, a longer note cut), at most
  * `MAX_GLOSSARY_ALIASES` ways said per entry and `MAX_GLOSSARY` entries; an alias already in an
  * earlier entry is left out, and an entry left with none goes. `|` separates aliases, so an
@@ -254,14 +267,14 @@ export function cleanGlossary(list: readonly unknown[]): GlossaryEntry[] {
   const seen = new Set<string>();
   for (const item of list) {
     if (!isObject(item)) continue;
-    const target = typeof item.target === 'string' ? item.target.trim() : '';
+    const target = typeof item.target === 'string' ? oneLine(item.target) : '';
     if (!target || target.length > MAX_GLOSSARY_TEXT) continue;
     const said: string[] = [];
     const raw = [item.source, ...(Array.isArray(item.aliases) ? item.aliases : [])];
     for (const value of raw) {
       if (typeof value !== 'string') continue;
       for (const part of value.split('|')) {
-        const alias = part.trim();
+        const alias = oneLine(part);
         if (!alias || alias.length > MAX_GLOSSARY_TEXT || seen.has(alias)) continue;
         if (said.length >= MAX_GLOSSARY_ALIASES) break;
         said.push(alias);
@@ -270,7 +283,11 @@ export function cleanGlossary(list: readonly unknown[]): GlossaryEntry[] {
     }
     const [source, ...aliases] = said;
     if (!source) continue;
-    const note = typeof item.note === 'string' ? item.note.trim().slice(0, MAX_GLOSSARY_TEXT) : '';
+    // `;` separates the prompt's glossary entries.
+    const note =
+      typeof item.note === 'string'
+        ? oneLine(item.note.replaceAll(';', ',')).slice(0, MAX_GLOSSARY_TEXT).trim()
+        : '';
     out.push({
       source,
       target,

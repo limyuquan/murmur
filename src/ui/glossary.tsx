@@ -9,6 +9,7 @@ import type { GlossaryEntry } from '@/engines/glossary';
 import {
   formatGlossaryFile,
   type GlossaryFormat,
+  MAX_GLOSSARY_FILE_BYTES,
   mergeGlossary,
   parseGlossaryFile,
 } from '@/settings/glossaryfile';
@@ -101,6 +102,12 @@ export function GlossaryEditor({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    if (file.size > MAX_GLOSSARY_FILE_BYTES) {
+      setMessage(
+        `${file.name} is too large for a glossary (over ${MAX_GLOSSARY_FILE_BYTES / 1_000_000} MB). Choose a JSON, TSV or CSV glossary file.`,
+      );
+      return;
+    }
     const parsed = parseGlossaryFile(await file.text());
     const merged = mergeGlossary(rows.map(toEntry), parsed.entries);
     if (merged.added > 0 || merged.extended > 0) update({ glossary: merged.entries });
