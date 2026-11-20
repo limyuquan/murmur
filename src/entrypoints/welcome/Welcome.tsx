@@ -157,7 +157,7 @@ export function Welcome({ initial }: { initial: Settings }) {
             Continue in the background
           </button>
         ) : needsDownload ? (
-          <button type="button" className="btn btn-lg btn-quiet" onClick={() => go('done')}>
+          <button type="button" className="btn btn-lg" onClick={() => go('done')}>
             Later
           </button>
         ) : (

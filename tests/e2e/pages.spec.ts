@@ -279,6 +279,9 @@ test('options: download a model, stop and resume it, delete it', async ({ contex
   await expect(manage).toHaveAttribute('open');
   await page.getByTestId('download-selected').click();
   await expect(selected).toContainText(/Downloading Balanced models/);
+  // Best shares the model, but only the chosen card says it is downloading.
+  await expect(page.getByTestId('profile-balanced').locator('.badge')).toContainText('Downloading');
+  await expect(page.getByTestId('profile-best')).not.toContainText('Downloading');
   const row = page.getByTestId('model-whisper-base-wasm');
   // Stop once the first weights file is in (whole parts are kept).
   await expect(row).toContainText(/[3-7]\d\u00a0MB of 80\u00a0MB/, { timeout: 10_000 });

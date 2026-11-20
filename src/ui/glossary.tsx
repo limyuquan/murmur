@@ -319,7 +319,7 @@ export function GlossaryEditor({
             values={said}
             onChange={setSaid}
             onDraft={setSaidDraft}
-            placeholder="Camille | Kamille"
+            placeholder="Camille"
           />
         </div>
         <span className="arrow" aria-hidden="true">

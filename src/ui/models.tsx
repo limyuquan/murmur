@@ -188,7 +188,7 @@ export function ProfileCards({
                           Suits this device
                         </span>
                       )}
-                      <ModelStateBadge models={models} />
+                      <ModelStateBadge models={models} chosen={value === id} />
                     </span>
                     <span className="row g2 t-small">
                       <span className="muted">Accuracy</span>
@@ -251,8 +251,13 @@ export function ProfileCards({
   );
 }
 
-function ModelStateBadge({ models }: { models: ProfileModels }) {
+/**
+ * Downloading (on the chosen card only: sizes share models, and two badges would read as two
+ * downloads), or downloaded (on any card).
+ */
+function ModelStateBadge({ models, chosen }: { models: ProfileModels; chosen: boolean }) {
   if (models.downloading !== null) {
+    if (!chosen) return null;
     return (
       <span className="badge num" data-tone="translating">
         Downloading {Math.round(models.downloading * 100)}%

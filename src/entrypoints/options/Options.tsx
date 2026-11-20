@@ -795,8 +795,8 @@ function AheadSection({ settings, update }: { settings: Settings; update: Update
             </div>
           ))
         )}
-        <form className="stack g3 block-row" onSubmit={add} data-testid="ahead-add">
-          <div className="row g3">
+        <form className="stack g3 add-site" onSubmit={add} data-testid="ahead-add">
+          <div className="row g4">
             <span className="tile">
               <Icon name="plus" />
             </span>

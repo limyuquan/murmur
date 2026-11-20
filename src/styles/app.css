@@ -127,6 +127,7 @@ strong {
 }
 .measure {
   max-width: var(--measure);
+  text-wrap: pretty;
 }
 
 /* ---- Layout helpers: gaps only from the scale ---- */
@@ -701,7 +702,7 @@ input:focus-visible + .radio {
   flex: 1 1 var(--space-16);
   min-width: var(--space-12);
   height: var(--space-6);
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-2);
   border: 0;
   background: transparent;
   font: var(--type-body);
@@ -1021,12 +1022,19 @@ kbd {
 .option > label > .radio {
   margin-top: var(--inset-hair);
 }
+/* The chosen card's download: on the surface, under its tinted head, so tiles, tracks, hairlines
+   and buttons sit on the colour they were drawn for. Content starts in line with the card's text. */
 .option-foot {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  margin: 0 var(--space-5) 0 calc(var(--space-5) + var(--space-5) + var(--space-4));
-  padding: var(--space-4) 0 var(--space-5);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-5) calc(var(--space-5) * 2 + var(--space-4));
+  border-top: var(--border);
+  border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
+  background: var(--surface);
+}
+.option-foot > * + * {
+  padding-top: var(--space-4);
   border-top: var(--border);
 }
 .facts {
@@ -1133,7 +1141,8 @@ body:has(> #root > .popup) {
 .page {
   display: flex;
   gap: var(--space-10);
-  width: var(--page-width);
+  /* 200 navigation + 40 + 800 content, inside a 24-px gutter for narrow windows. */
+  width: calc(var(--page-width) + 2 * var(--space-6));
   max-width: 100%;
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-16);
@@ -1208,6 +1217,7 @@ body:has(> #root > .popup) {
 .section-head > p {
   color: var(--muted);
   max-width: var(--measure);
+  text-wrap: pretty;
 }
 @media (max-width: 760px) {
   .nav {
@@ -1236,7 +1246,7 @@ body:has(> #root > .popup) {
 }
 .model-row.compact {
   grid-template-columns:
-    var(--tile) minmax(0, 1fr) calc(var(--space-16) * 2 + var(--space-8))
+    var(--tile) minmax(0, 1fr) calc(var(--space-16) * 2)
     calc(var(--space-16) * 2);
 }
 .model-row.bare {
@@ -1264,7 +1274,7 @@ body:has(> #root > .popup) {
   grid-template-columns:
     minmax(0, 5fr) var(--space-4) minmax(0, 4fr) minmax(0, 4fr)
     calc(var(--space-16) + var(--space-4));
-  align-items: center;
+  align-items: start;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-5);
 }
@@ -1285,11 +1295,16 @@ body:has(> #root > .popup) {
   justify-self: end;
 }
 .gloss-grid > .arrow {
-  align-self: center;
+  align-self: start;
+  margin-top: var(--space-2);
   color: var(--muted);
+}
+.gloss-grid > .btn-sm {
+  margin-top: var(--inset-hair);
 }
 .gloss-grid.add > .arrow {
   align-self: end;
+  margin-top: 0;
   margin-bottom: var(--space-2);
 }
 .gloss-hint {
@@ -1470,4 +1485,14 @@ body:has(> #root > .popup) {
   color: var(--ov-text);
   background: rgb(var(--ov-box) / 0.75);
   text-shadow: 0 0 0.12em rgb(0 0 0 / 0.35);
+}
+/* Ahead of time: the add-a-site row lines up with the site rows above it. */
+.add-site {
+  padding: var(--space-3) var(--space-5);
+}
+
+/* A numbered step: its disc centred on the first line of text. */
+/* biome-ignore lint/style/noDescendingSpecificity: unrelated elements, never both matched. */
+.numbered + span {
+  padding-top: var(--inset-hair);
 }
